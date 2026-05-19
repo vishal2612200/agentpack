@@ -1,6 +1,6 @@
 {
   "name": "@vishal2612200/agentpack",
-  "version": "0.3.0",
+  "version": "0.3.1",
   "description": "Task-aware context packing for AI coding agents. npm wrapper for the Python AgentPack CLI.",
   "license": "MIT",
   "homepage": "https://github.com/vishal2612200/agentpack#readme",

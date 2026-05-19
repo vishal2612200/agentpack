@@ -10,6 +10,15 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ---
 
+## [0.3.1] — 2026-05-19
+
+### Fixed
+- Recommended `pipx install agentpack-cli` for normal installs so new users avoid PEP 668 `externally-managed-environment` errors from system-managed Python.
+- Removed the `agentpack global-install` fallback to `pip install --user`; failed `pipx` installs now give OS package-manager guidance for installing `pipx`.
+- Updated optional `watch` and `mcp` dependency guidance to use `pipx inject` instead of global `pip install`.
+
+---
+
 ## [0.3.0] — 2026-05-17
 
 ### Added
