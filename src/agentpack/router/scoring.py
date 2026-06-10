@@ -225,10 +225,13 @@ def _score_skill(
     if not matched_signal:
         return SelectedSkill(skill=skill, score=0.0, confidence=0.0, reasons=[])
 
-    success = _historical_success_for(skill, historical_success)
-    if success > 0:
-        score += min(success, 1.0) * 15
-        reasons.append(f"historical success boost: {success:.2f}")
+    history_signal = _historical_success_for(skill, historical_success, taxonomy, selected_paths)
+    if history_signal > 0:
+        score += min(history_signal, 1.0) * 15
+        reasons.append(f"historical success boost: {history_signal:.2f}")
+    elif history_signal < 0:
+        score -= min(abs(history_signal), 1.0) * 20
+        reasons.append(f"historical noise penalty: {abs(history_signal):.2f}")
 
     score += max(0, min(skill.priority, 100)) / 10
     confidence = _confidence(score)
@@ -334,13 +337,69 @@ def _skill_profile_terms(skill: SkillArtifact) -> set[str]:
     )
 
 
-def _historical_success_for(skill: SkillArtifact, historical_success: dict[str, float]) -> float:
-    keys = {
+def _historical_success_for(
+    skill: SkillArtifact,
+    historical_success: dict[str, float],
+    taxonomy: dict[str, set[str]],
+    selected_paths: list[str],
+) -> float:
+    values = [
+        historical_success[key]
+        for key in _historical_lookup_keys(skill, taxonomy, selected_paths)
+        if key in historical_success
+    ]
+    if not values:
+        return 0.0
+    positive = max((value for value in values if value > 0), default=0.0)
+    negative = min((value for value in values if value < 0), default=0.0)
+    return negative if abs(negative) > positive else positive
+
+
+def _historical_lookup_keys(
+    skill: SkillArtifact,
+    taxonomy: dict[str, set[str]],
+    selected_paths: list[str],
+) -> list[str]:
+    base_keys = [
         _normalize_skill_key(skill.name),
         _normalize_skill_key(skill.path),
         _normalize_skill_key(skill.path.rsplit("/", 1)[0]),
-    }
-    return max((historical_success.get(key, 0.0) for key in keys), default=0.0)
+    ]
+    contexts: list[str] = []
+    for task_type in sorted(taxonomy["task_types"]):
+        contexts.append(f"task_type:{task_type}")
+    for language in sorted(taxonomy["languages"]):
+        contexts.append(f"language:{language}")
+    for framework in sorted(taxonomy["frameworks"]):
+        contexts.append(f"framework:{framework}")
+    for prefix in _selected_path_prefixes(selected_paths):
+        contexts.append(f"path:{prefix}")
+
+    keys: list[str] = []
+    seen: set[str] = set()
+    for base in base_keys:
+        for key in [base, *(f"{base}|{context}" for context in contexts)]:
+            if key in seen:
+                continue
+            seen.add(key)
+            keys.append(key)
+    return keys
+
+
+def _selected_path_prefixes(paths: list[str]) -> list[str]:
+    prefixes: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        parts = [part for part in path.replace("\\", "/").strip("/").split("/") if part]
+        for size in (1, 2):
+            if len(parts) < size:
+                continue
+            prefix = "/".join(parts[:size]).lower()
+            if prefix in seen:
+                continue
+            seen.add(prefix)
+            prefixes.append(prefix)
+    return prefixes
 
 
 def _confidence(score: float) -> float:

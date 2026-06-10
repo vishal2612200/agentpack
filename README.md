@@ -42,7 +42,7 @@ AgentPack Router now recommends skills with stronger local signals: richer
 frontmatter, confidence thresholds, negative triggers, diversity-aware ranking,
 and a pull-based MCP `get_skill` flow. Skill benchmark cases can declare
 `expected_skills` and `avoid_skills`, and `agentpack skills feedback` records
-local outcome signals for future routing.
+recommended, used, ignored, and outcome signals for future routing.
 
 ## What's New in 0.3.14
 

@@ -39,7 +39,7 @@ wrapper installation.
 
 `0.3.15` improves the skill router with richer metadata, confidence thresholds,
 negative triggers, diversity-aware recommendations, MCP `get_skill`, and local
-`agentpack skills feedback` outcome records.
+`agentpack skills feedback` recommendation, usage, ignore, and outcome records.
 
 `0.3.14` expands `agentpack learn` from a local post-task summary into a
 developer learning layer: provider-command enrichment, static dashboard export,

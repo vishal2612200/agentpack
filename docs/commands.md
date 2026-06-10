@@ -32,7 +32,7 @@ Command map:
 | `agentpack skills scan` | Print discovered local/global skills and rules |
 | `agentpack skills index` | Write `.agentpack/skills_index.json` metadata for faster routing |
 | `agentpack skills recommend` | Explain task-specific skill recommendations and confidence |
-| `agentpack skills feedback` | Record local skill outcome feedback for future routing boosts |
+| `agentpack skills feedback` | Record local skill usage, ignore, and outcome feedback for future routing |
 | `agentpack watch` | Keep the context pack fresh while you work |
 | `agentpack doctor` | Audit hooks, agent files, CLI path, and repo health |
 | `agentpack diagnose-selection` | Explain latest selection noise and write tuning advice |
@@ -587,10 +587,16 @@ Inspect or index installed skills and rule files.
 agentpack skills scan
 agentpack skills index
 agentpack skills recommend --task "fix flaky payment webhook test" --explain
-agentpack skills feedback --task "fix auth" --used-skill pytest-debugging --tests-passed --user-feedback helpful
+agentpack skills feedback --task "fix auth" \
+  --recommended-skill auth-review \
+  --used-skill pytest-debugging \
+  --ignored-skill deployment-checklist \
+  --tests-passed \
+  --user-feedback helpful
+agentpack skills feedback --task "fix auth" --bad-recommendation deployment-checklist --user-feedback noisy
 ```
 
-`scan` prints discovered artifacts. `index` writes `.agentpack/skills_index.json` with metadata only; raw skill and rule bodies are omitted from the index. `recommend` runs the route planner and prints confidence-based skill recommendations with load paths and reasons. `feedback` appends a local `.agentpack/skill_feedback.jsonl` record; repeated helpful use gives that skill a small future boost.
+`scan` prints discovered artifacts. `index` writes `.agentpack/skills_index.json` with metadata only; raw skill and rule bodies are omitted from the index. `recommend` runs the route planner and prints confidence-based skill recommendations with load paths and reasons. `feedback` appends a local `.agentpack/skill_feedback.jsonl` record. Recommended-only skills are not rewarded; used helpful skills get a small scoped boost, repeated ignored recommendations get a weak scoped penalty, and explicit bad recommendations penalize router precision for matching task/file contexts.
 
 ---
 

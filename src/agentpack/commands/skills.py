@@ -85,7 +85,10 @@ def recommend_skills(
 @skills_app.command("feedback")
 def record_skill_feedback(
     task: str = typer.Option(..., "--task", help="Task the skills were recommended for."),
+    recommended_skill: list[str] = typer.Option([], "--recommended-skill", help="Skill name/path recommended by the router. Repeatable."),
     used_skill: list[str] = typer.Option([], "--used-skill", help="Skill name/path actually used. Repeatable."),
+    ignored_skill: list[str] = typer.Option([], "--ignored-skill", help="Recommended skill name/path intentionally ignored. Repeatable."),
+    bad_recommendation: list[str] = typer.Option([], "--bad-recommendation", help="Skill name/path that was a bad recommendation. Repeatable."),
     changed_file: list[str] = typer.Option([], "--changed-file", help="File changed during the task. Repeatable."),
     tests_passed: bool | None = typer.Option(None, "--tests-passed/--tests-failed", help="Whether verification passed."),
     user_feedback: str = typer.Option("", "--user-feedback", help="Optional label: helpful|ignored|noisy|bad."),
@@ -97,10 +100,26 @@ def record_skill_feedback(
     record = {
         "ts": datetime.now(timezone.utc).isoformat(),
         "task": task.strip(),
-        "used_skills": [item.strip() for item in used_skill if item.strip()],
-        "changed_files": [item.strip() for item in changed_file if item.strip()],
+        "recommended_skills": _clean_list(recommended_skill),
+        "used_skills": _clean_list(used_skill),
+        "ignored_skills": _clean_list(ignored_skill),
+        "bad_recommendations": _clean_list(bad_recommendation),
+        "changed_files": _clean_list(changed_file),
         "tests_passed": tests_passed,
         "user_feedback": user_feedback.strip(),
     }
     out.open("a", encoding="utf-8").write(json.dumps(record) + "\n")
     console.print(f"[green]✓[/] Recorded skill feedback in [bold]{out}[/]")
+
+
+def _clean_list(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    cleaned: list[str] = []
+    for value in values:
+        item = value.strip()
+        key = item.lower().replace("\\", "/").rstrip("/")
+        if not item or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(item)
+    return cleaned

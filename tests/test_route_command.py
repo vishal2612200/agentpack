@@ -84,8 +84,14 @@ def test_skills_feedback_records_outcome(tmp_path, monkeypatch):
             "feedback",
             "--task",
             "fix auth",
+            "--recommended-skill",
+            "auth-review",
             "--used-skill",
             "auth-review",
+            "--ignored-skill",
+            "deployment-checklist",
+            "--bad-recommendation",
+            "deployment-checklist",
             "--changed-file",
             "src/auth.py",
             "--tests-passed",
@@ -97,7 +103,10 @@ def test_skills_feedback_records_outcome(tmp_path, monkeypatch):
     assert result.exit_code == 0, result.output
     data = json.loads((tmp_path / ".agentpack" / "skill_feedback.jsonl").read_text(encoding="utf-8"))
     assert data["task"] == "fix auth"
+    assert data["recommended_skills"] == ["auth-review"]
     assert data["used_skills"] == ["auth-review"]
+    assert data["ignored_skills"] == ["deployment-checklist"]
+    assert data["bad_recommendations"] == ["deployment-checklist"]
     assert data["changed_files"] == ["src/auth.py"]
     assert data["tests_passed"] is True
 

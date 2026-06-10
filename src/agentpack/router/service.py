@@ -16,7 +16,7 @@ from agentpack.router.models import (
     SkillInventory,
 )
 from agentpack.router.prompt_builder import build_agent_prompt
-from agentpack.router.scoring import score_skills
+from agentpack.router.scoring import _classify_task, _normalize_skill_key, score_skills
 
 _TEST_TERMS = ("test", "tests", "pytest", "flaky", "fixture", "mock", "failing", "fail", "debug")
 
@@ -156,6 +156,8 @@ def _load_skill_success(root: Path) -> dict[str, float]:
         return {}
     totals: dict[str, float] = {}
     counts: dict[str, int] = {}
+    ignored_totals: dict[str, float] = {}
+    ignored_counts: dict[str, int] = {}
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
@@ -167,21 +169,113 @@ def _load_skill_success(root: Path) -> dict[str, float]:
             record = json.loads(line)
         except json.JSONDecodeError:
             continue
-        used = record.get("used_skills") or []
-        if not isinstance(used, list):
-            continue
-        helpful = _feedback_value(record)
+        used = _string_list(record.get("used_skills"))
+        ignored = _string_list(record.get("ignored_skills"))
+        bad_recommendations = _string_list(record.get("bad_recommendations"))
+        context_keys = _feedback_context_keys(record)
+
+        value = _feedback_value(record)
         for skill in used:
-            key = str(skill).strip().lower().replace("\\", "/").rstrip("/")
-            if not key:
+            _add_feedback_value(totals, counts, skill, value, context_keys=context_keys)
+
+        used_keys = {_normalize_skill_key(skill) for skill in used}
+        for skill in ignored:
+            if _normalize_skill_key(skill) in used_keys:
                 continue
-            totals[key] = totals.get(key, 0.0) + helpful
-            counts[key] = counts.get(key, 0) + 1
-    return {
-        key: max(0.0, min(1.0, totals[key] / counts[key]))
-        for key in totals
-        if counts[key] > 0 and totals[key] > 0
-    }
+            _add_feedback_value(
+                ignored_totals,
+                ignored_counts,
+                skill,
+                _ignored_feedback_value(record),
+                context_keys=context_keys,
+                include_global=False,
+            )
+        for skill in bad_recommendations:
+            if _normalize_skill_key(skill) in used_keys:
+                continue
+            _add_feedback_value(
+                totals,
+                counts,
+                skill,
+                -0.6,
+                context_keys=context_keys,
+                include_global=False,
+            )
+
+    for key, count in ignored_counts.items():
+        if count < 2:
+            continue
+        totals[key] = totals.get(key, 0.0) + ignored_totals[key]
+        counts[key] = counts.get(key, 0) + count
+
+    history: dict[str, float] = {}
+    for key, count in counts.items():
+        if count <= 0:
+            continue
+        value = totals[key] / count
+        if value == 0:
+            continue
+        history[key] = max(-1.0, min(1.0, value))
+    return history
+
+
+def _string_list(value) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item).strip() for item in value if str(item).strip()]
+
+
+def _add_feedback_value(
+    totals: dict[str, float],
+    counts: dict[str, int],
+    skill: str,
+    value: float,
+    *,
+    context_keys: list[str],
+    include_global: bool = True,
+) -> None:
+    key = _normalize_skill_key(skill)
+    if not key or value == 0:
+        return
+    keys = [key] if include_global and value > 0 else []
+    keys.extend(f"{key}|{context}" for context in context_keys)
+    if not keys and not context_keys:
+        keys.append(key)
+    for item in keys:
+        totals[item] = totals.get(item, 0.0) + value
+        counts[item] = counts.get(item, 0) + 1
+
+
+def _feedback_context_keys(record: dict) -> list[str]:
+    task = str(record.get("task") or "")
+    changed_files = _string_list(record.get("changed_files"))
+    taxonomy = _classify_task(task, changed_files)
+    keys: list[str] = []
+    for task_type in sorted(taxonomy["task_types"]):
+        keys.append(f"task_type:{task_type}")
+    for language in sorted(taxonomy["languages"]):
+        keys.append(f"language:{language}")
+    for framework in sorted(taxonomy["frameworks"]):
+        keys.append(f"framework:{framework}")
+    for prefix in _path_prefixes(changed_files):
+        keys.append(f"path:{prefix}")
+    return keys
+
+
+def _path_prefixes(paths: list[str]) -> list[str]:
+    prefixes: list[str] = []
+    seen: set[str] = set()
+    for path in paths:
+        parts = [part for part in path.replace("\\", "/").strip("/").split("/") if part]
+        for size in (1, 2):
+            if len(parts) < size:
+                continue
+            prefix = "/".join(parts[:size]).lower()
+            if prefix in seen:
+                continue
+            seen.add(prefix)
+            prefixes.append(prefix)
+    return prefixes
 
 
 def _feedback_value(record: dict) -> float:
@@ -197,6 +291,13 @@ def _feedback_value(record: dict) -> float:
     elif feedback in {"noisy", "ignored", "bad", "unhelpful"}:
         value -= 0.4
     return value
+
+
+def _ignored_feedback_value(record: dict) -> float:
+    feedback = str(record.get("user_feedback") or "").strip().lower()
+    if feedback in {"bad", "noisy", "unhelpful"}:
+        return -0.25
+    return -0.15
 
 
 def _apply_rules(inventory: SkillInventory, selected_paths: list[str]) -> list[AppliedRule]:

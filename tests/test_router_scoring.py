@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from agentpack.router.models import SkillArtifact
 from agentpack.router.scoring import score_skills
+from agentpack.router.service import _load_skill_success
 
 
 def test_scoring_prefers_pytest_and_webhook_skills():
@@ -329,3 +330,68 @@ def test_historical_success_boosts_used_skill():
 
     assert selected[0].skill.name == "auth-review"
     assert any("historical success boost" in reason for reason in selected[0].reasons)
+
+
+def test_recommended_only_feedback_does_not_create_history(tmp_path):
+    feedback = tmp_path / ".agentpack" / "skill_feedback.jsonl"
+    feedback.parent.mkdir()
+    feedback.write_text(
+        '{"task":"fix auth bug","recommended_skills":["auth-review"],'
+        '"changed_files":["src/auth/session.py"],"tests_passed":true,'
+        '"user_feedback":"helpful"}\n',
+        encoding="utf-8",
+    )
+
+    history = _load_skill_success(tmp_path)
+
+    assert history == {}
+
+
+def test_ignored_feedback_requires_repetition_and_is_scoped(tmp_path):
+    feedback = tmp_path / ".agentpack" / "skill_feedback.jsonl"
+    feedback.parent.mkdir()
+    line = (
+        '{"task":"fix auth bug","recommended_skills":["deployment-checklist"],'
+        '"ignored_skills":["deployment-checklist"],'
+        '"changed_files":["src/auth/session.py"],"user_feedback":"ignored"}\n'
+    )
+    feedback.write_text(line, encoding="utf-8")
+
+    assert _load_skill_success(tmp_path) == {}
+
+    feedback.write_text(line + line, encoding="utf-8")
+    history = _load_skill_success(tmp_path)
+
+    assert history["deployment-checklist|task_type:bugfix"] < 0
+    assert "deployment-checklist" not in history
+
+
+def test_historical_noise_penalizes_scoped_skill_match():
+    skill = SkillArtifact(
+        name="deployment-checklist",
+        path="skills/deployment-checklist/SKILL.md",
+        source="skills",
+        description="Review auth deployment checklist.",
+        triggers=["auth"],
+        side_effect_level="command",
+    )
+
+    _selected_without_history, _warnings, scores_without_history = score_skills(
+        [skill],
+        task="fix auth bug",
+        selected_paths=["src/auth/session.py"],
+        max_selected=1,
+        allow_external=False,
+    )
+    selected_with_history, _warnings, scores_with_history = score_skills(
+        [skill],
+        task="fix auth bug",
+        selected_paths=["src/auth/session.py"],
+        max_selected=1,
+        allow_external=False,
+        historical_success={"deployment-checklist|task_type:bugfix": -0.25},
+    )
+
+    assert scores_with_history[0].score < scores_without_history[0].score
+    assert selected_with_history == []
+    assert any("historical noise penalty" in reason for reason in scores_with_history[0].reasons)
