@@ -33,7 +33,7 @@ jobs:
             --mode balanced
 
       - name: Upload context pack
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: agentpack-context
           path: .agentpack/context.claude.md
