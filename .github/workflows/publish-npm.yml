@@ -12,7 +12,7 @@ jobs:
   check-release-branch:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - name: Verify tag is on a release branch
@@ -29,7 +29,7 @@ jobs:
   check-version-sync:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Verify tag, Python package, and npm package versions match
         run: |
           TAG_VERSION="${GITHUB_REF_NAME#v}"
@@ -55,7 +55,7 @@ jobs:
       contents: read
       id-token: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
