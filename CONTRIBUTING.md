@@ -16,6 +16,37 @@ For npm wrapper changes:
 npm install --prefix npm
 ```
 
+## First Contribution Quickstart
+
+Here's a terminal transcript showing how to make your first contribution:
+
+```bash
+# Clone the repository
+gh repo clone agentpack/agentpack
+cd agentpack
+
+# Install development dependencies
+python -m pip install -e ".[dev]"
+
+# Run a focused test to verify setup
+python -m pytest tests/test_docs_links.py -q
+
+# Create a branch for your changes
+git checkout -b fix-docs-link
+
+# Make your changes (e.g. edit a documentation file)
+# Then run the narrow test again to verify
+python -m pytest tests/test_docs_links.py -q
+
+# Commit and push your changes
+git add .
+git commit -m "Fix broken documentation link"
+git push -u origin fix-docs-link
+
+# Open a pull request
+gh pr create --fill
+```
+
 ## Finding A First Issue
 
 Start with issues labeled `good first issue`. These should have a narrow scope,
