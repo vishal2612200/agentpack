@@ -45,6 +45,39 @@ JavaScript and TypeScript teams can use the npm wrapper:
 npx @vishal2612200/agentpack route --task "fix auth token expiry"
 ```
 
+### Scriptable routing with JSON
+
+For scriptable workflows and tool integrations, you can output the routing results as JSON using the `--json` flag:
+
+```bash
+agentpack route --task "fix auth token expiry" --json
+```
+
+This output is intended for scripts and tools, not human reading. Below is a sample JSON output:
+
+```json
+{
+  "task": "fix auth token expiry",
+  "recommended_interaction_mode": "agent",
+  "current_agent": "generic",
+  "task_mode": "broad_feature",
+  "selected_files": [
+    {
+      "path": "src/auth/middleware.py",
+      "score": 950.0,
+      "include_mode": "summary",
+      "reasons": [
+        "task-specific route seed"
+      ]
+    }
+  ],
+  "selected_skills": [],
+  "applied_rules": [],
+  "suggested_commands": [],
+  "safety_warnings": []
+}
+```
+
 ## Related pages
 
 - [AI coding agent context packing](ai-coding-agent-context.md)

@@ -19,6 +19,47 @@ pipx run --spec agentpack-cli agentpack route --task "fix auth token expiry"
 
 `agentpack route` returns a lightweight task route for debugging, demos, or MCP-style routing.
 
+### Scriptable routing with JSON
+
+For scriptable usage or MCP-style routing where tools parse the results programmatically, you can run the route command with the `--json` flag:
+
+```bash
+agentpack route --task "fix auth token expiry" --json
+```
+
+This output is intended for scripts and tools, not human reading. Below is a sample of the JSON structure returned:
+
+```json
+{
+  "task": "fix auth token expiry",
+  "recommended_interaction_mode": "agent",
+  "current_agent": "claude",
+  "task_mode": "broad_feature",
+  "selected_files": [
+    {
+      "path": "src/auth/middleware.py",
+      "score": 950.0,
+      "include_mode": "summary",
+      "reasons": [
+        "task-specific route seed"
+      ]
+    },
+    {
+      "path": "tests/test_auth.py",
+      "score": 900.0,
+      "include_mode": "summary",
+      "reasons": [
+        "Likely test file for auth"
+      ]
+    }
+  ],
+  "selected_skills": [],
+  "applied_rules": [],
+  "suggested_commands": [],
+  "safety_warnings": []
+}
+```
+
 ## Claude Code setup
 
 Install AgentPack and configure the repository:
