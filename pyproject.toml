@@ -75,6 +75,7 @@ files = [
   "src/agentpack/core/e2e_benchmark.py",
   "src/agentpack/core/modes.py",
   "src/agentpack/router/models.py",
+  "src/agentpack/analysis"
 ]
 
 [tool.coverage.run]
