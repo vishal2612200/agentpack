@@ -42,6 +42,7 @@ Advanced command map:
 | `agentpack task` | Show, set, or clear global/thread-scoped task files |
 | `agentpack next` | Recommend the next AgentPack action from repo/task/context state |
 | `agentpack retrieve` | Retrieve file or symbol context from the latest pack registry |
+| `agentpack toon-validate` | Validate TOON syntax for agent-facing artifacts |
 | `agentpack learn` | Generate local learning notes, skill evidence, future-agent lessons, selected-file miss feedback, and local feedback signals |
 | `agentpack perf` | Show runtime scorecard and optional recent history from pack, retrieval, and output-compression events |
 | `agentpack wrap` | Pack fresh task context, then launch a coding agent binary |
@@ -895,6 +896,19 @@ pipx run --spec agentpack-cli agentpack route --task "fix auth token expiry"
 ```
 
 Output includes relevant files, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt. It uses the existing AgentPack file ranker in memory and does not write `.agentpack/context.md`. `--json` is the stable machine-readable alias; `--format json` remains supported.
+
+---
+
+### `agentpack toon-validate`
+
+Validate TOON syntax for agent-facing artifacts without applying a review-specific schema.
+
+```bash
+agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon
+agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --format json
+```
+
+By default the validator requires `@format toon` as the first non-empty line. Use `--allow-missing-format` only for legacy files.
 
 ---
 

@@ -157,7 +157,10 @@ def _parse_scalar(value: str) -> Any:
     if value == "false":
         return False
     if value.startswith(('"', "{", "[")):
-        return json.loads(value)
+        try:
+            return json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ToonParseError(f"invalid JSON scalar: {exc.msg}") from exc
     if re.fullmatch(r"-?\d+", value):
         return int(value)
     if re.fullmatch(r"-?\d+\.\d+", value):

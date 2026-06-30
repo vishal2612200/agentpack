@@ -26,6 +26,7 @@ Tools exposed:
     explain_file        — show score breakdown + symbols for a specific file
     get_related_files   — return import-graph neighbours of a file
     get_delta_context   — return selected-file delta since the previous pack
+    validate_toon       — validate TOON syntax from content or a repo-relative path
     get_stats           — token/saving stats for the latest pack
 """
 from __future__ import annotations
@@ -68,6 +69,7 @@ MCP_TOOL_NAMES = (
     "get_delta_context",
     "retrieve_context",
     "compress_output",
+    "validate_toon",
     "get_stats",
 )
 
@@ -569,6 +571,45 @@ def _compress_output_impl(root: Path, content: str, kind: str = "auto") -> str:
     return result
 
 
+def _validate_toon_impl(
+    root: Path,
+    *,
+    content: str = "",
+    path: str = "",
+    require_format: bool = True,
+    output_format: StructuredFormat = "auto",
+) -> str:
+    from agentpack.core.toon_validator import validate_toon_file, validate_toon_text
+
+    if bool(content) == bool(path):
+        payload = {
+            "ok": False,
+            "source": path or "<string>",
+            "root": None,
+            "parsed_type": None,
+            "error": "provide exactly one of content or path",
+            "warnings": [],
+        }
+    elif path:
+        target = (root / path).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError:
+            payload = {
+                "ok": False,
+                "source": path,
+                "root": None,
+                "parsed_type": None,
+                "error": "path must stay inside repo root",
+                "warnings": [],
+            }
+        else:
+            payload = validate_toon_file(target, require_format=require_format).as_dict()
+    else:
+        payload = validate_toon_text(content, source="<content>", require_format=require_format).as_dict()
+    return to_llm(root, payload, requested=output_format, root_name="agentpack_toon_validation")
+
+
 def _route_task_impl(root: Path, task: str, output_format: StructuredFormat = "auto") -> str:
     """Return read-only task route payload; does not write task/context files."""
     from agentpack.router.service import RouteService
@@ -776,6 +817,24 @@ def serve() -> None:
     def compress_output(content: str, kind: str = "auto") -> str:
         """Summarize noisy command output while preserving errors, failures, paths, and diffs."""
         return _compress_output_impl(_repo_root(), content=content, kind=kind)
+
+    @mcp.tool()
+    def validate_toon(content: str = "", path: str = "", require_format: bool = True, format: str = "auto") -> str:
+        """Validate TOON syntax from inline content or a repo-relative file path.
+
+        Args:
+            content: Inline TOON content. Mutually exclusive with path.
+            path: Repo-relative TOON file path. Mutually exclusive with content.
+            require_format: Require the first non-empty line to be @format toon.
+            format: auto | toon | json.
+        """
+        return _validate_toon_impl(
+            _repo_root(),
+            content=content,
+            path=path,
+            require_format=require_format,
+            output_format=format,
+        )
 
     @mcp.tool()
     def get_stats() -> str:
