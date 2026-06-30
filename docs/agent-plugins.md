@@ -59,6 +59,45 @@ preflight file, a runbook, stage prompts, and branch-scoped
 is a lens, not source evidence; reviewers still need `gh pr view`, `git diff`,
 and direct code reads.
 
+### Scriptable JSON Routing
+
+When integrating AgentPack with scripts or custom agent tooling, you can request routing output in JSON format:
+
+```bash
+agentpack route --task "refactor plugin loader" --json
+```
+
+This output is intended for scripts and tools, not human reading. A typical JSON response contains the following structure:
+
+```json
+{
+  "task": "refactor plugin loader",
+  "recommended_interaction_mode": "agent",
+  "current_agent": "codex",
+  "task_mode": "broad_feature",
+  "selected_files": [
+    {
+      "path": "src/agentpack/plugins/loader.py",
+      "score": 950.0,
+      "include_mode": "summary",
+      "reasons": [
+        "task-specific route seed"
+      ]
+    }
+  ],
+  "selected_skills": [],
+  "applied_rules": [],
+  "suggested_commands": [
+    {
+      "command": "agentpack doctor --agent codex",
+      "reason": "Verify active plugin source",
+      "source": "plugin_loader"
+    }
+  ],
+  "safety_warnings": []
+}
+```
+
 ## Codex Plugin
 
 Codex is the first concrete plugin package in this repo:
