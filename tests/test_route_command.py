@@ -163,6 +163,21 @@ def test_route_json_flag_alias_returns_machine_readable_output(tmp_path, monkeyp
     assert data["agent_prompt"]
 
 
+def test_route_invalid_format_exits_nonzero_and_mentions_json_alias(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    _write_route_fixture(tmp_path)
+
+    result = CliRunner().invoke(
+        app,
+        ["route", "--task", "fix flaky payment webhook test", "--format", "bad"],
+    )
+
+    assert result.exit_code != 0
+    assert "--format plain" in result.output or "plain" in result.output
+    assert "--format json" in result.output or "json" in result.output
+    assert "--json" in result.output
+
+
 def test_route_uses_recent_issue_references_as_hints(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_route_fixture(tmp_path)

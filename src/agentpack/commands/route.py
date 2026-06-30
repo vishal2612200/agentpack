@@ -16,7 +16,10 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Route a task to relevant files, rules, skills, and command suggestions."""
         if output_format not in {"plain", "json"}:
-            console.print("[red]Invalid format. Use plain|json.[/]")
+            console.print(
+                "[red]Invalid --format value.[/] Use [bold]--format plain[/] or "
+                "[bold]--format json[/] (or the [bold]--json[/] alias)."
+            )
             raise typer.Exit(1)
         effective_format = "json" if json_output else output_format
         try:
