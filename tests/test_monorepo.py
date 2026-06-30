@@ -127,7 +127,7 @@ use (
     api = tmp_path / "services" / "api"
     shared = tmp_path / "packages" / "shared"
     core = tmp_path / "packages" / "core"
-    
+
     api.mkdir(parents=True)
     shared.mkdir(parents=True)
     core.mkdir(parents=True)
@@ -166,7 +166,7 @@ replace (
 
     # 4. Assert that only local workspace edges are returned
     assert edges["services/api"] == {"packages/shared", "packages/core"}
-    
+
     # 5. Assert that external module replacements are NOT included in the edges
     for source, targets in edges.items():
         for target in targets:
