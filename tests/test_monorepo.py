@@ -109,3 +109,79 @@ def test_detect_workspace_dependency_edges_from_go_modules(tmp_path: Path) -> No
 
 def test_normalize_workspace() -> None:
     assert normalize_workspace("/apps/web/") == "apps/web"
+
+
+def test_go_workspace_multi_require_replace_edge_detection(tmp_path: Path) -> None:
+    # 1. Create a fake go.work file content as a string
+    go_work_content = """go 1.22
+
+use (
+\t./services/api
+\t./packages/shared
+\t./packages/core
+)
+"""
+    (tmp_path / "go.work").write_text(go_work_content, encoding="utf-8")
+
+    # Create workspace directories
+    api = tmp_path / "services" / "api"
+    shared = tmp_path / "packages" / "shared"
+    core = tmp_path / "packages" / "core"
+    
+    api.mkdir(parents=True)
+    shared.mkdir(parents=True)
+    core.mkdir(parents=True)
+
+    # 2. Create the go.mod files with multiple require/replace blocks,
+    # including at least two local modules and one external module replacement.
+    api_go_mod = """module example.com/api
+
+go 1.22
+
+require (
+\texample.com/shared v0.0.0
+)
+
+require (
+\texample.com/core v0.0.0
+\tgithub.com/external/module v1.0.0
+)
+
+replace (
+\texample.com/shared => ../../packages/shared
+)
+
+replace (
+\texample.com/core => ../../packages/core
+\tgithub.com/external/module => github.com/external/module/v2 v2.0.0
+)
+"""
+    api.joinpath("go.mod").write_text(api_go_mod, encoding="utf-8")
+    shared.joinpath("go.mod").write_text("module example.com/shared\n\ngo 1.22\n", encoding="utf-8")
+    core.joinpath("go.mod").write_text("module example.com/core\n\ngo 1.22\n", encoding="utf-8")
+
+    # 3. Parse to extract dependency edges
+    roots = detect_workspace_roots(tmp_path)
+    edges = detect_workspace_dependency_edges(tmp_path, roots)
+
+    # 4. Assert that only local workspace edges are returned
+    assert edges["services/api"] == {"packages/shared", "packages/core"}
+    
+    # 5. Assert that external module replacements are NOT included in the edges
+    for source, targets in edges.items():
+        for target in targets:
+            assert target in {"services/api", "packages/shared", "packages/core"}
+
+    # Test the low-level string parsing functions directly
+    from agentpack.analysis.monorepo import _go_replacements, _go_requires
+
+    # Assert that all required modules are extracted from multiple require blocks
+    requires = _go_requires(api_go_mod)
+    assert requires == {"example.com/shared", "example.com/core", "github.com/external/module"}
+
+    # Assert that replacements only map to local workspaces, and external ones are ignored
+    replacements = _go_replacements(tmp_path, api, api_go_mod, roots)
+    assert replacements == {
+        "example.com/shared": "packages/shared",
+        "example.com/core": "packages/core",
+    }
