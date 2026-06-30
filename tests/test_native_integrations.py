@@ -49,6 +49,11 @@ def test_native_integration_docs_show_advisory_and_enforcement_examples() -> Non
     # honesty boundary: enforcement still requires a blocking host API
     assert "block" in readme.lower()
 
+    # the integrations guide also explains the advisory/enforced boundary
+    integrations = (ROOT / "docs" / "integrations.md").read_text(encoding="utf-8")
+    assert "Advisory vs enforced" in integrations
+    assert "blocking" in integrations.lower()
+
 
 def test_extension_skeletons_default_to_agent_specific_readiness_commands() -> None:
     cursor_package = json.loads(
