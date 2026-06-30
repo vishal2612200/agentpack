@@ -16,6 +16,12 @@ A native host integration must provide all of these capabilities before AgentPac
 
 If any capability is missing, the integration remains `advisory`: useful and loud, but not hard-enforced.
 
+### Advisory vs Enforced: Examples
+
+**Advisory example (today):** Cursor loads `.cursorrules` telling the agent to repack context before editing. If AgentPack readiness fails, the rule still lets the agent edit — the rule is a strong suggestion the host cannot enforce. Nothing blocks the edit.
+
+**Enforcement example (what a host API would need):** the host exposes a mandatory `preEdit(file, prompt)` hook that AgentPack registers. Before any edit, the host calls it, AgentPack runs readiness, and a returned `{ block: true }` cancels the edit. Only a host API that can *block* a failed-readiness edit upgrades an entry from `advisory` to `enforced`.
+
 ## Status Index
 
 `status.json` is the machine-readable source of truth. Each entry has:

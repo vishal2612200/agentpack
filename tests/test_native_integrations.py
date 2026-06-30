@@ -41,6 +41,20 @@ def test_native_integration_docs_include_capability_matrix() -> None:
     assert "Current entries remain `advisory`." in readme
 
 
+def test_native_integration_docs_show_advisory_and_enforcement_examples() -> None:
+    readme = (ROOT / "native-integrations" / "README.md").read_text(encoding="utf-8")
+
+    assert "Advisory example" in readme
+    assert "Enforcement example" in readme
+    # honesty boundary: enforcement still requires a blocking host API
+    assert "block" in readme.lower()
+
+    # the integrations guide also explains the advisory/enforced boundary
+    integrations = (ROOT / "docs" / "integrations.md").read_text(encoding="utf-8")
+    assert "Advisory vs enforced" in integrations
+    assert "blocking" in integrations.lower()
+
+
 def test_extension_skeletons_default_to_agent_specific_readiness_commands() -> None:
     cursor_package = json.loads(
         (ROOT / "native-integrations" / "cursor-extension" / "package.json").read_text(encoding="utf-8")
