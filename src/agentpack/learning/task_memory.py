@@ -72,7 +72,6 @@ def build_task_memory_payload(
         "status": status,
         "thread": _clip(thread, 120),
         "summary": _clip(summary, MAX_SUMMARY_CHARS),
-        "cwd": str(root),
         "branch": branch or "",
         "git_sha": sha or "",
         "changed_files": changed,

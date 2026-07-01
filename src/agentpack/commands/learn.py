@@ -89,7 +89,6 @@ def register(app: typer.Typer) -> None:
 
         root = _root()
         cfg = load_config(root)
-        learning_request = ""
         request_parts = list(request or [])
         learning_request = ""
         if request_parts and request_parts[0] == "feedback":

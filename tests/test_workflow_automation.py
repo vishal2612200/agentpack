@@ -41,6 +41,8 @@ def test_work_initializes_starts_and_runs_next(tmp_path: Path, monkeypatch) -> N
     assert task_memory[-1]["task"] == "fix auth"
     assert task_memory[-1]["stage"] == "work_start"
     assert task_memory[-1]["status"] == "ready"
+    assert "cwd" not in task_memory[-1]
+    assert task_memory[-1]["provenance"]["cwd"]
 
 
 def test_work_run_dry_run_writes_loop_state_without_runner_execution(tmp_path: Path, monkeypatch) -> None:

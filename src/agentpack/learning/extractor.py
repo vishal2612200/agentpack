@@ -115,17 +115,21 @@ def apply_learning_request(report: LearningReport, request: str) -> LearningRepo
 
 def infer_learning_mode(request: str) -> str:
     lowered = request.lower()
-    if any(term in lowered for term in ("interview", "principal", "senior engineer", "oral")):
+    if any(_has_learning_term(lowered, term) for term in ("interview", "principal", "senior engineer", "oral")):
         return "interview"
-    if any(term in lowered for term in ("quiz", "question", "ask me", "test me")):
+    if any(_has_learning_term(lowered, term) for term in ("quiz", "question", "ask me", "test me")):
         return "quiz"
-    if any(term in lowered for term in ("failure", "debug", "incident", "prod", "break")):
+    if any(_has_learning_term(lowered, term) for term in ("failure", "debug", "incident", "prod", "break")):
         return "failure"
-    if any(term in lowered for term in ("review", "pr", "reviewer")):
+    if any(_has_learning_term(lowered, term) for term in ("review", "pr", "reviewer")):
         return "review"
-    if any(term in lowered for term in ("system design", "architecture", "tradeoff", "scale")):
+    if any(_has_learning_term(lowered, term) for term in ("system design", "architecture", "tradeoff", "scale")):
         return "system-design"
     return "study"
+
+
+def _has_learning_term(text: str, term: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
 
 
 def _concepts_for_text(text: str) -> list[str]:

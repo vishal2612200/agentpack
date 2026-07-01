@@ -29,6 +29,7 @@ class ToonValidationResult:
 
 def validate_toon_text(text: str, *, source: str = "<string>", require_format: bool = True) -> ToonValidationResult:
     warnings: list[str] = []
+    # Keep root metadata on failures so callers can show location context; `ok` remains the validity gate.
     root = _root_directive(text)
     if require_format and not _has_format_directive(text):
         return ToonValidationResult(
