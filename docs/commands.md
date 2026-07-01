@@ -75,10 +75,12 @@ Advanced command map:
 
 ### `agentpack learn`
 
-Generate local learning notes from the latest task, pack metadata, and git diff.
+Generate local learning notes from the latest task, pack metadata, git diff, or recent task memory. Lessons are generated on demand; `agentpack work` only records cheap task facts.
 
 ```bash
 agentpack learn --since main
+agentpack learn "quiz me on last task" --json
+agentpack learn "interview me on this PR"
 agentpack learn --json
 agentpack learn feedback helpful --target card:1
 agentpack learn feedback not-helpful --note "too generic"
@@ -89,7 +91,10 @@ Writes `.agentpack/learning.md`, `.agentpack/agent-lessons.md`, and
 `.agentpack/ranking-feedback.jsonl`; later packs give overlapping tasks a small
 boost for those missed paths. Explicit feedback writes
 `.agentpack/learning-feedback.jsonl`. Future packs inject bounded agent lessons
-when `[learning].inject_agent_lessons = true`.
+when `[learning].inject_agent_lessons = true`. Quoted learning requests switch
+the output into Task Coach mode (`quiz`, `interview`, `failure`, `review`, or
+`system-design`) and can use recent `task_memory` events from
+`.agentpack/session-events.jsonl`.
 
 ### `agentpack retrieve`
 
@@ -345,6 +350,11 @@ Run the optional guarded loop with a generic local runner after preparing fresh
 context. Keep this as an advanced verification path, not the main quickstart.
 It is a proof harness around existing agents, not AgentPack's default workflow
 and not an autonomous coding product.
+
+Plain `agentpack work "task"` stays on the fast path: it writes the task,
+refreshes context, records a bounded `task_memory` event, and returns. It does
+not generate lessons, render dashboards, call providers, or block the coding
+agent on coach output.
 
 ```bash
 agentpack work "fix auth token expiry" --run --runner "claude < .agentpack/context.claude.md" --verify "pytest -q"
@@ -674,6 +684,7 @@ Default outputs:
 - `.agentpack/learning-dashboard.html` with `--dashboard`
 - `.agentpack/team-lessons.md` with `--team-export`
 - `.agentpack/learning-feedback.jsonl` with `--feedback`
+- `.agentpack/learning-sessions.jsonl` for on-demand coach questions
 
 The command reads `.agentpack/task.md`, changed files, and bounded redacted
 diffs. It does not call a hosted service by default. The human-facing summary
@@ -697,7 +708,8 @@ enrich the report; AgentPack sends the bounded report JSON on stdin and accepts
 LearningReport-compatible JSON fields on stdout. This keeps hosted model,
 company LLM gateway, or custom rules-engine integration behind an explicit local
 command boundary. `--dashboard` writes a static HTML learning dashboard for
-IDE/browser review. `--team-export` writes a shareable lessons file that omits
+IDE/browser review, including recent task memory and queued weak spots from
+on-demand quiz/interview sessions. `--team-export` writes a shareable lessons file that omits
 personal skill history. `--ci` prints a quality report and exits non-zero when
 learning is too generic or lacks changed-file evidence. `--skills` and
 `--drills` turn the local skill map into a quick progress view and

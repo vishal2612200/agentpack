@@ -112,6 +112,26 @@ class LearningArtifact(BaseModel):
     excerpt: str = ""
 
 
+class LearningMemory(BaseModel):
+    task: str
+    stage: str = ""
+    status: str = ""
+    branch: str = ""
+    git_sha: str = ""
+    concepts: list[str] = Field(default_factory=list)
+    changed_files: list[str] = Field(default_factory=list)
+    selected_files: list[str] = Field(default_factory=list)
+
+
+class LearningWeakSpot(BaseModel):
+    concept: str
+    count: int = 0
+    mode: str = ""
+    latest_task: str = ""
+    latest_question: str = ""
+    evidence_files: list[str] = Field(default_factory=list)
+
+
 class BenchmarkSummary(BaseModel):
     latest: dict[str, Any] = Field(default_factory=dict)
     averages: dict[str, float] = Field(default_factory=dict)
@@ -164,6 +184,8 @@ class DashboardSnapshot(BaseModel):
     skills_inventory: SkillsInventorySummary = Field(default_factory=SkillsInventorySummary)
     skill_feedback: dict[str, Any] = Field(default_factory=dict)
     learning: list[LearningArtifact] = Field(default_factory=list)
+    learning_memories: list[LearningMemory] = Field(default_factory=list)
+    learning_weak_spots: list[LearningWeakSpot] = Field(default_factory=list)
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)
     loop: LoopSummary = Field(default_factory=LoopSummary)

@@ -36,6 +36,11 @@ def test_work_initializes_starts_and_runs_next(tmp_path: Path, monkeypatch) -> N
     assert payload["passed"] is True
     assert [stage["name"] for stage in payload["stages"]] == ["init", "start", "next"]
     assert any("start" in call for call in calls)
+    events = (tmp_path / ".agentpack" / "session-events.jsonl").read_text(encoding="utf-8").splitlines()
+    task_memory = [json.loads(line) for line in events if json.loads(line).get("type") == "task_memory"]
+    assert task_memory[-1]["task"] == "fix auth"
+    assert task_memory[-1]["stage"] == "work_start"
+    assert task_memory[-1]["status"] == "ready"
 
 
 def test_work_run_dry_run_writes_loop_state_without_runner_execution(tmp_path: Path, monkeypatch) -> None:

@@ -29,6 +29,7 @@ def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     assert ".agentpack/session.json" in lines
     assert ".agentpack/task.md" in lines
     assert ".agentpack/session-events.jsonl" in lines
+    assert ".agentpack/learning-sessions.jsonl" in lines
     assert ".agentpack/pack-registry.json" in lines
     assert ".agentpack/learning.md" in lines
     assert ".agentpack/daily-summary.md" in lines

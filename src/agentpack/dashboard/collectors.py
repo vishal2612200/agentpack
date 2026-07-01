@@ -19,6 +19,8 @@ from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
     LearningArtifact,
+    LearningMemory,
+    LearningWeakSpot,
     LoopSummary,
     ProjectInfo,
     SelectedFileRow,
@@ -33,6 +35,8 @@ from agentpack.dashboard.models import (
     TaskInfo,
     ThreadSummary,
 )
+from agentpack.learning.sessions import summarize_weak_spots
+from agentpack.learning.task_memory import recent_task_memories
 from agentpack.router.models import SkillArtifact
 from agentpack.router.skills_index import ensure_inventory_index
 
@@ -91,6 +95,8 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     skill_section = _skill_section(meta, feedback_rows)
     skills_inventory = _skills_inventory_summary(root, initialized=agentpack_dir.exists())
     learning = _learning_artifacts(agentpack_dir)
+    learning_memories = _learning_memories(root)
+    learning_weak_spots = _learning_weak_spots(root)
     benchmarks = _benchmark_summary(
         _load_jsonl(agentpack_dir / "metrics.jsonl"),
         _load_jsonl(agentpack_dir / "benchmark_results.jsonl"),
@@ -113,6 +119,8 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         skills_inventory=skills_inventory,
         skill_feedback=_feedback_summary(feedback_rows),
         learning=learning,
+        learning_memories=learning_memories,
+        learning_weak_spots=learning_weak_spots,
         benchmarks=benchmarks,
         threads=threads,
         loop=loop,
@@ -604,6 +612,40 @@ def _learning_artifacts(agentpack_dir: Path) -> list[LearningArtifact]:
         )
         for label, name in artifacts
     ]
+
+
+def _learning_memories(root: Path) -> list[LearningMemory]:
+    rows: list[LearningMemory] = []
+    for item in reversed(recent_task_memories(root, limit=6)):
+        rows.append(
+            LearningMemory(
+                task=str(item.get("task") or ""),
+                stage=str(item.get("stage") or ""),
+                status=str(item.get("status") or ""),
+                branch=str(item.get("branch") or ""),
+                git_sha=str(item.get("git_sha") or "")[:12],
+                concepts=_string_list(item.get("concepts"))[:6],
+                changed_files=_string_list(item.get("changed_files"))[:8],
+                selected_files=_string_list(item.get("selected_files"))[:8],
+            )
+        )
+    return rows
+
+
+def _learning_weak_spots(root: Path) -> list[LearningWeakSpot]:
+    rows: list[LearningWeakSpot] = []
+    for item in summarize_weak_spots(root, limit=6):
+        rows.append(
+            LearningWeakSpot(
+                concept=str(item.get("concept") or ""),
+                count=_as_int(item.get("count"), 0),
+                mode=str(item.get("mode") or ""),
+                latest_task=str(item.get("latest_task") or ""),
+                latest_question=str(item.get("latest_question") or ""),
+                evidence_files=_string_list(item.get("evidence_files"))[:6],
+            )
+        )
+    return rows
 
 
 def _bounded_excerpt(path: Path, limit: int = MAX_EXCERPT_CHARS) -> str:

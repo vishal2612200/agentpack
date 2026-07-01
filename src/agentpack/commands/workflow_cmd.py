@@ -24,6 +24,7 @@ from agentpack.core.loop_protocol import (
 )
 from agentpack.core.thread_context import resolve_thread_option
 from agentpack.integrations.platform import cli_module_argv
+from agentpack.learning.task_memory import record_task_memory
 
 
 def register(app: typer.Typer) -> None:
@@ -65,6 +66,14 @@ def register(app: typer.Typer) -> None:
         if pack_only:
             start_args.append("--pack-only")
         stages.append(_run("start", cli_module_argv(*start_args), root))
+        _record_task_memory_safe(
+            root,
+            task=task_text,
+            stage="work_start",
+            status="ready" if stages[-1]["returncode"] == 0 else "failed",
+            thread=thread,
+            summary=stages[-1].get("detail", ""),
+        )
         if stages[-1]["returncode"] == 0 and not no_next and not run_loop_requested and not dry_run:
             stages.append(_run("next", cli_module_argv("next"), root))
         if stages[-1]["returncode"] != 0:
@@ -97,6 +106,15 @@ def register(app: typer.Typer) -> None:
                 state,
                 refresh=lambda: _refresh_loop_context(root, agent, mode, budget, resolve_thread_option(thread)),
             ).model_dump(mode="json")
+            _record_task_memory_safe(
+                root,
+                task=task_text,
+                stage="work_loop",
+                status=str(loop_summary.get("status") or "unknown"),
+                thread=thread,
+                summary=str(loop_summary.get("reason") or loop_summary.get("next_command") or ""),
+                loop_summary=loop_summary,
+            )
             if loop_summary["status"] != "ready_to_finish":
                 _finish(stages, json_output, loop_summary=loop_summary)
                 raise typer.Exit(1)
@@ -151,6 +169,14 @@ def register(app: typer.Typer) -> None:
         stages.append(_run("state-done", cli_module_argv(*state_args), root))
         if stages[-1]["returncode"] == 0 and loop_applies:
             mark_done(root, summary)
+        _record_task_memory_safe(
+            root,
+            task=finish_task,
+            stage="finish",
+            status="done" if stages[-1]["returncode"] == 0 else "failed",
+            thread=thread,
+            summary=summary,
+        )
         if archive_thread and thread_id and stages[-1]["returncode"] == 0:
             stages.append(_run("threads-archive", cli_module_argv("threads", "archive", thread_id, "--summary", summary), root))
         _finish(stages, json_output)
@@ -265,6 +291,31 @@ def _run(name: str, command: list[str], root: Path) -> dict[str, Any]:
         "returncode": result.returncode,
         "detail": detail,
     }
+
+
+def _record_task_memory_safe(
+    root: Path,
+    *,
+    task: str,
+    stage: str,
+    status: str,
+    thread: str = "",
+    summary: str = "",
+    loop_summary: dict[str, Any] | None = None,
+) -> None:
+    try:
+        record_task_memory(
+            root,
+            task=task,
+            stage=stage,
+            status=status,
+            thread=thread,
+            summary=summary,
+            loop_summary=loop_summary,
+        )
+    except Exception:
+        # Task memory is opportunistic and must never slow or fail the agent path.
+        return
 
 
 def _finish(

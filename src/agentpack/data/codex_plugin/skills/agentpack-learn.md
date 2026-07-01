@@ -44,6 +44,16 @@ if [ -f .agentpack/session-events.jsonl ]; then tail -n 40 .agentpack/session-ev
 Use `.agentpack/context.md` only when compact context lacks needed detail.
 Do not invent repo facts not present in local context or checked files.
 
+## On-Demand Task Coach Payload
+
+Before teaching, try to generate a bounded local learning payload for the exact user request:
+
+```bash
+agentpack learn "<user learning statement>" --json
+```
+
+If this fails, continue from the local files above and say the generated payload was unavailable. Do not run providers or dashboard rendering unless the user explicitly asks.
+
 ## Teaching Modes
 
 Choose the smallest mode that matches the user's learning statement.

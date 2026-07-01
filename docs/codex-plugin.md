@@ -136,6 +136,9 @@ For learning from the current local context:
 ```
 
 The learning command keeps a stable prompt prefix for caching and appends the user learning statement at the end.
+It also asks the local CLI for `agentpack learn "<statement>" --json` first, so
+plugin lessons can use recent task memory, changed-file evidence, and Task
+Coach questions without adding another command.
 
 ## Rules For Codex
 

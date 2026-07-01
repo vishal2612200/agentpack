@@ -5,6 +5,7 @@ from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
     LearningArtifact,
+    LearningWeakSpot,
     LoopSummary,
     ProjectInfo,
     SelectedFileRow,
@@ -32,6 +33,16 @@ def test_render_dashboard_html_contains_core_sections() -> None:
                 task_specific=[SkillRow(name="auth-review", confidence=0.8, status="used_helpful")]
             ),
             learning=[LearningArtifact(label="Learning notes", path=".agentpack/learning.md", exists=True)],
+            learning_weak_spots=[
+                LearningWeakSpot(
+                    concept="caching",
+                    count=2,
+                    mode="quiz",
+                    latest_task="Fix cache ttl bug",
+                    latest_question="How should TTL invalidation behave?",
+                    evidence_files=["src/cache.py"],
+                )
+            ],
             benchmarks=BenchmarkSummary(averages={"selection_recall": 0.8, "skill_recall_at_3": 0.9}),
             loop=LoopSummary(
                 exists=True,
@@ -63,6 +74,9 @@ def test_render_dashboard_html_contains_core_sections() -> None:
     assert 'href="#inventory"' in html
     assert 'class="table-wrap"' in html
     assert 'class="learning-list"' in html
+    assert "weak spot" in html
+    assert "caching" in html
+    assert "How should TTL invalidation behave?" in html
     assert 'class="benchmark-grid"' in html
     assert 'class="empty-state">No recent benchmark misses.' in html
     assert "top: 54px" not in html

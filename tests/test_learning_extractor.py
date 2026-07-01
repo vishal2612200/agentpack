@@ -89,7 +89,9 @@ def test_build_learning_report_creates_copy_ready_rate_limit_redis_topic():
     assert topic.title == "Implementing Rate Limits With Redis"
     assert "Redis-backed counters" in topic.why
     assert "src/rate_limit.py" in topic.files
-    assert "Teach me implementing rate limits with redis" in topic.prompt
+    assert "Topic: Implementing Rate Limits With Redis" in topic.prompt
+    assert topic.questions
+    assert topic.questions[0].expected_points
     assert "Evidence files: src/rate_limit.py" in topic.prompt
 
 

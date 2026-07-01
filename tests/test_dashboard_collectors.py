@@ -14,6 +14,7 @@ from agentpack.dashboard.models import (
     SkillSection,
     TaskInfo,
 )
+from agentpack.learning.models import LearningSession
 
 
 def test_dashboard_snapshot_is_json_safe() -> None:
@@ -102,6 +103,60 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
     assert snapshot.context.raw_tokens == 40000
     assert snapshot.selected_files[0].path == "src/auth/token.py"
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8
+
+
+def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (agentpack / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "task": "Fix cache ttl bug",
+                "stage": "finish",
+                "status": "done",
+                "branch": "main",
+                "git_sha": "abcdef1234567890",
+                "concepts": ["caching"],
+                "changed_files": ["src/cache.py"],
+                "selected_files": ["src/cache.py"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    assert snapshot.learning_memories[0].task == "Fix cache ttl bug"
+    assert snapshot.learning_memories[0].concepts == ["caching"]
+
+
+def test_project_dashboard_summarizes_learning_weak_spots(tmp_path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    queued = LearningSession(
+        task="Fix cache ttl bug",
+        request="quiz me on last task",
+        mode="quiz",
+        topic="Cache Correctness",
+        question="How should TTL invalidation behave?",
+        expected_points=["TTL expires stale entries"],
+        evidence_files=["src/cache.py"],
+        concepts=["caching"],
+    )
+    agentpack.joinpath("learning-sessions.jsonl").write_text(
+        json.dumps(queued.model_dump(mode="json")) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    assert snapshot.learning_weak_spots[0].concept == "caching"
+    assert snapshot.learning_weak_spots[0].count == 1
+    assert snapshot.learning_weak_spots[0].mode == "quiz"
+    assert snapshot.learning_weak_spots[0].latest_task == "Fix cache ttl bug"
+    assert snapshot.learning_weak_spots[0].evidence_files == ["src/cache.py"]
 
 
 def test_project_dashboard_summarizes_skill_feedback(tmp_path) -> None:
