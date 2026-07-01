@@ -416,6 +416,28 @@ def _chip_list(values: Iterable[str], *, empty: str) -> str:
 
 def _learning_rows(snapshot: DashboardSnapshot) -> str:
     rows = []
+    for item in snapshot.learning_weak_spots:
+        files = ", ".join(item.evidence_files[:3]) or "no evidence files captured"
+        rows.append(
+            '<article class="info-card learning-card">'
+            f'<div><strong>{_e(item.concept or "Weak spot")}</strong><br>'
+            f'<small>{item.count} queued question(s) / {_e(item.mode or "mixed")}</small>'
+            f'<p>{_e(item.latest_question or item.latest_task or "No question captured.")}</p>'
+            f'<p><code>{_e(files)}</code></p></div>'
+            '<span class="pill stale">weak spot</span>'
+            "</article>"
+        )
+    for item in snapshot.learning_memories:
+        concepts = _chip_list(item.concepts, empty="no concepts")
+        files = ", ".join(item.changed_files[:3]) or "no changed files captured"
+        rows.append(
+            '<article class="info-card learning-card">'
+            f'<div><strong>{_e(item.task or "Recent task")}</strong><br>'
+            f'<small>{_e(item.stage or "task")} / {_e(item.status or "unknown")} / {_e(item.branch or "unknown")}</small>'
+            f'<p>{concepts}</p><p><code>{_e(files)}</code></p></div>'
+            '<span class="pill present">memory</span>'
+            "</article>"
+        )
     for item in snapshot.learning:
         state = "present" if item.exists else "missing"
         excerpt = f"<p>{_e(item.excerpt)}</p>" if item.excerpt else ""

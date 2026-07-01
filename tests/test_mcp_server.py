@@ -20,6 +20,7 @@ from agentpack.mcp_server import (
     _resolve_mcp_task,
     _pack_context_impl,
     _route_task_impl,
+    _validate_toon_impl,
 )
 
 
@@ -132,6 +133,35 @@ def test_mcp_compress_output_preserves_error(tmp_path):
     result = _compress_output_impl(tmp_path, "noise\n" * 30 + "ERROR src/app.py:10 failed\n", kind="pytest")
 
     assert "ERROR src/app.py:10 failed" in result
+
+
+def test_mcp_validate_toon_accepts_content(tmp_path):
+    result = _validate_toon_impl(
+        tmp_path,
+        content="@format toon\n@root sample\nname: demo\nitems[]:\n  - one\n",
+        output_format="json",
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["root"] == "sample"
+    assert payload["parsed_type"] == "dict"
+
+
+def test_mcp_validate_toon_rejects_missing_format(tmp_path):
+    result = _validate_toon_impl(tmp_path, content="name: demo\n", output_format="json")
+
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert "missing required @format toon" in payload["error"]
+
+
+def test_mcp_validate_toon_requires_one_source(tmp_path):
+    result = _validate_toon_impl(tmp_path, output_format="json")
+
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert "provide exactly one" in payload["error"]
 
 
 def test_mcp_retrieve_context_missing_registry(tmp_path):

@@ -64,6 +64,66 @@ def test_learn_json_outputs_json_without_writing_default_file(tmp_path, monkeypa
     assert not (repo / ".agentpack" / "learning.md").exists()
 
 
+def test_learn_json_accepts_on_demand_quiz_request(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    result = runner.invoke(app, ["learn", "quiz", "me", "on", "this", "task", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["learning_request"] == "quiz me on this task"
+    assert payload["coach_mode"] == "quiz"
+    assert payload["learning_topics"][0]["questions"]
+    assert payload["learning_topics"][0]["questions"][0]["mode"] == "quiz"
+    sessions = [
+        json.loads(line)
+        for line in (repo / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert sessions[0]["request"] == "quiz me on this task"
+    assert sessions[0]["mode"] == "quiz"
+    assert sessions[0]["status"] == "queued"
+    assert sessions[0]["question"]
+    assert sessions[0]["evidence_files"] == ["cli.py"]
+
+
+def test_learn_can_build_from_last_task_memory(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    (repo / ".agentpack" / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "task": "Ship cache invalidation fix",
+                "stage": "finish",
+                "status": "done",
+                "changed_files": ["src/cache.py"],
+                "selected_files": ["src/cache.py"],
+                "concepts": ["caching"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (repo / "cli.py").write_text("import typer\n\napp = typer.Typer()\n", encoding="utf-8")
+    monkeypatch.chdir(repo)
+
+    result = runner.invoke(app, ["learn", "interview me on last task", "--json"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    assert payload["task"] == "Ship cache invalidation fix"
+    assert payload["scope"] == "task-memory"
+    assert payload["coach_mode"] == "interview"
+    assert payload["source_files"][0]["path"] == "src/cache.py"
+    assert "caching" in payload["concepts"]
+    sessions = [
+        json.loads(line)
+        for line in (repo / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert sessions[0]["task"] == "Ship cache invalidation fix"
+    assert sessions[0]["concepts"] == ["caching"]
+
+
 def test_learn_custom_output_path(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -163,8 +223,9 @@ def test_learn_writes_dashboard_and_team_export(tmp_path, monkeypatch):
     assert "AgentPack Learn Dashboard" in dashboard
     assert 'class="topbar"' in dashboard
     assert "Changed File Evidence" in dashboard
-    assert "Learning Topics" in dashboard
-    assert "Copy-ready study prompt" in dashboard
+    assert "Coach Queue" in dashboard
+    assert "Study prompt" in dashboard
+    assert "Question" in dashboard
     assert "Learning Cards" in dashboard
     assert "<script" not in dashboard.lower()
     assert "https://" not in dashboard

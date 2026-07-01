@@ -227,6 +227,7 @@ agentpack diagnose-selection
 .agentpack/snapshots/     ✗ gitignored
 .agentpack/context.*      ✗ gitignored
 .agentpack/task.md        ✗ gitignored (local current task)
+.agentpack/learning-sessions.jsonl ✗ gitignored (local coach queue)
 .agentpack/learning.md    ✗ gitignored (local learning notes)
 .agentpack/daily-summary.md ✗ gitignored (local daily rollup)
 .agentpack/skills-progress.json ✗ gitignored (local skill evidence)

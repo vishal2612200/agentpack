@@ -6,7 +6,8 @@ features around that router without becoming a provider proxy.
 | Need | AgentPack surface |
 |---|---|
 | Retrieve selected, symbol, or omitted context after a pack | `agentpack retrieve` and MCP `retrieve_context` |
-| Generate local lessons from task diffs | `agentpack learn` |
+| Record cheap task memory while work starts or finishes | `agentpack work` and `agentpack finish` |
+| Generate on-demand lessons, quiz, interview prep, or failure drills | `agentpack learn "<request>"` and `@agentpack-learn <request>` |
 | Record learning feedback | `agentpack learn feedback helpful|not-helpful` |
 | Track local token and retrieval activity | `agentpack perf --history N` and `agentpack stats` |
 | Launch an agent after context refresh | `agentpack wrap` |
@@ -69,3 +70,14 @@ instructions: read context, keep edits scoped, avoid commits/pushes/destructive
 commands, run no hidden approval flow, and emit the final JSON contract.
 Historical outcomes are appended to `.agentpack/loop_metrics.jsonl`; inspect
 them with `agentpack loop-metrics` or the dashboard.
+
+`agentpack work` also appends bounded `task_memory` facts to
+`.agentpack/session-events.jsonl`. This stays on the fast path: no provider
+calls, no dashboard rendering, and no generated lesson. `agentpack learn` and
+the plugin read those facts later when the developer explicitly asks to learn,
+quiz, interview, or debug from recent work.
+
+On-demand `agentpack learn "quiz me on last task"` style requests append queued
+coach questions to `.agentpack/learning-sessions.jsonl`. The dashboard rolls
+those local records into weak-spot cards, so developers see what to revisit
+without slowing `work`, `loop`, or `finish`.
