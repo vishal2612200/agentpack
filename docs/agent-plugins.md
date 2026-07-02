@@ -54,10 +54,16 @@ Use `<agent>` values such as `codex`, `claude`, `cursor`, `windsurf`, `antigravi
 `auto` detects the active host and does not default to Codex.
 
 `agentpack review` prepares the local two-stage PR review bundle. It writes a
-preflight file, a runbook, stage prompts, and branch-scoped
-`*_understanding.toon` / `*_findings.toon` outputs. The optional review context
-is a lens, not source evidence; reviewers still need `gh pr view`, `git diff`,
-and direct code reads.
+preflight file, a runbook, stage prompts, copy-fill TOON templates, run-scoped
+`understanding.toon` / `findings.toon` outputs, and optional `posted-review.json`
+post state. The optional review context is a lens, not source evidence;
+reviewers still need `gh pr view`, `git diff`, and direct code reads. The final
+check canonicalizes safe schema-matching JSON or fenced output to TOON, and
+writes a repair guide for malformed artifacts. For PR-bound reviews,
+`agentpack review --check --dry-run-post` writes the exact inline review payload
+without calling GitHub, while `agentpack review --check --post-inline-comments`
+posts validated findings as inline GitHub PR review comments and fails closed if
+a finding cannot map to a right-side PR diff line.
 
 ### Scriptable JSON Routing
 

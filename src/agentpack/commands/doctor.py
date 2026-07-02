@@ -44,6 +44,7 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
         root = _root()
         if fix:
+            _print_repair_boundary(agent)
             _safe_fix(root, agent)
 
         # --- CLI binary ---
@@ -71,6 +72,13 @@ def register(app: typer.Typer) -> None:
             console.print(
                 "  [yellow]![/] installed CLI command surface may be stale; "
                 f"exact repair: {cli_status.get('repair_command')}"
+            )
+            _print_action(
+                indent="  ",
+                what_failed="installed CLI command surface is stale",
+                why_it_matters="agent instructions may suggest commands this installed binary cannot run",
+                repair_command=str(cli_status.get("repair_command") or "pipx upgrade agentpack-cli"),
+                safe_to_continue="yes for direct repo work; no for AgentPack-managed refresh until repaired",
             )
             ok = False
 
@@ -294,6 +302,13 @@ def register(app: typer.Typer) -> None:
         if not _local_has_mcp and not _global_has_mcp and not _codex_has_mcp:
             console.print("  [yellow]![/] MCP server not registered — mcp__agentpack__* tools unavailable")
             console.print("  [yellow]![/] exact repair: agentpack install --agent codex or agentpack install --agent claude")
+            _print_action(
+                indent="  ",
+                what_failed="MCP server is not registered for this repo or host",
+                why_it_matters="agents cannot call AgentPack tools and may fall back to stale markdown context",
+                repair_command="agentpack repair --agent all",
+                safe_to_continue="yes with direct rg/git evidence; no if relying on MCP context",
+            )
             ok = False
         else:
             console.print(
@@ -332,6 +347,13 @@ def register(app: typer.Typer) -> None:
                     continue
                 fix = f" — run: {check.fix}" if check.fix else ""
                 console.print(f"    [red]✗[/] {check.label}: {check.detail}{fix}")
+                _print_action(
+                    indent="    ",
+                    what_failed=f"{selected} {check.label}: {check.detail}",
+                    why_it_matters="agent host may miss current AgentPack instructions, hooks, or MCP setup",
+                    repair_command=check.fix or f"agentpack repair --agent {selected}",
+                    safe_to_continue="no for AgentPack-managed agent setup; direct repo inspection is still safe",
+                )
                 selected_ok = False
                 ok = False
             if not selected_ok:
@@ -393,6 +415,12 @@ def register(app: typer.Typer) -> None:
 
 def _safe_fix(root: Path, agent: str) -> None:
     console.print("[bold]Safe fixes[/]")
+    console.print(
+        "  [dim]doctor --fix diagnoses first, then applies AgentPack-managed local repairs. "
+        "Direct mutation path: agentpack repair --agent <agent>.[/]"
+    )
+    if agent == "all":
+        console.print("  [dim]Repair scope: every supported local agent integration.[/]")
     status = agentignore_sync_status(root)
     if status.action != "unchanged":
         status.path.parent.mkdir(parents=True, exist_ok=True)
@@ -407,6 +435,27 @@ def _safe_fix(root: Path, agent: str) -> None:
 
             install_agent_integration(root, selected, install_slash_command=_install_slash_command)
             console.print(f"  [green]✓[/] repaired {selected} integration")
+
+
+def _print_repair_boundary(agent: str) -> None:
+    target = "every supported local agent" if agent == "all" else f"{agent} local agent"
+    console.print("[bold]Doctor repair mode[/]")
+    console.print(f"  What doctor does: diagnose, then run safe AgentPack-managed repairs for {target}.")
+    console.print("  What repair does: apply the requested integration repair directly, including --global when requested.")
+
+
+def _print_action(
+    *,
+    indent: str,
+    what_failed: str,
+    why_it_matters: str,
+    repair_command: str,
+    safe_to_continue: str,
+) -> None:
+    console.print(f"{indent}What failed: {what_failed}")
+    console.print(f"{indent}Why it matters: {why_it_matters}")
+    console.print(f"{indent}Repair command: {repair_command}")
+    console.print(f"{indent}Safe to continue: {safe_to_continue}")
 
 
 def _print_mcp_runtime_doctor(check: McpRuntimeCheck) -> None:

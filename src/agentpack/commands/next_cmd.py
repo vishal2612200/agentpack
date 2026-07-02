@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
 import typer
 
@@ -15,7 +16,6 @@ from agentpack.core.thread_context import detect_conflicts, list_thread_rows
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.router.skills_index import ensure_inventory_index
 from agentpack.session.state import TASK_FILE
-import subprocess
 
 
 def register(app: typer.Typer) -> None:
@@ -34,7 +34,7 @@ def register(app: typer.Typer) -> None:
         if fix and any(item["kind"] == "stale_context" for item in recommendations):
             stats = run_refresh(root, "auto", "balanced", 0)
             if stats:
-                recommendations = [{"kind": "fixed", "command": "agentpack next", "reason": "refreshed stale context"}]
+                recommendations = [_recommendation("fixed", "agentpack next", "refreshed stale context")]
                 fixes.append({"kind": "stale_context", "command": refresh_commands("auto").repair, "returncode": 0})
         payload = {"recommendations": recommendations, "fixes": fixes, "ok": not recommendations}
         if json_output:
@@ -43,9 +43,13 @@ def register(app: typer.Typer) -> None:
         if not recommendations:
             console.print("[green]✓[/] No obvious AgentPack action required.")
             return
+        console.print("[bold]AgentPack next action[/]")
         for item in recommendations:
-            console.print(f"[bold]{item['command']}[/]")
-            console.print(f"  [dim]{item['reason']}[/]")
+            console.print(f"Run: [bold]{item['command']}[/]")
+            console.print(f"  What failed: [dim]{item['reason']}[/]")
+            if item.get("why_it_matters"):
+                console.print(f"  Why it matters: [dim]{item['why_it_matters']}[/]")
+            console.print(f"  Safe to continue: [dim]{item.get('safe_to_continue', 'unknown')}[/]")
         for item in fixes:
             marker = "[green]✓[/]" if item.get("returncode") == 0 else "[red]✗[/]"
             console.print(f"{marker} fixed {item['kind']}: [dim]{item['command']}[/]")
@@ -54,16 +58,16 @@ def register(app: typer.Typer) -> None:
 def _recommendations(root) -> list[dict[str, str]]:
     items: list[dict[str, str]] = []
     if not (root / ".agentpack" / "config.toml").exists():
-        return [{"kind": "init", "command": "agentpack init --yes", "reason": "repo is not initialized"}]
+        return [_recommendation("init", "agentpack init --yes", "repo is not initialized")]
     if not _has_task(root):
-        items.append({"kind": "missing_task", "command": 'agentpack start "describe the task"', "reason": "no concrete task is set"})
+        items.append(_recommendation("missing_task", 'agentpack start "describe the task"', "no concrete task is set"))
     fresh, reason = _context_is_fresh(root)
     if not fresh:
-        items.append({"kind": "stale_context", "command": refresh_commands("auto").repair, "reason": reason})
+        items.append(_recommendation("stale_context", refresh_commands("auto").repair, reason))
     if _has_thread_conflicts(root):
-        items.append({"kind": "thread_conflict", "command": "agentpack threads --conflicts", "reason": "active threads overlap on this branch/worktree"})
+        items.append(_recommendation("thread_conflict", "agentpack threads --conflicts", "active threads overlap on this branch/worktree"))
     if _pack_looks_noisy(root):
-        items.append({"kind": "selection_noise", "command": "agentpack diagnose-selection", "reason": "latest pack has broad/noisy selection signals"})
+        items.append(_recommendation("selection_noise", "agentpack diagnose-selection", "latest pack has broad/noisy selection signals"))
     items.extend(_skills_index_recommendations(root))
     items.extend(_loop_recommendations(root))
     return items
@@ -102,11 +106,7 @@ def _skills_index_recommendations(root) -> list[dict[str, str]]:
         ensure_inventory_index(root, cfg.skills.paths)
     except Exception as exc:
         return [
-            {
-                "kind": "skills_index_failed",
-                "command": "agentpack skills index",
-                "reason": f"automatic skills index refresh failed: {exc}",
-            }
+            _recommendation("skills_index_failed", "agentpack skills index", f"automatic skills index refresh failed: {exc}")
         ]
     return []
 
@@ -119,12 +119,42 @@ def _loop_recommendations(root) -> list[dict[str, str]]:
     if state is None:
         return []
     if not state.runner:
-        return [{"kind": "loop_runner_missing", "command": 'agentpack work "..." --run --runner "..."', "reason": "Ralph Loop state exists but no runner is configured"}]
+        return [_recommendation("loop_runner_missing", 'agentpack work "..." --run --runner "..."', "Ralph Loop state exists but no runner is configured")]
     if state.status == "ready_to_finish":
-        return [{"kind": "loop_ready_to_finish", "command": "agentpack finish --since main", "reason": "Ralph Loop verification passed"}]
+        return [_recommendation("loop_ready_to_finish", "agentpack finish --since main", "Ralph Loop verification passed")]
     if state.status == "blocked":
-        return [{"kind": "loop_blocked", "command": "agentpack dashboard", "reason": f"Ralph Loop blocked: {state.blocked_reason or 'inspect loop failures'}"}]
-    return [{"kind": "loop_continue", "command": f'agentpack work "{state.task}" --run', "reason": f"Ralph Loop is {state.status}"}]
+        return [_recommendation("loop_blocked", "agentpack dashboard", f"Ralph Loop blocked: {state.blocked_reason or 'inspect loop failures'}")]
+    return [_recommendation("loop_continue", f'agentpack work "{state.task}" --run', f"Ralph Loop is {state.status}")]
+
+
+def _recommendation(kind: str, command: str, reason: str) -> dict[str, str]:
+    why = {
+        "init": "AgentPack cannot create reliable task/context state until repo files exist.",
+        "missing_task": "Generic or placeholder tasks produce noisy file selection.",
+        "stale_context": "Packed selected files may describe old code, old task text, or a different snapshot.",
+        "thread_conflict": "Multiple active threads may edit overlapping files without coordination.",
+        "selection_noise": "Treat current pack as orientation only until noisy selection is diagnosed.",
+        "skills_index_failed": "Skill/rule routing may miss local guidance until the index refreshes.",
+        "loop_runner_missing": "Automated loop cannot run without an explicit runner command.",
+        "loop_ready_to_finish": "Verification passed; finish captures evidence and closes the loop state.",
+        "loop_blocked": "Loop state is blocked; inspect evidence before another run.",
+        "loop_continue": "Loop state has pending work; continuing keeps state and rollback evidence aligned.",
+        "fixed": "Safe refresh completed; rerun next to confirm remaining state.",
+    }.get(kind, "Run the command before trusting AgentPack output.")
+    safe = {
+        "init": "no; initialize first",
+        "missing_task": "no; set a concrete task first",
+        "stale_context": "no; refresh or use direct rg/git evidence",
+        "thread_conflict": "coordinate first",
+        "selection_noise": "yes, but use direct rg/git evidence as truth",
+        "skills_index_failed": "yes, but skill routing may be incomplete",
+        "loop_runner_missing": "no for loop automation",
+        "loop_ready_to_finish": "yes",
+        "loop_blocked": "no; inspect dashboard first",
+        "loop_continue": "yes for the loop runner",
+        "fixed": "yes",
+    }.get(kind, "unknown")
+    return {"kind": kind, "command": command, "reason": reason, "why_it_matters": why, "safe_to_continue": safe}
 
 
 def _fix_all_safe(root, recommendations: list[dict[str, str]]) -> tuple[list[dict[str, str]], list[dict[str, str | int]]]:

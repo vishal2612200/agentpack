@@ -51,7 +51,33 @@ For anything that rests on an `open_question`, keep the finding conditional and 
 
 ## Output
 
-Write a single TOON object to the exact output path declared in the AgentPack stage header. Nothing else to stdout. Use JSON programmatically when useful for local validation, but emit TOON for the final file. Schema:
+Write a single TOON object to the exact output path declared in the AgentPack stage header. Nothing else to stdout. Start from the copy-fill TOON template declared in the stage header if this format is unfamiliar.
+
+If your model cannot reliably emit TOON, write valid JSON matching the schema below to the output path and then run `agentpack review --check`; AgentPack will canonicalize schema-valid JSON or fenced output into TOON before continuing. Do not continue past a failed check.
+
+Minimal TOON shape:
+
+```toon
+@format toon
+@root review_findings
+findings[]:
+  -
+    id: f1
+    unit: cu1
+    lens: unit
+    type: logic
+    location: path/to/changed_file.py:12
+    claim: Factual statement of what is the case
+    evidence: path/to/changed_file.py:12 shows the supporting code
+    severity: should-fix
+    category: defect
+    confidence: high
+    depends_on: null
+    direction: What would resolve it, or null
+coverage: Units examined and any gaps
+```
+
+Schema:
 
 Do not answer inline from this stage. Read the understanding TOON from disk first. If you cannot read the input file or write the findings file, stop and report blocked instead of continuing in chat.
 

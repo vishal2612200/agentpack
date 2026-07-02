@@ -9,8 +9,10 @@ from typer.testing import CliRunner
 from agentpack.cli import app
 from agentpack.commands.review_cmd import (
     _build_review_preflight,
+    _findings_to_inline_comments,
     _load_review_template,
     _parse_review_target,
+    _parse_commentable_right_lines,
     _review_output_paths,
     _validate_review_artifact,
 )
@@ -201,25 +203,34 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert (run_dir / "runbook.md").exists()
     assert (run_dir / "understanding.prompt.md").exists()
     assert (run_dir / "judge.prompt.md").exists()
+    assert (run_dir / "understanding.template.toon").exists()
+    assert (run_dir / "findings.template.toon").exists()
     assert (run_dir / "context.md").exists()
     assert (run_dir / "citations.json").exists()
+    assert (repo / ".agentpack" / "review-understanding.template.toon").exists()
+    assert (repo / ".agentpack" / "review-findings.template.toon").exists()
     assert preflight["context_pack"]["path"].startswith(".agentpack/reviews/feature-review/")
     assert not (repo / ".agentpack" / "context.md").exists()
     assert preflight["paths"]["understanding_output"].startswith(".agentpack/reviews/feature-review/")
     assert preflight["paths"]["findings_output"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["understanding_template"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["findings_template"].startswith(".agentpack/reviews/feature-review/")
 
     runbook = runbook_path.read_text(encoding="utf-8")
     assert "reviewer is worried about prompt latency" in runbook
     assert preflight["review"]["run_id"] in runbook
     assert preflight["paths"]["understanding_output"] in runbook
     assert preflight["paths"]["findings_output"] in runbook
+    assert preflight["paths"]["understanding_template"] in runbook
+    assert preflight["paths"]["findings_template"] in runbook
     assert "## Hard Gates" in runbook
     assert "AgentPack Context Preflight" in runbook
     assert "agentpack_pack_context" in runbook
     assert "Do not perform the review inline" in runbook
     assert "If you cannot write the Stage 1 output file" in runbook
     assert "run `agentpack review --check`; do not start Stage 2" in runbook
-    assert "do not produce a final summary unless it validates Stage 2" in runbook
+    assert "run `agentpack review --check --post-inline-comments` for PR-bound runs" in runbook
+    assert "Do not produce a final summary unless Stage 2 validates" in runbook
 
     understanding_prompt = understanding_prompt_path.read_text(encoding="utf-8")
     template = _load_review_template("stage1-understanding.md")
@@ -229,9 +240,13 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "agentpack_pack_context" in understanding_prompt
     assert "## Execution Gates" in understanding_prompt
     assert "Do not answer inline from this stage prompt." in understanding_prompt
+    assert f"Copy-fill TOON template: {preflight['paths']['understanding_template']}" in understanding_prompt
+    assert "Start from the copy-fill TOON template" in understanding_prompt
+    assert "will canonicalize safe schema-matching output to TOON" in understanding_prompt
     assert f"Output path: {preflight['paths']['understanding_output']}" in understanding_prompt
     assert understanding_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"change_units"' in understanding_prompt
+    assert "@root review_understanding" in understanding_prompt
 
     judge_prompt = judge_prompt_path.read_text(encoding="utf-8")
     template = _load_review_template("stage2-judge.md")
@@ -239,11 +254,13 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "## Execution Gates" in judge_prompt
     assert "AgentPack context" in judge_prompt
     assert "Do not answer inline from this stage prompt." in judge_prompt
+    assert f"Copy-fill TOON template: {preflight['paths']['findings_template']}" in judge_prompt
     assert "Do not continue until the declared input TOON exists and has been read from disk." in judge_prompt
     assert f"Input path: {preflight['paths']['understanding_output']}" in judge_prompt
     assert f"Output path: {preflight['paths']['findings_output']}" in judge_prompt
     assert judge_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"findings"' in judge_prompt
+    assert "@root review_findings" in judge_prompt
 
 
 def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
@@ -259,6 +276,8 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
     missing = runner.invoke(app, ["review", "--check"])
     assert missing.exit_code == 1
     assert "Stage 1 artifact missing" in missing.output
+    assert "What failed: Stage 1 understanding artifact is missing" in missing.output
+    assert "Safe to continue: no; create the Stage 1 artifact first" in missing.output
 
     understanding = repo / preflight["paths"]["understanding_output"]
     understanding.parent.mkdir(parents=True, exist_ok=True)
@@ -296,6 +315,401 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
     assert "Stage 2 valid" in complete.output
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
     assert state["status"] == "complete"
+
+
+def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["review", "--allow-local-fallback", "older model compatibility"])
+    assert first.exit_code == 0, first.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        json.dumps(
+            {
+                "intent": {"requirement": "placeholder"},
+                "change_units": [],
+                "open_questions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ready = runner.invoke(app, ["review", "--check"])
+
+    assert ready.exit_code == 0, ready.output
+    assert "Stage 1 valid" in ready.output
+    assert understanding.read_text(encoding="utf-8").startswith("@format toon\n@root review_understanding\n")
+
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "```json\n"
+        + json.dumps(
+            {
+                "findings": [],
+                "coverage": "complete",
+            }
+        )
+        + "\n```\n",
+        encoding="utf-8",
+    )
+
+    complete = runner.invoke(app, ["review", "--check"])
+
+    assert complete.exit_code == 0, complete.output
+    assert "Stage 2 valid" in complete.output
+    assert findings.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
+
+
+def test_review_check_writes_repair_guide_for_invalid_toon(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["review", "--allow-local-fallback", "bad toon"])
+    assert first.exit_code == 0, first.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text("@format toon\nbroken\n", encoding="utf-8")
+
+    failed = runner.invoke(app, ["review", "--check"])
+
+    assert failed.exit_code == 1
+    assert "repair" in failed.output
+    assert "guide" in failed.output
+    repair = understanding.with_name("understanding-toon-repair.md")
+    assert repair.exists()
+    repair_text = repair.read_text(encoding="utf-8")
+    assert "@root review_understanding" in repair_text
+    assert "valid JSON matching the same schema" in repair_text
+
+
+def test_review_commentable_right_lines_parse_diff_hunks() -> None:
+    diff = (
+        "diff --git a/src/foo.py b/src/foo.py\n"
+        "--- a/src/foo.py\n"
+        "+++ b/src/foo.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def foo():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+
+    assert _parse_commentable_right_lines(diff) == {"src/foo.py": {1, 2}}
+
+
+def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
+    findings = [
+        {
+            "id": "f1",
+            "location": "src/foo.py:2",
+            "claim": "foo returns a changed value",
+            "evidence": "src/foo.py:2 shows the returned value",
+            "severity": "should-fix",
+        },
+        {
+            "id": "f2",
+            "location": "src/bar.py:4",
+            "claim": "bar changed",
+            "evidence": "src/bar.py:4 shows the change",
+        },
+    ]
+
+    comments, skipped = _findings_to_inline_comments(findings, {"src/foo.py": {2}})
+
+    assert comments == [
+        {
+            "path": "src/foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": (
+                "**AgentPack review should-fix:** foo returns a changed value\n\n"
+                "Evidence: src/foo.py:2 shows the returned value\n\n"
+                "_Finding `f1` from AgentPack review._"
+            ),
+        }
+    ]
+    assert skipped == ["finding 2: src/bar.py:4 is not in the PR diff as a right-side line"]
+
+
+def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+    posted_requests: list[tuple[str, int, dict]] = []
+
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._gh_pr_metadata",
+        lambda _root, _target=None: {
+            "number": 98,
+            "title": "Load test",
+            "url": "https://github.com/acme/repo/pull/98",
+            "base_ref": "main",
+            "head_ref": "feature/load-test",
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._fetch_pr_refs", lambda _root, _number, _base: {"ok": True, "error": ""})
+    monkeypatch.setattr("agentpack.commands.review_cmd._rev_parse", lambda _root, _ref: "abc123")
+    monkeypatch.setattr("agentpack.commands.review_cmd._changed_paths", lambda _root, _range: ["src/foo.py"])
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._commentable_right_lines", lambda _root, _range: {"src/foo.py": {2}})
+
+    def fake_post(_root, repo_slug, pr_number, payload):
+        posted_requests.append((repo_slug, pr_number, payload))
+        return {"html_url": "https://github.com/acme/repo/pull/98#pullrequestreview-1", "id": 1}
+
+    monkeypatch.setattr("agentpack.commands.review_cmd._post_pull_request_review", fake_post)
+
+    prepared = runner.invoke(app, ["review", "--pr", "98", "focus latency"])
+    assert prepared.exit_code == 0, prepared.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:2\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:2 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: complete\n",
+        encoding="utf-8",
+    )
+
+    blocked_without_dry_run = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+    assert blocked_without_dry_run.exit_code == 1
+    assert "requires a fresh" in blocked_without_dry_run.output
+    assert "dry run first" in blocked_without_dry_run.output
+    assert "Repair command: agentpack review --check --dry-run-post" in blocked_without_dry_run.output
+    assert posted_requests == []
+
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+    assert dry_run.exit_code == 0, dry_run.output
+
+    posted = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+
+    assert posted.exit_code == 0, posted.output
+    assert "Posted inline review comments" in posted.output
+    assert len(posted_requests) == 1
+    repo_slug, pr_number, payload = posted_requests[0]
+    assert repo_slug == "acme/repo"
+    assert pr_number == 98
+    assert payload["commit_id"] == "abc123"
+    assert payload["event"] == "COMMENT"
+    assert payload["comments"] == [
+        {
+            "path": "src/foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": (
+                "**AgentPack review should-fix:** foo returns changed value\n\n"
+                "Evidence: src/foo.py:2 shows the returned value\n\n"
+                "_Finding `f1` from AgentPack review._"
+            ),
+        }
+    ]
+    posted_record = json.loads((repo / preflight["paths"]["run_dir"] / "posted-review.json").read_text(encoding="utf-8"))
+    assert posted_record["status"] == "posted"
+    assert posted_record["comments"] == 1
+    state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
+    assert state["posted_review"]["status"] == "posted"
+
+    again = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+
+    assert again.exit_code == 0, again.output
+    assert "Review comments already posted" in again.output
+    assert len(posted_requests) == 1
+
+
+def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._gh_pr_metadata",
+        lambda _root, _target=None: {
+            "number": 98,
+            "title": "Load test",
+            "url": "https://github.com/acme/repo/pull/98",
+            "base_ref": "main",
+            "head_ref": "feature/load-test",
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._fetch_pr_refs", lambda _root, _number, _base: {"ok": True, "error": ""})
+    monkeypatch.setattr("agentpack.commands.review_cmd._rev_parse", lambda _root, _ref: "abc123")
+    monkeypatch.setattr("agentpack.commands.review_cmd._changed_paths", lambda _root, _range: ["src/foo.py"])
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._commentable_right_lines", lambda _root, _range: {"src/foo.py": {2}})
+
+    def fail_if_posted(_root, _repo_slug, _pr_number, _payload):
+        raise AssertionError("dry-run should not call GitHub")
+
+    monkeypatch.setattr("agentpack.commands.review_cmd._post_pull_request_review", fail_if_posted)
+
+    prepared = runner.invoke(app, ["review", "--pr", "98", "focus latency"])
+    assert prepared.exit_code == 0, prepared.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:2\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:2 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: complete\n",
+        encoding="utf-8",
+    )
+
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Inline review payload valid" in dry_run.output
+    run_dir = repo / preflight["paths"]["run_dir"]
+    assert not (run_dir / "posted-review.json").exists()
+    dry_run_record = json.loads((run_dir / "inline-review-dry-run.json").read_text(encoding="utf-8"))
+    assert dry_run_record["status"] == "dry_run"
+    assert dry_run_record["comments"] == 1
+    payload_record = json.loads((run_dir / "inline-review-payload.json").read_text(encoding="utf-8"))
+    assert payload_record["endpoint"] == "repos/acme/repo/pulls/98/reviews"
+    assert payload_record["payload_sha256"] == dry_run_record["payload_sha256"]
+    assert payload_record["payload"]["commit_id"] == "abc123"
+    assert payload_record["payload"]["comments"][0]["path"] == "src/foo.py"
+    state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
+    assert state["posted_review"]["status"] == "dry_run"
+
+
+def test_review_check_blocks_post_when_finding_is_not_commentable(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._gh_pr_metadata",
+        lambda _root, _target=None: {
+            "number": 98,
+            "title": "Load test",
+            "url": "https://github.com/acme/repo/pull/98",
+            "base_ref": "main",
+            "head_ref": "feature/load-test",
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._fetch_pr_refs", lambda _root, _number, _base: {"ok": True, "error": ""})
+    monkeypatch.setattr("agentpack.commands.review_cmd._rev_parse", lambda _root, _ref: "abc123")
+    monkeypatch.setattr("agentpack.commands.review_cmd._changed_paths", lambda _root, _range: ["src/foo.py"])
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._commentable_right_lines", lambda _root, _range: {})
+
+    prepared = runner.invoke(app, ["review", "--pr", "98", "focus latency"])
+    assert prepared.exit_code == 0, prepared.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:2\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:2 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: complete\n",
+        encoding="utf-8",
+    )
+
+    blocked = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+
+    assert blocked.exit_code == 1
+    assert "Could not post inline review comments" in blocked.output
+    assert "src/foo.py:2 is not in the PR diff as a right-side line" in blocked.output
+    assert not (repo / preflight["paths"]["run_dir"] / "posted-review.json").exists()
 
 
 def test_review_command_starts_fresh_and_warns_about_incomplete_previous_run(tmp_path, monkeypatch) -> None:
@@ -408,6 +822,7 @@ def test_review_findings_validator_requires_claim_level_citations(tmp_path) -> N
         "    location: src/foo.py\n"
         "    claim: foo returns changed value\n"
         "    evidence: code shows it\n"
+        "    severity: should-fix\n"
         "coverage:\n"
         "  status: incomplete\n",
         encoding="utf-8",
@@ -418,8 +833,8 @@ def test_review_findings_validator_requires_claim_level_citations(tmp_path) -> N
     try:
         _validate_review_artifact(invalid, kind="findings")
     except ValueError as exc:
-        assert "missing valid location path:line" in str(exc)
-        assert "missing evidence path:line" in str(exc)
+        assert "location must include path:line evidence" in str(exc)
+        assert "evidence must include path:line evidence" in str(exc)
     else:
         raise AssertionError("invalid findings should fail citation validation")
 

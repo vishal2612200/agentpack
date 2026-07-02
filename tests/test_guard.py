@@ -16,6 +16,8 @@ def test_guard_fails_without_context_pack(tmp_path, monkeypatch) -> None:
     assert result.exit_code == 1
     assert "Context pack unsafe" in result.output
     assert "agentpack guard --repair-stale --refresh-context" in result.output
+    assert "What failed: missing context pack metadata" in result.output
+    assert "Safe to continue: no; refresh or use direct rg/git evidence" in result.output
 
 
 def test_guard_refreshes_missing_context_pack(tmp_path, monkeypatch) -> None:

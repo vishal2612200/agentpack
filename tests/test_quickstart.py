@@ -16,10 +16,10 @@ def test_quickstart_state_for_new_repo(tmp_path: Path) -> None:
     state = _quickstart_state(tmp_path, "fix auth token expiry", "balanced")
 
     steps = state["steps"]
-    assert ("agentpack init --yes --mode balanced", "create config, cache dir, session, and task file") in steps
-    assert any("agentpack start 'fix auth token expiry'" in cmd for cmd, _ in steps)
-    assert any("agentpack pack --task auto" in cmd for cmd, _ in steps)
-    assert any("agentpack benchmark --init" in cmd for cmd, _ in steps)
+    assert ("first", "agentpack init --yes --mode balanced", "create config, cache dir, session, and task file") in steps
+    assert any("agentpack start 'fix auth token expiry'" in cmd for _, cmd, _ in steps)
+    assert any(cmd == "agentpack doctor --agent auto" for _, cmd, _ in steps)
+    assert any("agentpack benchmark --init" in cmd for cmd, _ in state["optional"])
 
 
 def test_quickstart_state_detects_existing_task(tmp_path: Path) -> None:
@@ -30,8 +30,9 @@ def test_quickstart_state_detects_existing_task(tmp_path: Path) -> None:
 
     state = _quickstart_state(tmp_path, "", "balanced")
 
-    assert "Repo already has enough setup" in state["summary"]
+    assert "Repo has setup" in state["summary"]
     assert any("Current task: fix payment retry" in note for note in state["notes"])
+    assert any(cmd == "agentpack next --fix" for _, cmd, _ in state["steps"])
 
 
 def test_quickstart_write_task(tmp_path: Path, monkeypatch) -> None:
@@ -43,3 +44,4 @@ def test_quickstart_write_task(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0
     assert (tmp_path / ".agentpack" / "task.md").read_text(encoding="utf-8") == "fix cache bug\n"
     assert "Saved task: fix cache bug" in result.output
+    assert "Optional later" in result.output

@@ -51,6 +51,7 @@ AgentPack does the repo-orientation pass first.
 ```text
 agentpack route --task "fix auth token expiry"
 -> files that probably matter
+-> why those files, and why common candidates were skipped
 -> skills and rules that fit the task
 -> tests that probably prove it
 -> rules, commands, warnings
@@ -85,14 +86,14 @@ Inside your repo:
 
 ```bash
 agentpack init --yes
-agentpack route --task "fix auth token expiry"
-agentpack task set "fix auth token expiry"
-agentpack pack --task auto
-agentpack doctor
+agentpack start "fix auth token expiry"
+agentpack next
+agentpack doctor --agent auto
 ```
 
 Then give `.agentpack/context.md` to your agent, or let MCP-capable agents call AgentPack tools directly.
-Core onboarding is five commands: `init`, `route`, `pack`, `doctor`, and `benchmark`.
+Core onboarding is `quickstart`, `start`, `next`, and `doctor`. Use `route`,
+`pack`, and `benchmark` when you need deeper inspection or measurement.
 Everything else is an advanced workflow or release/diagnostic helper.
 
 For one-shot use without installing:
@@ -125,7 +126,7 @@ Route task first:
 agentpack route --task "fix billing webhook retry handling"
 ```
 
-AgentPack returns likely files, tests, rules, commands, and warnings without changing source files.
+AgentPack returns likely files, why-selected and why-not-selected notes, tests, rules, commands, and warnings without changing source files.
 It also recommends matching skills or agent rules when the task points at a known workflow, framework, language, or repo convention.
 
 Build context pack next:

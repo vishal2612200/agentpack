@@ -44,7 +44,40 @@ You are running in the checked-out repository at the PR head commit, with shell,
 
 ## Output
 
-Write a **single TOON object** to the exact output path declared in the AgentPack stage header. Write nothing else to stdout. Use JSON programmatically when you need local validation, but the final file written for the next LLM stage must be TOON. Match this schema exactly:
+Write a **single TOON object** to the exact output path declared in the AgentPack stage header. Write nothing else to stdout. Start from the copy-fill TOON template declared in the stage header if this format is unfamiliar.
+
+If your model cannot reliably emit TOON, write valid JSON matching the schema below to the output path and then run `agentpack review --check`; AgentPack will canonicalize schema-valid JSON or fenced output into TOON before continuing. Do not continue past a failed check.
+
+Minimal TOON shape:
+
+```toon
+@format toon
+@root review_understanding
+intent:
+  issue_ref: null
+  requirement: Factual restatement from the PR or issue
+  author_decisions[]:
+    []
+change_units[]:
+  -
+    id: cu1
+    location: path/to/changed_file.py:10-24
+    kind: core
+    what_changed: Factual description of the edit, no judgment
+    code: Changed block read from the repository
+    referenced_symbols[]:
+      []
+    callers[]:
+      []
+    contracts_touched[]:
+      []
+    local_convention_refs[]:
+      []
+open_questions[]:
+  []
+```
+
+Match this schema exactly:
 
 Do not answer inline from this stage. If you cannot write the output file, stop and report blocked instead of continuing in chat.
 

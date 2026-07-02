@@ -69,6 +69,12 @@ def register(app: typer.Typer) -> None:
                 for check in failing:
                     fix = f" Run: {check.fix}" if check.fix else ""
                     console.print(f"  [yellow]![/] {check.label}: {check.detail}.{fix}")
+                    _print_action(
+                        what_failed=f"{selected} {check.label}: {check.detail}",
+                        why_it_matters="agent host may miss current AgentPack instructions, hooks, or MCP setup",
+                        repair_command=check.fix or f"agentpack repair --agent {selected}",
+                        safe_to_continue="no; repair before trusting AgentPack integration",
+                    )
             else:
                 console.print(f"[green]✓[/] Agent integration current: {selected}")
 
@@ -88,6 +94,12 @@ def register(app: typer.Typer) -> None:
             ok = False
             console.print(f"[yellow]Context pack unsafe: {context_reason}[/]")
             console.print("  Run: agentpack guard --repair-stale --refresh-context")
+            _print_action(
+                what_failed=context_reason,
+                why_it_matters="selected files may describe old task text, old code, or a different repo snapshot",
+                repair_command="agentpack guard --repair-stale --refresh-context",
+                safe_to_continue="no; refresh or use direct rg/git evidence as source of truth",
+            )
 
         if not ok:
             raise typer.Exit(1)
@@ -103,6 +115,13 @@ def _repair_agent(root, agent: str) -> None:
         global_install=False,
         install_slash_command=_install_slash_command,
     )
+
+
+def _print_action(*, what_failed: str, why_it_matters: str, repair_command: str, safe_to_continue: str) -> None:
+    console.print(f"    What failed: {what_failed}")
+    console.print(f"    Why it matters: {why_it_matters}")
+    console.print(f"    Repair command: {repair_command}")
+    console.print(f"    Safe to continue: {safe_to_continue}")
 
 
 def _context_is_fresh(root, thread_id: str | None = None) -> tuple[bool, str]:
