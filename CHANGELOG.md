@@ -11,6 +11,35 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ### Added
 - No changes yet.
 
+## [0.3.35] — 2026-07-03
+
+### Added
+- Added `agentpack review --check --dry-run-post` so inline GitHub review payloads can be validated and hashed before any live post.
+- Added MCP `validate_toon(..., return_canonical=true)` for agents that need canonical TOON returned without rewriting files.
+- Added route `selection_explanations` and `omitted_files` so `route`, MCP route results, and generated prompts explain both why files were selected and why plausible candidates were skipped.
+- Added learning/session context surfaces for local task memory, dashboard learning rows, and AgentPack learn guidance.
+
+### Changed
+- Simplified first-run developer UX across `agentpack --help`, `quickstart`, and `next` so new users get one primary path before optional diagnostics.
+- Clarified `doctor` versus `repair`: `doctor` diagnoses and can apply safe local repairs with `--fix`, while `repair` remains the explicit mutation command.
+- Improved `doctor`, `guard`, and `review --check` action output with what failed, why it matters, the exact repair command, and whether it is safe to continue.
+- Improved AgentPack tooling route classification and active-agent detection for Codex versus Antigravity project markers.
+
+### Fixed
+- Fixed review inline posting so live GitHub comments require a matching fresh dry-run payload instead of posting unchecked findings.
+- Tightened review TOON schema validation for enum values, nested shapes, location/evidence fields, and citation support.
+- Fixed Python 3.10 docs-link test collection by falling back to `tomli` when stdlib `tomllib` is unavailable.
+
+### Documentation
+- Updated README current-release notes for onboarding, repair guidance, review posting safety, route explainability, and refreshed agent integration behavior.
+- Updated command docs and packaged skills for review dry-run payload shape, cleanup guidance, MCP/TOON output, and route explanation fields.
+
+### Validation
+- PR #48 passed GitHub Actions across Python 3.10, 3.11, 3.12, 3.13, and 3.14 plus `dev-check`, `pack`, `scan`, `npm-wrapper`, `agent-integration-matrix`, and `plugin-scanner`.
+- Ran `python -m pytest tests/ -q -m "not slow"` locally with `1335 passed, 2 deselected`.
+- Ran focused review, TOON, MCP, route, quickstart, doctor, guard, and command-surface tests during the release tranche.
+- Ran `ruff` and `git diff --check`.
+
 ## [0.3.34] — 2026-06-29
 
 ### Added

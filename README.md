@@ -156,14 +156,14 @@ Run `agentpack doctor` when an agent integration, MCP setup, hook, or installed 
 - freshness warnings when task or git state changes
 - local benchmark data when selected context misses real changed files
 
-## What's Current In 0.3.34
+## What's Current In 0.3.35
 
-- MCP setup is now checked in normal install, repair, and doctor flows, with clear separation between config registration, local runtime readiness, and live host exposure.
-- Agent instructions now prefer MCP only after a readiness call proves live tools, then fall back to bounded diagnostics, CLI context refresh, and direct repo search when host tools are missing.
-- Review and deployment tasks now get stronger source-of-truth routing so PR reviews stay anchored to the target diff and deploy work prioritizes rendered config plus live platform state.
-- `agentpack pack --task "<task>"` works again as a one-command task write plus context pack path, while `--task auto` remains the default context-source mode.
-- TOON citation validation is stricter about path tokens so prose before evidence no longer turns into a bogus file path.
-- Hook reminders are deduplicated per task/session and explain MCP fallback without repeating on every prompt.
+- First-run output is clearer: `quickstart`, `next`, and top-level help now point new users through one core path before optional diagnostics.
+- `doctor`, `repair`, `guard`, and `review --check` now print more explicit failure, impact, repair command, and safe-to-continue guidance.
+- Review inline posting is safer: live GitHub comments require a matching `--dry-run-post` payload hash before `--post-inline-comments`.
+- MCP structured outputs and TOON validation are stricter, including canonical TOON output for agents that need repairable structured responses.
+- Route output now explains both why files were selected and why common candidates were omitted.
+- Codex, Claude, Cursor, Windsurf, and Antigravity detection and distributed guidance were refreshed so active-agent and fallback behavior are easier to audit.
 
 ## Proof So Far
 
@@ -321,7 +321,7 @@ pipx ensurepath
 
 ## Status
 
-Alpha: `0.3.34`.
+Alpha: `0.3.35`.
 
 Works, tested, and used in real sessions. Python and JavaScript/TypeScript have strongest support. APIs may change before 1.0.
 
