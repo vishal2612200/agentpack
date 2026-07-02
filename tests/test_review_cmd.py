@@ -276,6 +276,8 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
     missing = runner.invoke(app, ["review", "--check"])
     assert missing.exit_code == 1
     assert "Stage 1 artifact missing" in missing.output
+    assert "What failed: Stage 1 understanding artifact is missing" in missing.output
+    assert "Safe to continue: no; create the Stage 1 artifact first" in missing.output
 
     understanding = repo / preflight["paths"]["understanding_output"]
     understanding.parent.mkdir(parents=True, exist_ok=True)
@@ -508,6 +510,16 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
+    blocked_without_dry_run = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+    assert blocked_without_dry_run.exit_code == 1
+    assert "requires a fresh" in blocked_without_dry_run.output
+    assert "dry run first" in blocked_without_dry_run.output
+    assert "Repair command: agentpack review --check --dry-run-post" in blocked_without_dry_run.output
+    assert posted_requests == []
+
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+    assert dry_run.exit_code == 0, dry_run.output
+
     posted = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
 
     assert posted.exit_code == 0, posted.output
@@ -622,6 +634,7 @@ def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, mo
     assert dry_run_record["comments"] == 1
     payload_record = json.loads((run_dir / "inline-review-payload.json").read_text(encoding="utf-8"))
     assert payload_record["endpoint"] == "repos/acme/repo/pulls/98/reviews"
+    assert payload_record["payload_sha256"] == dry_run_record["payload_sha256"]
     assert payload_record["payload"]["commit_id"] == "abc123"
     assert payload_record["payload"]["comments"][0]["path"] == "src/foo.py"
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
@@ -820,8 +833,8 @@ def test_review_findings_validator_requires_claim_level_citations(tmp_path) -> N
     try:
         _validate_review_artifact(invalid, kind="findings")
     except ValueError as exc:
-        assert "missing valid location path:line" in str(exc)
-        assert "missing evidence path:line" in str(exc)
+        assert "location must include path:line evidence" in str(exc)
+        assert "evidence must include path:line evidence" in str(exc)
     else:
         raise AssertionError("invalid findings should fail citation validation")
 

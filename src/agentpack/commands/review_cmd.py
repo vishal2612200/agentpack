@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.resources
+import hashlib
 import json
 import os
 import re
@@ -873,6 +874,12 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
         console.print(f"[red]Stage 1 artifact missing:[/] {preflight['paths']['understanding_output']}")
+        _print_review_check_action(
+            what_failed="Stage 1 understanding artifact is missing",
+            why_it_matters="Stage 2 findings would be based on inline memory instead of a checked file artifact",
+            repair_command=f"write {preflight['paths']['understanding_output']} then run `agentpack review --check`",
+            safe_to_continue="no; create the Stage 1 artifact first",
+        )
         raise typer.Exit(1)
     try:
         _validate_review_artifact(understanding, kind="understanding")
@@ -880,6 +887,12 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
         console.print(f"[red]Stage 1 artifact invalid:[/] {exc}")
+        _print_review_check_action(
+            what_failed=str(exc),
+            why_it_matters="invalid understanding TOON blocks evidence-backed findings",
+            repair_command=f"repair {preflight['paths']['understanding_output']} then run `agentpack review --check`",
+            safe_to_continue="no; fix Stage 1 schema/citations first",
+        )
         raise typer.Exit(1) from exc
 
     if not findings.exists():
@@ -894,6 +907,12 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
         console.print(f"[red]Stage 2 artifact invalid:[/] {exc}")
+        _print_review_check_action(
+            what_failed=str(exc),
+            why_it_matters="invalid findings cannot be summarized or posted safely",
+            repair_command=f"repair {preflight['paths']['findings_output']} then run `agentpack review --check --dry-run-post`",
+            safe_to_continue="no; fix Stage 2 schema/citations first",
+        )
         raise typer.Exit(1) from exc
 
     posted: dict[str, Any] | None = None
@@ -905,6 +924,12 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
             _write_review_state(root, preflight, state)
             action = "dry-run inline review payload" if dry_run_post else "post inline review comments"
             console.print(f"[red]Could not {action}:[/] {exc}")
+            _print_review_check_action(
+                what_failed=str(exc),
+                why_it_matters="GitHub inline comments require a PR-bound, right-side-line payload",
+                repair_command="agentpack review --check --dry-run-post",
+                safe_to_continue="no for posting; yes for a local summary that states posting is blocked",
+            )
             raise typer.Exit(1) from exc
 
     state = _review_state(root, preflight)
@@ -923,6 +948,19 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
     else:
         console.print("[green]✓[/] Stage 2 valid. Review artifacts complete; final summary is unblocked.")
     console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
+
+
+def _print_review_check_action(
+    *,
+    what_failed: str,
+    why_it_matters: str,
+    repair_command: str,
+    safe_to_continue: str,
+) -> None:
+    console.print(f"  What failed: {what_failed}")
+    console.print(f"  Why it matters: {why_it_matters}")
+    console.print(f"  Repair command: {repair_command}")
+    console.print(f"  Safe to continue: {safe_to_continue}")
 
 
 def _write_review_state(root: Path, preflight: dict[str, Any], state: dict[str, Any]) -> None:
@@ -1170,10 +1208,12 @@ def _post_inline_review_comments(
         "body": review_body,
         "comments": comments,
     }
+    request_hash = _stable_json_hash(request)
     payload_record = {
         "repo": repo_slug,
         "pr": pr_number,
         "endpoint": f"repos/{repo_slug}/pulls/{pr_number}/reviews",
+        "payload_sha256": request_hash,
         "payload": request,
     }
     _atomic_write(payload_path, json.dumps(payload_record, indent=2) + "\n")
@@ -1187,10 +1227,12 @@ def _post_inline_review_comments(
             "head_sha": head_sha,
             "comments": len(comments),
             "request_payload": _rel_to_root(payload_path, root),
+            "payload_sha256": request_hash,
         }
         _atomic_write(dry_run_path, json.dumps(record, indent=2) + "\n")
         return {**record, "path": _rel_to_root(dry_run_path, root)}
 
+    _require_matching_dry_run(root, dry_run_path, payload_path, request_hash)
     response = _post_pull_request_review(root, repo_slug, pr_number, request)
     posted = {
         "status": "posted",
@@ -1203,9 +1245,32 @@ def _post_inline_review_comments(
         "url": str(response.get("html_url") or response.get("url") or ""),
         "id": response.get("id"),
         "request_payload": _rel_to_root(payload_path, root),
+        "payload_sha256": request_hash,
     }
     _atomic_write(posted_path, json.dumps(posted, indent=2) + "\n")
     return {**posted, "path": _rel_to_root(posted_path, root)}
+
+
+def _stable_json_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _require_matching_dry_run(root: Path, dry_run_path: Path, payload_path: Path, request_hash: str) -> None:
+    if not dry_run_path.exists():
+        raise _ReviewPreflightError(
+            "live inline review post requires a fresh dry run first; run `agentpack review --check --dry-run-post`"
+        )
+    try:
+        dry_run = json.loads(dry_run_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise _ReviewPreflightError(f"{_rel_to_root(dry_run_path, root)} is invalid JSON; rerun --dry-run-post") from exc
+    if dry_run.get("status") != "dry_run":
+        raise _ReviewPreflightError(f"{_rel_to_root(dry_run_path, root)} is not a dry-run record; rerun --dry-run-post")
+    if dry_run.get("payload_sha256") != request_hash:
+        raise _ReviewPreflightError("inline review payload changed since dry run; rerun `agentpack review --check --dry-run-post`")
+    if dry_run.get("request_payload") != _rel_to_root(payload_path, root):
+        raise _ReviewPreflightError("inline review dry run points at a different payload file; rerun --dry-run-post")
 
 
 def _preflight_pr_number(preflight: dict[str, Any]) -> int | None:

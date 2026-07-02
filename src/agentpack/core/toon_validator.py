@@ -309,9 +309,16 @@ def _validate_review_findings_payload(payload: Any) -> list[str]:
         errors.extend(_validate_enum(finding, "confidence", _CONFIDENCE_VALUES, f"findings[{index}]"))
         errors.extend(_require_string(finding, "depends_on", f"findings[{index}]", allow_null=True, required=False))
         errors.extend(_require_string(finding, "direction", f"findings[{index}]", allow_null=True, required=False))
+        errors.extend(_require_path_line(finding, "location", f"findings[{index}]"))
+        errors.extend(_require_path_line(finding, "evidence", f"findings[{index}]"))
     coverage = payload.get("coverage")
     if "coverage" in payload and not isinstance(coverage, (str, dict)):
         errors.append("coverage must be a string or object")
+    elif isinstance(coverage, str) and not coverage.strip():
+        errors.append("coverage must not be empty")
+    elif isinstance(coverage, dict):
+        errors.extend(_require_string(coverage, "status", "coverage"))
+        errors.extend(_validate_enum(coverage, "status", {"complete", "incomplete"}, "coverage"))
     return errors
 
 
@@ -356,6 +363,13 @@ def _validate_enum(payload: dict[str, Any], field: str, allowed: set[str], label
         choices = ", ".join(sorted(allowed))
         return [f"{label}.{field} must be one of: {choices}"]
     return []
+
+
+def _require_path_line(payload: dict[str, Any], field: str, label: str) -> list[str]:
+    value = str(payload.get(field) or "")
+    if re.search(r"(?:^|\s)[\w./-]+:\d+(?:-\d+)?(?:\s|$|[,.])", value):
+        return []
+    return [f"{label}.{field} must include path:line evidence"]
 
 
 def _validate_referenced_symbols(items: list[Any], label: str) -> list[str]:

@@ -258,6 +258,7 @@ agentpack doctor
 agentpack doctor --agent codex
 agentpack doctor --agent all
 agentpack doctor --fix
+agentpack doctor --agent all --fix
 ```
 
 Example output:
@@ -306,9 +307,12 @@ The new checks in `doctor`:
 - **Source checkout mismatch**: warns when you're inside an AgentPack source checkout but the `agentpack` executable imports the installed site-packages copy. Use `PYTHONPATH=src python -m agentpack.cli ...` or `pip install -e .` for local development.
 - **Concurrent thread warning**: warns when active thread records overlap in the same worktree and branch.
 
-`--fix` performs only safe AgentPack-managed repairs: refresh stale generated
-rules/hooks and sync imported `.agentignore` blocks. It does not delete user
-configuration, force thread mode, or run destructive git operations.
+`doctor` is the diagnose-first command. `--agent all --fix` diagnoses every
+supported local integration, then applies safe AgentPack-managed repairs for
+failing checks and syncs imported `.agentignore` blocks. It does not delete user
+configuration, force thread mode, repair global shell/git hooks, or run
+destructive git operations. For an explicit mutation-only workflow, use
+`agentpack repair --agent <agent>` or `agentpack repair --agent all`.
 
 ---
 
@@ -516,11 +520,14 @@ are not still active.
 ### `agentpack repair`
 
 Repair missing or drifted integration files. It uses the same installer contract as `init` and `install`, but is named for the "make this repo healthy again" workflow.
+Use `doctor` when you want diagnosis and safety guidance first; use `repair`
+when you already decided to write AgentPack-managed integration files.
 
 ```bash
 agentpack repair                 # repair auto-detected agent
 agentpack repair --agent codex   # AGENTS.md + hooks + MCP config + agentpack@local + git hooks
 agentpack repair --agent all     # repair every supported integration
+agentpack repair --agent all --global  # repair global configs where supported
 ```
 
 ---
@@ -538,6 +545,9 @@ agentpack guard --thread codex-local --refresh-context
 ```
 
 This is the strongest non-native enforcement AgentPack can provide: tools that run commands get a failing exit code when context is unsafe, and an automatic repair/refresh path when allowed.
+Failures print what failed, why it matters, the exact repair command, and whether
+it is safe to continue. When unsafe, treat direct `rg`, `git diff`, and targeted
+file reads as the source of truth until the guard passes.
 
 ---
 
@@ -845,9 +855,10 @@ agentpack next --fix-all-safe
 ```
 
 `next` checks for an uninitialized repo, missing task, stale context, active
-thread conflicts, and noisy recent pack diagnostics. With `--fix`, it only runs
-safe refresh work for stale context; it does not initialize projects, delete
-files, force thread mode, or change git state.
+thread conflicts, and noisy recent pack diagnostics. Human output shows the
+next command, what failed, why it matters, and whether it is safe to continue.
+With `--fix`, it only runs safe refresh work for stale context; it does not
+initialize projects, delete files, force thread mode, or change git state.
 `--fix-all-safe` can initialize a missing `.agentpack/config.toml`, refresh stale
 context, and write `.agentpack/selection_diagnosis.md`. It still does not apply
 ignore suggestions, delete thread directories, resolve thread conflicts, or
@@ -944,7 +955,7 @@ agentpack skills feedback --task "fix auth" --used-skill pytest-debugging --test
 
 ### `agentpack quickstart`
 
-Show the shortest useful path for the current repo.
+Show one clear first-run path for the current repo.
 
 ```bash
 agentpack quickstart
@@ -952,7 +963,11 @@ agentpack quickstart --task "fix auth token expiry"
 agentpack quickstart --task "fix auth token expiry" --write
 ```
 
-`quickstart` does not guess at magic. It checks whether `.agentpack/config.toml`, `.agentpack/task.md`, and context packs exist, then prints the next few commands. With `--write`, it writes the supplied task into `.agentpack/task.md`.
+`quickstart` does not guess at magic. It checks whether `.agentpack/config.toml`,
+`.agentpack/task.md`, and context packs exist, then prints the next command path
+and separates optional later commands like `stats`, `watch`, and `benchmark`.
+With `--write`, it writes the supplied task into `.agentpack/task.md` and points
+at the safe refresh command.
 
 ---
 

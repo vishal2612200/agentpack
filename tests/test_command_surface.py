@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import typer.main
+from typer.testing import CliRunner
 
 from agentpack.cli import app
 from agentpack.core.command_surface import (
@@ -38,6 +39,16 @@ def test_available_cli_commands_match_typer_registry() -> None:
 
     assert set(available_cli_commands()) == set(click_cmd.commands)
     assert "pack" in available_cli_commands()
+
+
+def test_root_help_puts_first_run_commands_first() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+    click_cmd = typer.main.get_command(app)
+    commands = list(click_cmd.commands)
+
+    assert result.exit_code == 0, result.output
+    assert commands[:7] == ["quickstart", "start", "next", "doctor", "init", "route", "pack"]
+    assert commands.index("quickstart") < commands.index("benchmark")
 
 
 def test_commands_from_help_handles_rich_table_rows() -> None:

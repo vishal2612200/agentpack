@@ -39,7 +39,7 @@ def test_mcp_route_task_returns_json_and_does_not_write_context(tmp_path, monkey
         monkeypatch.delenv(name, raising=False)
     _write_route_fixture(tmp_path)
 
-    data = json.loads(_route_task_impl(tmp_path, "fix flaky payment webhook test"))
+    data = json.loads(_route_task_impl(tmp_path, "fix flaky payment webhook test", "json"))
 
     assert data["selected_files"]
     assert data["current_agent"] == "claude"
@@ -56,7 +56,7 @@ def test_mcp_route_task_returns_json_and_does_not_write_context(tmp_path, monkey
 def test_mcp_get_skills_returns_inventory_json(tmp_path):
     _write_route_fixture(tmp_path)
 
-    data = json.loads(_get_skills_impl(tmp_path))
+    data = json.loads(_get_skills_impl(tmp_path, "json"))
 
     assert data["skills"][0]["name"] == "django-pytest"
     assert data["rules"][0]["path"] == "AGENTS.md"
@@ -74,7 +74,7 @@ def test_mcp_get_skill_returns_raw_skill_content(tmp_path):
 def test_mcp_explain_route_includes_skill_scores(tmp_path):
     _write_route_fixture(tmp_path)
 
-    data = json.loads(_explain_route_impl(tmp_path, "fix flaky payment webhook test"))
+    data = json.loads(_explain_route_impl(tmp_path, "fix flaky payment webhook test", "json"))
 
     assert data["skill_scores"]
     assert data["skill_scores"][0]["reasons"]

@@ -68,6 +68,7 @@ def test_next_recommends_init_when_uninitialized(tmp_path: Path, monkeypatch) ->
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["recommendations"][0]["kind"] == "init"
+    assert payload["recommendations"][0]["safe_to_continue"] == "no; initialize first"
 
 
 def test_next_recommends_missing_task_for_initialized_repo(tmp_path: Path, monkeypatch) -> None:
@@ -81,3 +82,5 @@ def test_next_recommends_missing_task_for_initialized_repo(tmp_path: Path, monke
     assert result.exit_code == 0, result.output
     kinds = [item["kind"] for item in json.loads(result.output)["recommendations"]]
     assert "missing_task" in kinds
+    missing = next(item for item in json.loads(result.output)["recommendations"] if item["kind"] == "missing_task")
+    assert "Generic or placeholder tasks" in missing["why_it_matters"]

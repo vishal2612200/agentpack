@@ -18,6 +18,7 @@ from agentpack.commands.doctor import (
 from agentpack.core.command_surface import installed_cli_status, refresh_commands
 from agentpack.core.mcp_runtime import McpRuntimeCheck
 from agentpack.core.thread_context import append_thread_index, build_thread_index_row
+from agentpack.integrations.agents import check_agent_integration
 
 
 def test_source_checkout_warning_when_importing_installed_package(tmp_path: Path) -> None:
@@ -185,6 +186,18 @@ def test_doctor_safe_fix_syncs_agentignore(tmp_path: Path, monkeypatch) -> None:
 
     content = (tmp_path / ".agentignore").read_text(encoding="utf-8")
     assert "backend/.serverless/" in content
+
+
+def test_doctor_safe_fix_all_repairs_every_local_agent(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    import subprocess
+
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+
+    _safe_fix(tmp_path, "all")
+
+    for agent in ("claude", "cursor", "windsurf", "codex", "antigravity", "generic"):
+        assert all(check.ok for check in check_agent_integration(tmp_path, agent)), agent
 
 
 def test_doctor_thread_conflict_findings_report_overlap(tmp_path: Path) -> None:

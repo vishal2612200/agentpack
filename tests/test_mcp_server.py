@@ -117,6 +117,18 @@ def test_route_task_impl_can_emit_toon(tmp_path):
     assert "selected_files[path|score]:" in result
 
 
+def test_route_task_impl_defaults_to_toon(tmp_path):
+    mocked = MagicMock()
+    mocked.model_dump.return_value = {"task": "fix auth"}
+
+    with patch("agentpack.router.service.RouteService") as MockService:
+        MockService.return_value.route_task.return_value = mocked
+        result = _route_task_impl(tmp_path, "fix auth")
+
+    assert result.startswith("@format toon\n@root agentpack_route\n")
+    assert "task: fix auth" in result
+
+
 def test_route_task_impl_can_emit_json(tmp_path):
     mocked = MagicMock()
     mocked.model_dump.return_value = {"task": "fix auth"}

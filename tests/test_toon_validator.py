@@ -80,6 +80,33 @@ def test_review_findings_schema_rejects_invalid_enum_values() -> None:
     assert "findings[1].confidence must be one of" in result.error
 
 
+def test_review_findings_schema_requires_path_line_evidence() -> None:
+    result = validate_toon_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "f1",
+                        "unit": "cu1",
+                        "location": "src/foo.py",
+                        "claim": "foo changed",
+                        "evidence": "code shows the change",
+                        "severity": "should-fix",
+                    }
+                ],
+                "coverage": {"status": "done"},
+            }
+        ),
+        schema="review-findings",
+        allow_json=True,
+    )
+
+    assert result.ok is False
+    assert "findings[1].location must include path:line evidence" in result.error
+    assert "findings[1].evidence must include path:line evidence" in result.error
+    assert "coverage.status must be one of" in result.error
+
+
 def test_review_understanding_schema_rejects_bad_nested_shapes() -> None:
     result = validate_toon_text(
         json.dumps(

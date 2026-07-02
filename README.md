@@ -85,14 +85,14 @@ Inside your repo:
 
 ```bash
 agentpack init --yes
-agentpack route --task "fix auth token expiry"
-agentpack task set "fix auth token expiry"
-agentpack pack --task auto
-agentpack doctor
+agentpack start "fix auth token expiry"
+agentpack next
+agentpack doctor --agent auto
 ```
 
 Then give `.agentpack/context.md` to your agent, or let MCP-capable agents call AgentPack tools directly.
-Core onboarding is five commands: `init`, `route`, `pack`, `doctor`, and `benchmark`.
+Core onboarding is `quickstart`, `start`, `next`, and `doctor`. Use `route`,
+`pack`, and `benchmark` when you need deeper inspection or measurement.
 Everything else is an advanced workflow or release/diagnostic helper.
 
 For one-shot use without installing:

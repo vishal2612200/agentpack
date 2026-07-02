@@ -580,7 +580,7 @@ def _validate_toon_impl(
     schema: str = "",
     allow_json: bool = False,
     return_canonical: bool = False,
-    output_format: StructuredFormat = "auto",
+    output_format: StructuredFormat = "toon",
 ) -> str:
     from agentpack.core.toon_validator import canonicalize_to_toon_text, validate_toon_file, validate_toon_text
 
@@ -654,7 +654,7 @@ def _validate_toon_impl(
     return to_llm(root, payload, requested=output_format, root_name="agentpack_toon_validation")
 
 
-def _route_task_impl(root: Path, task: str, output_format: StructuredFormat = "auto") -> str:
+def _route_task_impl(root: Path, task: str, output_format: StructuredFormat = "toon") -> str:
     """Return read-only task route payload; does not write task/context files."""
     from agentpack.router.service import RouteService
 
@@ -662,7 +662,7 @@ def _route_task_impl(root: Path, task: str, output_format: StructuredFormat = "a
     return to_llm(root, result.model_dump(mode="json"), requested=output_format, root_name="agentpack_route")
 
 
-def _get_skills_impl(root: Path, output_format: StructuredFormat = "auto") -> str:
+def _get_skills_impl(root: Path, output_format: StructuredFormat = "toon") -> str:
     """Return discovered skill/rule inventory payload."""
     from agentpack.router.service import RouteService
 
@@ -677,7 +677,7 @@ def _get_skill_impl(root: Path, name_or_path: str) -> str:
     return RouteService().get_skill(root, name_or_path)
 
 
-def _explain_route_impl(root: Path, task: str, output_format: StructuredFormat = "auto") -> str:
+def _explain_route_impl(root: Path, task: str, output_format: StructuredFormat = "toon") -> str:
     """Return task route payload including all positive skill scores."""
     from agentpack.router.service import RouteService
 
@@ -704,7 +704,7 @@ def serve() -> None:
     mcp = FastMCP("agentpack")
 
     @mcp.tool()
-    def readiness(format: str = "auto") -> str:
+    def readiness(format: str = "toon") -> str:
         """Prove this host exposes AgentPack MCP tools and report server/CLI status.
 
         If an agent can call this tool and read the response, live MCP exposure is confirmed.
@@ -750,7 +750,7 @@ def serve() -> None:
         )
 
     @mcp.tool()
-    def route_task(task: str, format: str = "auto") -> str:
+    def route_task(task: str, format: str = "toon") -> str:
         """Route a task to files, rules, skills, command suggestions, and safety warnings.
 
         Read-only: does not write task.md or context files. Use pack_context when full
@@ -759,7 +759,7 @@ def serve() -> None:
         return _route_task_impl(_repo_root(), task, format)
 
     @mcp.tool()
-    def get_skills(format: str = "auto") -> str:
+    def get_skills(format: str = "toon") -> str:
         """Return the discovered Agentpack skill/rule inventory as TOON or JSON."""
         return _get_skills_impl(_repo_root(), format)
 
@@ -772,7 +772,7 @@ def serve() -> None:
         return _get_skill_impl(_repo_root(), name_or_path)
 
     @mcp.tool()
-    def explain_route(task: str, format: str = "auto") -> str:
+    def explain_route(task: str, format: str = "toon") -> str:
         """Return a route_task-style payload with skill scoring reasons."""
         return _explain_route_impl(_repo_root(), task, format)
 
@@ -870,7 +870,7 @@ def serve() -> None:
         schema: str = "",
         allow_json: bool = False,
         return_canonical: bool = False,
-        format: str = "auto",
+        format: str = "toon",
     ) -> str:
         """Validate TOON syntax from inline content or a repo-relative file path.
 
