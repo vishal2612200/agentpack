@@ -127,6 +127,8 @@ def test_route_json_returns_stable_keys_and_does_not_write_context(tmp_path, mon
         "task_mode_confidence",
         "task_mode_signals",
         "selected_files",
+        "selection_explanations",
+        "omitted_files",
         "selected_skills",
         "applied_rules",
         "suggested_commands",
@@ -138,6 +140,8 @@ def test_route_json_returns_stable_keys_and_does_not_write_context(tmp_path, mon
         "agent_prompt",
     }
     assert data["selected_files"]
+    assert data["selection_explanations"]
+    assert data["selection_explanations"][0]["why_selected"]
     assert data["selected_skills"][0]["skill"]["name"] == "django-pytest"
     assert data["applied_rules"][0]["rule"]["path"] == "AGENTS.md"
     assert "pytest" in data["suggested_commands"][0]["command"]
@@ -452,6 +456,9 @@ def test_route_pr_review_suppresses_noisy_metadata(tmp_path, monkeypatch) -> Non
     assert data["task_mode"] == "pr_review"
     assert paths[0] == "src/auth.py"
     assert ".gitignore" not in paths
+    omitted = {item["path"]: item for item in data["omitted_files"]}
+    assert ".gitignore" in omitted
+    assert any("noisy" in reason for reason in omitted[".gitignore"]["why_not_selected"])
 
 
 def test_route_pr_review_keeps_changed_workflow_diff_file(tmp_path, monkeypatch) -> None:

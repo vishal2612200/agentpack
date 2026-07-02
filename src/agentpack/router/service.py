@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from agentpack.core import git
 from agentpack.adapters.detect import detect_agent
@@ -74,15 +75,29 @@ class RouteService:
             task_source="route",
         ))
         pr_paths = _github_pr_paths(root, task) if task_mode == "pr_review" else set()
+        diff_paths = _diff_paths(root) if task_mode == "pr_review" else set()
+        priority_paths = plan.all_changed | diff_paths | pr_paths
+        planned_files = [_selected_file_dict(item) for item in plan.selected]
         selected_files = _route_selected_files(
             root,
             task_mode,
             task,
-            [_selected_file_dict(item) for item in plan.selected],
+            planned_files,
             plan.all_changed,
             pr_paths,
         )
         selected_paths = [item["path"] for item in selected_files]
+        selection_explanations = _selection_explanations(selected_files, task, priority_paths)
+        omitted_files = _route_omitted_files(
+            root=root,
+            task_mode=task_mode,
+            task=task,
+            planned_files=planned_files,
+            selected_files=selected_files,
+            omitted_relevant_files=plan.omitted_relevant_files,
+            receipts=plan.receipts,
+            priority_paths=priority_paths,
+        )
 
         inventory = self.inventory(root)
         selected_skills, safety_warnings, _all_scores = score_skills(
@@ -114,6 +129,8 @@ class RouteService:
             task_mode_confidence=mode_decision.confidence,
             task_mode_signals=mode_decision.signals,
             selected_files=selected_files,
+            selection_explanations=selection_explanations,
+            omitted_files=omitted_files,
             selected_skills=selected_skills,
             baseline_skills=baseline_skills,
             applied_rules=applied_rules,
@@ -199,6 +216,173 @@ def _selected_file_dict(item) -> dict:
         "include_mode": item.include_mode,
         "reasons": item.reasons,
     }
+
+
+def _selection_explanations(
+    selected_files: list[dict],
+    task: str,
+    priority_paths: set[str],
+    *,
+    limit: int = 10,
+) -> list[dict[str, Any]]:
+    explanations: list[dict[str, Any]] = []
+    for item in selected_files[:limit]:
+        path = str(item.get("path") or "")
+        reasons = [str(reason) for reason in (item.get("reasons") or [])]
+        why = _why_selected(path, task, priority_paths, reasons)
+        explanations.append({
+            "path": path,
+            "include_mode": item.get("include_mode", "unknown"),
+            "score": round(float(item.get("score") or 0), 3),
+            "why_selected": why,
+            "top_reasons": reasons[:5],
+        })
+    return explanations
+
+
+def _why_selected(path: str, task: str, priority_paths: set[str], reasons: list[str]) -> list[str]:
+    why: list[str] = []
+    if _task_mentions_path(task, path):
+        why.append("task names this path or filename")
+    if path in priority_paths:
+        why.append("changed, diff, or GitHub PR file for this task")
+    if "task-specific route seed" in reasons:
+        why.append("seeded from task-specific routing terms")
+    direct_overlap = int(_direct_term_overlap(task, path))
+    if direct_overlap:
+        why.append(f"path terms overlap task ({direct_overlap})")
+    if any(reason.startswith("content keyword match") for reason in reasons):
+        why.append("file content matches task keywords")
+    if any(reason in {"implementation role match", "direct dependency of changed file"} for reason in reasons):
+        why.append("implementation or dependency evidence")
+    if any(reason.startswith("test for high-scoring") or reason == "has related tests" for reason in reasons):
+        why.append("test coverage link")
+    if not why and reasons:
+        why.append(reasons[0])
+    return why[:4]
+
+
+def _route_omitted_files(
+    *,
+    root: Path,
+    task_mode: str,
+    task: str,
+    planned_files: list[dict],
+    selected_files: list[dict],
+    omitted_relevant_files: list[Any],
+    receipts: list[Any],
+    priority_paths: set[str],
+    limit: int = 8,
+) -> list[dict[str, Any]]:
+    selected_paths = {str(item.get("path") or "") for item in selected_files}
+    omitted: list[dict[str, Any]] = []
+    seen: set[str] = set()
+
+    def add(path: str, why_not: list[str], *, score: float = 0.0, reasons: list[str] | None = None, source: str) -> None:
+        if not path or path in selected_paths or path in seen or len(omitted) >= limit:
+            return
+        omitted.append({
+            "path": path,
+            "source": source,
+            "score": round(score, 3),
+            "why_not_selected": why_not[:4],
+            "top_reasons": (reasons or [])[:5],
+        })
+        seen.add(path)
+
+    for path in sorted(priority_paths):
+        if not (root / path).exists():
+            continue
+        reasons = _planned_reasons(planned_files, path)
+        if not _keep_route_path(task_mode, task, path, priority_paths, reasons):
+            add(
+                path,
+                _why_not_selected(path, task_mode, task, priority_paths, reasons, route_filtered=True),
+                score=_planned_score(planned_files, path),
+                reasons=reasons,
+                source="route_filter",
+            )
+
+    for item in planned_files:
+        path = str(item.get("path") or "")
+        if path in selected_paths:
+            continue
+        reasons = [str(reason) for reason in (item.get("reasons") or [])]
+        add(
+            path,
+            _why_not_selected(path, task_mode, task, priority_paths, reasons, route_filtered=False),
+            score=float(item.get("score") or 0),
+            reasons=reasons,
+            source="route_ranking",
+        )
+
+    for item in omitted_relevant_files:
+        path = str(getattr(item, "path", "") or "")
+        reasons = [str(reason) for reason in (getattr(item, "reasons", []) or [])]
+        omission_reason = str(getattr(item, "omission_reason", "") or "budget exhausted")
+        risk = str(getattr(item, "risk", "") or "low")
+        add(
+            path,
+            [f"{omission_reason}; omission risk {risk}"],
+            score=float(getattr(item, "score", 0.0) or 0.0),
+            reasons=reasons,
+            source="pack_budget",
+        )
+
+    for receipt in receipts:
+        path = str(getattr(receipt, "path", "") or "")
+        reason = str(getattr(receipt, "reason", "") or "")
+        if not _interesting_excluded_receipt(path, reason):
+            continue
+        add(path, [f"planner excluded it: {reason}"], reasons=[reason], source="planner_receipt")
+
+    return omitted
+
+
+def _planned_reasons(planned_files: list[dict], path: str) -> list[str]:
+    for item in planned_files:
+        if item.get("path") == path:
+            return [str(reason) for reason in (item.get("reasons") or [])]
+    return []
+
+
+def _planned_score(planned_files: list[dict], path: str) -> float:
+    for item in planned_files:
+        if item.get("path") == path:
+            return float(item.get("score") or 0.0)
+    return 0.0
+
+
+def _why_not_selected(
+    path: str,
+    task_mode: str,
+    task: str,
+    priority_paths: set[str],
+    reasons: list[str],
+    *,
+    route_filtered: bool,
+) -> list[str]:
+    if _is_noisy_path(path) and not _task_mentions_path(task, path):
+        return ["filtered as noisy agent/config metadata; name the path explicitly when it is the target"]
+    if _is_pr_review_secret_fixture_noise(task_mode, task, path, priority_paths, reasons):
+        return ["suppressed as secret-fixture noise outside the PR file list"]
+    if _is_weak_cli_route(task_mode, task, path, reasons):
+        return ["weak CLI entrypoint match; task did not name this command"]
+    if route_filtered:
+        return ["filtered by route noise rules for this task mode"]
+    if path in priority_paths:
+        return ["changed or PR file, but outranked by stronger task-specific files"]
+    if reasons:
+        return [f"matched weakly but stayed below selected route cutoff: {reasons[0]}"]
+    return ["not enough route evidence to enter the selected file list"]
+
+
+def _interesting_excluded_receipt(path: str, reason: str) -> bool:
+    if not path or not reason:
+        return False
+    if reason in {"ignored or binary", "score too low"}:
+        return False
+    return not reason.startswith("summary score below floor")
 
 
 def detect_task_mode(task: str) -> str:

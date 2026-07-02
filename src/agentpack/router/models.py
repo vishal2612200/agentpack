@@ -72,6 +72,8 @@ class RouteResult(BaseModel):
     task_mode_confidence: float = 0.0
     task_mode_signals: list[str] = Field(default_factory=list)
     selected_files: list[dict] = Field(default_factory=list)
+    selection_explanations: list[dict] = Field(default_factory=list)
+    omitted_files: list[dict] = Field(default_factory=list)
     selected_skills: list[SelectedSkill] = Field(default_factory=list)
     baseline_skills: list[SelectedSkill] = Field(default_factory=list)
     applied_rules: list[AppliedRule] = Field(default_factory=list)

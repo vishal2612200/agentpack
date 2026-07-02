@@ -21,6 +21,18 @@ def build_agent_prompt(result: RouteResult) -> str:
     else:
         lines.append("- No files selected.")
 
+    if result.selection_explanations:
+        lines += ["", "Why these files:"]
+        for item in result.selection_explanations[:6]:
+            why = "; ".join(item.get("why_selected", [])[:3]) or "selected by route score"
+            lines.append(f"- {item['path']}: {why}")
+
+    if result.omitted_files:
+        lines += ["", "Why not selected:"]
+        for item in result.omitted_files[:5]:
+            why = "; ".join(item.get("why_not_selected", [])[:2]) or "not selected"
+            lines.append(f"- {item['path']}: {why}")
+
     lines += [
         "",
         "Evidence contract:",
@@ -98,6 +110,22 @@ def render_plain(result: RouteResult) -> str:
             reason = "; ".join(item.reasons)
             suffix = f" — {reason}" if reason else ""
             lines.append(f"- {item.rule.name} ({item.rule.path}){suffix}")
+    else:
+        lines.append("- none")
+
+    lines += ["", "Why selected:"]
+    if result.selection_explanations:
+        for item in result.selection_explanations[:8]:
+            why = "; ".join(item.get("why_selected", [])[:3]) or "selected by route score"
+            lines.append(f"- {item['path']}: {why}")
+    else:
+        lines.append("- none")
+
+    lines += ["", "Why not selected:"]
+    if result.omitted_files:
+        for item in result.omitted_files[:8]:
+            why = "; ".join(item.get("why_not_selected", [])[:3]) or "not selected"
+            lines.append(f"- {item['path']}: {why}")
     else:
         lines.append("- none")
 

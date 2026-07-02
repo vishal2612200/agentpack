@@ -918,7 +918,7 @@ agentpack route --task "fix flaky payment webhook test" --format json
 pipx run --spec agentpack-cli agentpack route --task "fix auth token expiry"
 ```
 
-Output includes relevant files, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt. It uses the existing AgentPack file ranker in memory and does not write `.agentpack/context.md`. `--json` is the stable machine-readable alias; `--format json` remains supported.
+Output includes relevant files, why those files were selected, common candidates that were not selected, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt. It uses the existing AgentPack file ranker in memory and does not write `.agentpack/context.md`. `--json` is the stable machine-readable alias; `--format json` remains supported.
 
 ---
 
@@ -1151,7 +1151,7 @@ Register in Claude Code settings (`~/.claude/settings.json`):
 | Tool | Description |
 |---|---|
 | `readiness()` | Prove the current host can call AgentPack MCP tools; returns server, version, tool list, CLI command surface, and latest context provenance. |
-| `route_task(task)` | Read-only task router. Returns relevant files, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt as JSON. |
+| `route_task(task)` | Read-only task router. Returns relevant files, why-selected/why-not-selected explanations, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt as JSON. |
 | `get_skills()` | Return discovered skill/rule inventory as JSON. |
 | `get_skill(name_or_path)` | Return one skill's raw `SKILL.md` content after `route_task` recommends it. |
 | `explain_route(task)` | Return route JSON with positive skill score reasons for debugging router choices. |
@@ -1429,8 +1429,9 @@ See [benchmarks/README.md](https://github.com/vishal2612200/agentpack/blob/main/
 
 ### `agentpack diagnose-selection`
 
-Combine latest pack stats, largest token consumers, pack diagnostics, and recent
-benchmark misses into concrete selection tuning advice.
+Combine latest pack stats, largest token consumers, why-selected reasons,
+why-not-selected omission buckets, pack diagnostics, and recent benchmark misses
+into concrete selection tuning advice.
 
 ```bash
 agentpack diagnose-selection
@@ -1439,8 +1440,8 @@ agentpack diagnose-selection --write
 ```
 
 `--write` saves `.agentpack/selection_diagnosis.md`. The output points to
-specific actions such as rewrite the task, explain a file, ignore generated
-paths, reduce mode, or add a benchmark case.
+specific actions such as rewrite the task, explain a file, inspect omission
+buckets, ignore generated paths, reduce mode, or add a benchmark case.
 
 ---
 

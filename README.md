@@ -51,6 +51,7 @@ AgentPack does the repo-orientation pass first.
 ```text
 agentpack route --task "fix auth token expiry"
 -> files that probably matter
+-> why those files, and why common candidates were skipped
 -> skills and rules that fit the task
 -> tests that probably prove it
 -> rules, commands, warnings
@@ -125,7 +126,7 @@ Route task first:
 agentpack route --task "fix billing webhook retry handling"
 ```
 
-AgentPack returns likely files, tests, rules, commands, and warnings without changing source files.
+AgentPack returns likely files, why-selected and why-not-selected notes, tests, rules, commands, and warnings without changing source files.
 It also recommends matching skills or agent rules when the task points at a known workflow, framework, language, or repo convention.
 
 Build context pack next:

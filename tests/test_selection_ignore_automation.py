@@ -18,9 +18,16 @@ def test_diagnose_selection_json_and_write(tmp_path: Path, monkeypatch) -> None:
                 "context_path": ".agentpack/context.md",
                 "freshness": {"generic_task_ratio": 0.8},
                 "selected_files_meta": [
-                    {"path": "big.py", "mode": "full", "tokens": 2000},
-                    {"path": "small.py", "mode": "summary", "tokens": 20},
+                    {"path": "big.py", "mode": "full", "tokens": 2000, "reasons": ["content keyword match (2)"]},
+                    {"path": "small.py", "mode": "summary", "tokens": 20, "reasons": ["filename keyword match"]},
                 ],
+                "pack_handoff": {
+                    "skipped_uncertain": {
+                        "excluded_reason_counts": {
+                            "compressed context cap reached": 3,
+                        },
+                    },
+                },
             }
         ),
         encoding="utf-8",
@@ -31,7 +38,12 @@ def test_diagnose_selection_json_and_write(tmp_path: Path, monkeypatch) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["largest_token_consumers"][0]["path"] == "big.py"
+    assert payload["selection_explanations"][0]["why_selected"] == ["content keyword match"]
+    assert payload["omission_summary"][0]["reason"] == "compressed context cap reached"
     assert (tmp_path / ".agentpack" / "selection_diagnosis.md").exists()
+    report = (tmp_path / ".agentpack" / "selection_diagnosis.md").read_text(encoding="utf-8")
+    assert "## Why Selected" in report
+    assert "## Why Not Selected" in report
 
 
 def test_ignore_suggest_and_apply(tmp_path: Path, monkeypatch) -> None:
