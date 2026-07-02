@@ -1041,6 +1041,39 @@ posted inline, both dry-run and posting fail closed instead of falling back to a
 broad summary comment. Successful posts are recorded in `posted-review.json` so
 re-running the check does not duplicate PR comments.
 
+The dry-run payload record has this shape:
+
+```json
+{
+  "repo": "OWNER/REPO",
+  "pr": 123,
+  "endpoint": "repos/OWNER/REPO/pulls/123/reviews",
+  "payload_sha256": "...",
+  "payload": {
+    "commit_id": "<pr-head-sha>",
+    "event": "COMMENT",
+    "body": "AgentPack review posted N inline finding(s) ...",
+    "comments": [
+      {
+        "path": "src/file.py",
+        "line": 42,
+        "side": "RIGHT",
+        "body": "**AgentPack review ...** ..."
+      }
+    ]
+  }
+}
+```
+
+For controlled E2E tests, use a draft or throwaway PR, run
+`agentpack review --check --dry-run-post`, inspect `payload_sha256`, then run
+`agentpack review --check --post-inline-comments`. To clean up a test comment,
+use the comment id from the GitHub API or PR discussion URL:
+
+```bash
+gh api -X DELETE repos/OWNER/REPO/pulls/comments/<comment_id>
+```
+
 The positional argument is optional reviewer context. It shapes prioritization
 only; it must not replace code evidence.
 Fresh runs are the default. Interrupted work is resumed only when
