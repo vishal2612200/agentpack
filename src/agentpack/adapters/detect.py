@@ -12,11 +12,12 @@ def detect_agent(root: Path) -> str:
       2. CLAUDECODE / CLAUDE_CODE_ENTRYPOINT env → claude
       3. Codex env markers → codex
       4. ANTIGRAVITY env var present → antigravity
-      5. .agent/skills/ dir exists → antigravity
-      6. GEMINI.md exists → antigravity
-      7. .cursor/ dir or .cursorrules exists → cursor
-      8. .windsurfrules exists → windsurf
-      9. Fallback → claude
+      5. Codex project markers → codex
+      6. .agent/skills/ dir exists → antigravity
+      7. GEMINI.md exists → antigravity
+      8. .cursor/ dir or .cursorrules exists → cursor
+      9. .windsurfrules exists → windsurf
+      10. Fallback → claude
     """
     if override := os.environ.get("AGENTPACK_AGENT"):
         return override
@@ -39,6 +40,9 @@ def detect_agent(root: Path) -> str:
     if os.environ.get("ANTIGRAVITY"):
         return "antigravity"
 
+    if _has_codex_project_markers(root):
+        return "codex"
+
     if (root / ".agent" / "skills").is_dir():
         return "antigravity"
 
@@ -52,3 +56,11 @@ def detect_agent(root: Path) -> str:
         return "windsurf"
 
     return "claude"
+
+
+def _has_codex_project_markers(root: Path) -> bool:
+    return (
+        (root / ".codex").is_dir()
+        or (root / ".codex-plugin" / "plugin.json").exists()
+        or (root / ".codexignore").exists()
+    )

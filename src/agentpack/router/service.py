@@ -208,6 +208,8 @@ def detect_task_mode(task: str) -> str:
 def classify_task_mode(task: str) -> TaskModeDecision:
     lower = task.lower()
     signals: list[str] = []
+    if _looks_agentpack_tooling_task(lower, signals):
+        return TaskModeDecision("integration_readiness", _confidence(signals), signals)
     if _has_any(lower, ("pr ", "pull request", "review", "diff", "review comment"), signals, "pr-review"):
         return TaskModeDecision("pr_review", _confidence(signals), signals)
     if _has_any(lower, ("log", "cloudwatch", "queue", "sqs", "db row", "postgres", "dashboard", "customer.io", "event pipeline", "runtime", "prod", "production"), signals, "runtime"):
@@ -331,6 +333,31 @@ def _has_session_drift_signal(lower: str) -> bool:
     return task_types >= 3
 
 
+def _looks_agentpack_tooling_task(lower: str, signals: list[str]) -> bool:
+    tooling_terms = (
+        "mcp",
+        "validate_toon",
+        "toon",
+        "canonical",
+        "route",
+        "routing",
+        "current agent",
+        "active agent",
+        "post-inline-comments",
+        "inline pr commenting",
+        "review schema",
+        "schema validation",
+        "agentpack-review",
+    )
+    if not any(term in lower for term in tooling_terms):
+        return False
+    if not any(term in lower for term in ("agentpack", "tool", "mcp", "route", "routing", "schema", "canonical", "gap")):
+        return False
+    matched = [term for term in tooling_terms if term in lower]
+    signals.extend(f"integration/tooling: {term}" for term in matched[:4])
+    return True
+
+
 def _prompt_template() -> list[str]:
     return [
         "Task: <what to change or answer>",
@@ -449,13 +476,17 @@ def _task_seed_paths(root: Path, task_mode: str, task: str) -> list[str]:
     lower = task.lower()
     candidates: list[str] = []
     if any(term in lower for term in ("route", "routing", "selected file", "noisy", "irrelevant file")):
-        candidates.extend(("src/agentpack/router/service.py", "src/agentpack/router/prompt_builder.py"))
-    if any(term in lower for term in ("mcp", "readiness", "tool exposure")):
-        candidates.append("src/agentpack/mcp_server.py")
+        candidates.extend(("src/agentpack/router/service.py", "src/agentpack/router/prompt_builder.py", "tests/test_route_command.py", "tests/test_mcp_router.py"))
+    if any(term in lower for term in ("mcp", "readiness", "tool exposure", "validate_toon")):
+        candidates.extend(("src/agentpack/mcp_server.py", "tests/test_mcp_server.py"))
+    if any(term in lower for term in ("toon", "canonical", "validate_toon", "schema", "review schema")):
+        candidates.extend(("src/agentpack/core/toon_validator.py", "src/agentpack/commands/toon_validate.py", "tests/test_toon_validator.py"))
+    if any(term in lower for term in ("inline", "post-inline", "dry-run", "dry run", "github e2e", "review payload")):
+        candidates.extend(("src/agentpack/commands/review_cmd.py", "tests/test_review_cmd.py"))
     if any(term in lower for term in ("guard", "stale", "freshness", "refresh")):
         candidates.extend(("src/agentpack/commands/guard.py", "src/agentpack/application/pack_service.py"))
-    if any(term in lower for term in ("agent identity", "current agent", "detect", "codex", "antigravity")):
-        candidates.append("src/agentpack/adapters/detect.py")
+    if any(term in lower for term in ("agent identity", "current agent", "active agent", "active-agent", "detect", "codex", "antigravity")):
+        candidates.extend(("src/agentpack/adapters/detect.py", "tests/test_route_command.py"))
     seen: set[str] = set()
     seeded: list[str] = []
     for path in candidates:
@@ -507,6 +538,8 @@ def _direct_term_overlap(task: str, path: str) -> float:
     if "stale" in task_terms:
         task_terms.add("freshness")
     if "identity" in task_terms:
+        task_terms.add("detect")
+    if "agent" in task_terms and ({"active", "current"} & task_terms):
         task_terms.add("detect")
     return float(len(task_terms & path_terms))
 

@@ -26,11 +26,14 @@ from agentpack.core.citations import (
 )
 from agentpack.core.models import Citation
 from agentpack.core.toon_parser import ToonParseError, load_toon
+from agentpack.core.toon_validator import canonicalize_to_toon_text, validate_toon_payload_schema
 
 _PREFLIGHT_PATH = Path(".agentpack/review-preflight.json")
 _RUNBOOK_PATH = Path(".agentpack/review.prompt.md")
 _UNDERSTANDING_PROMPT_PATH = Path(".agentpack/review-understanding.prompt.md")
 _JUDGE_PROMPT_PATH = Path(".agentpack/review-judge.prompt.md")
+_UNDERSTANDING_TEMPLATE_PATH = Path(".agentpack/review-understanding.template.toon")
+_FINDINGS_TEMPLATE_PATH = Path(".agentpack/review-findings.template.toon")
 _STATE_PATH = Path(".agentpack/review-state.json")
 _REVIEW_RUNS_DIR = Path(".agentpack/reviews")
 _LLM_REVIEW_FORMAT = "TOON"
@@ -38,6 +41,11 @@ _PR_URL_RE = re.compile(r"https?://\S+/pull/(?P<number>\d+)\b", re.IGNORECASE)
 _PR_CONTEXT_RE = re.compile(
     r"(?:\b(?:pr|pull request)\s*#?\s*(?P<number>\d+)\b|\bgh\s+pr\s+(?:view|diff|checkout)\s+(?P<gh_number>\d+)\b)",
     re.IGNORECASE,
+)
+_DIFF_GIT_RE = re.compile(r"^diff --git a/(?P<old>.+?) b/(?P<new>.+)$")
+_DIFF_HUNK_RE = re.compile(
+    r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
+    r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
 
 
@@ -57,6 +65,17 @@ def register(app: typer.Typer) -> None:
             help="Allow local HEAD-based diff fallback when GitHub PR metadata or fetch is unavailable.",
         ),
         check: bool = typer.Option(False, "--check", help="Validate active review stage artifacts and print the next gate."),
+        post_inline_comments: bool = typer.Option(
+            False,
+            "--post-inline-comments",
+            "--post",
+            help="After Stage 2 validates, post findings as inline GitHub PR review comments.",
+        ),
+        dry_run_post: bool = typer.Option(
+            False,
+            "--dry-run-post",
+            help="Validate and write the inline GitHub review payload without calling GitHub.",
+        ),
     ) -> None:
         """Prepare the full two-stage PR review bundle for the current branch or PR."""
         root = _root()
@@ -64,8 +83,8 @@ def register(app: typer.Typer) -> None:
             console.print("[red]agentpack review requires a git repository.[/]")
             raise typer.Exit(1)
 
-        if check:
-            _check_active_review(root)
+        if check or post_inline_comments or dry_run_post:
+            _check_active_review(root, post_inline_comments=post_inline_comments, dry_run_post=dry_run_post)
             return
 
         if resume.strip():
@@ -109,11 +128,15 @@ def register(app: typer.Typer) -> None:
             outputs["runbook"]: runbook,
             outputs["understanding_prompt"]: understanding_prompt,
             outputs["judge_prompt"]: judge_prompt,
+            outputs["understanding_template"]: _review_toon_template("understanding"),
+            outputs["findings_template"]: _review_toon_template("findings"),
             outputs["state"]: json.dumps(_review_state(root, preflight), indent=2) + "\n",
             _PREFLIGHT_PATH: json.dumps(preflight, indent=2) + "\n",
             _RUNBOOK_PATH: runbook,
             _UNDERSTANDING_PROMPT_PATH: understanding_prompt,
             _JUDGE_PROMPT_PATH: judge_prompt,
+            _UNDERSTANDING_TEMPLATE_PATH: _review_toon_template("understanding"),
+            _FINDINGS_TEMPLATE_PATH: _review_toon_template("findings"),
             _STATE_PATH: json.dumps(_review_state(root, preflight), indent=2) + "\n",
         }
         for rel_path, content in artifacts.items():
@@ -127,6 +150,8 @@ def register(app: typer.Typer) -> None:
         console.print(f"[green]✓[/] Review runbook: [bold]{_RUNBOOK_PATH}[/]")
         console.print(f"[green]✓[/] Stage 1 prompt: [bold]{_UNDERSTANDING_PROMPT_PATH}[/]")
         console.print(f"[green]✓[/] Stage 2 prompt: [bold]{_JUDGE_PROMPT_PATH}[/]")
+        console.print(f"[green]✓[/] Stage 1 TOON template: [bold]{_UNDERSTANDING_TEMPLATE_PATH}[/]")
+        console.print(f"[green]✓[/] Stage 2 TOON template: [bold]{_FINDINGS_TEMPLATE_PATH}[/]")
         console.print(f"[green]✓[/] Stage 1 output target: [bold]{_rel_to_root(outputs['understanding'], root)}[/]")
         console.print(f"[green]✓[/] Stage 2 output target: [bold]{_rel_to_root(outputs['findings'], root)}[/]")
         console.print(f"[green]✓[/] Review stage state: [bold]{_STATE_PATH}[/]")
@@ -200,6 +225,8 @@ def _build_review_preflight(
             "runbook": _rel_to_root(outputs["runbook"], root),
             "understanding_prompt": _rel_to_root(outputs["understanding_prompt"], root),
             "judge_prompt": _rel_to_root(outputs["judge_prompt"], root),
+            "understanding_template": _rel_to_root(outputs["understanding_template"], root),
+            "findings_template": _rel_to_root(outputs["findings_template"], root),
             "understanding_output": _rel_to_root(outputs["understanding"], root),
             "findings_output": _rel_to_root(outputs["findings"], root),
             "state": _rel_to_root(outputs["state"], root),
@@ -207,6 +234,8 @@ def _build_review_preflight(
             "active_runbook": str(_RUNBOOK_PATH),
             "active_understanding_prompt": str(_UNDERSTANDING_PROMPT_PATH),
             "active_judge_prompt": str(_JUDGE_PROMPT_PATH),
+            "active_understanding_template": str(_UNDERSTANDING_TEMPLATE_PATH),
+            "active_findings_template": str(_FINDINGS_TEMPLATE_PATH),
             "active_state": str(_STATE_PATH),
         },
         "context_pack": context_pack,
@@ -235,6 +264,8 @@ def _review_output_paths(
         "runbook": run_dir / "runbook.md",
         "understanding_prompt": run_dir / "understanding.prompt.md",
         "judge_prompt": run_dir / "judge.prompt.md",
+        "understanding_template": run_dir / "understanding.template.toon",
+        "findings_template": run_dir / "findings.template.toon",
         "understanding": run_dir / "understanding.toon",
         "findings": run_dir / "findings.toon",
         "state": run_dir / "state.json",
@@ -378,6 +409,8 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         + f"- Preflight JSON: `{preflight['paths']['preflight']}`\n"
         f"- Stage 1 prompt: `{preflight['paths']['understanding_prompt']}`\n"
         f"- Stage 2 prompt: `{preflight['paths']['judge_prompt']}`\n"
+        f"- Stage 1 TOON template: `{preflight['paths']['understanding_template']}`\n"
+        f"- Stage 2 TOON template: `{preflight['paths']['findings_template']}`\n"
         f"- Stage 1 output ({_LLM_REVIEW_FORMAT}): `{preflight['paths']['understanding_output']}`\n"
         f"- Stage 2 output ({_LLM_REVIEW_FORMAT}): `{preflight['paths']['findings_output']}`\n"
         f"- Stage state JSON: `{preflight['paths']['state']}`\n\n"
@@ -386,12 +419,13 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         "2. If diff source is not `pr-target` or `current-pr`, stop and rerun `agentpack review --pr <number>`.\n"
         "3. If you cannot write the Stage 1 output file at the declared path, stop and report blocked.\n"
         "4. After Stage 1, run `agentpack review --check`; do not start Stage 2 until it validates Stage 1.\n"
-        "5. After Stage 2, run `agentpack review --check`; do not produce a final summary unless it validates Stage 2.\n\n"
+        "5. After Stage 2, run `agentpack review --check --post-inline-comments` for PR-bound runs. "
+        "For local-only fallback reviews, run `agentpack review --check`. Do not produce a final summary unless Stage 2 validates.\n\n"
         "## Workflow\n\n"
-        f"1. Read the Stage 1 prompt file completely and produce the understanding {_LLM_REVIEW_FORMAT} at the declared output path.\n"
+        f"1. Read the Stage 1 prompt file and TOON template completely, then produce the understanding {_LLM_REVIEW_FORMAT} at the declared output path.\n"
         f"2. Run `agentpack review --check` and confirm the understanding {_LLM_REVIEW_FORMAT} file exists and follows the declared schema before moving on.\n"
-        f"3. Read the Stage 2 prompt file completely and produce the findings {_LLM_REVIEW_FORMAT} at the declared output path.\n"
-        f"4. Run `agentpack review --check` and confirm the findings {_LLM_REVIEW_FORMAT} file exists and follows the declared schema before reporting back.\n"
+        f"3. Read the Stage 2 prompt file and TOON template completely, then produce the findings {_LLM_REVIEW_FORMAT} at the declared output path.\n"
+        f"4. Run `agentpack review --check --post-inline-comments` for PR-bound runs, or `agentpack review --check` for local fallback, and confirm the findings {_LLM_REVIEW_FORMAT} file exists and follows the declared schema before reporting back.\n"
         "5. In the final user-facing response, summarize findings and validation gaps without exposing internal stage names.\n"
     )
 
@@ -405,6 +439,11 @@ def _render_stage_prompt(
 ) -> str:
     root = _root().resolve()
     abs_output = output_path.resolve()
+    template_path = (
+        preflight["paths"]["understanding_template"]
+        if prior_path is None
+        else preflight["paths"]["findings_template"]
+    )
     lines = [_load_review_template(template_name)]
     lines.extend(
         [
@@ -421,6 +460,7 @@ def _render_stage_prompt(
             if preflight["review"].get("target", {}).get("number")
             else "- Review target: current branch/local fallback",
             f"- Output path: {_rel_to_root(abs_output, root)}",
+            f"- Copy-fill TOON template: {template_path}",
             f"- Structured output format: {_LLM_REVIEW_FORMAT}",
         ]
     )
@@ -435,7 +475,9 @@ def _render_stage_prompt(
             "## Execution Gates",
             "",
             "- Do not answer inline from this stage prompt.",
+            "- Start from the copy-fill TOON template if this format is unfamiliar.",
             "- Write the required TOON artifact to the declared output path and nothing else.",
+            "- If you accidentally wrote JSON or fenced output, run `agentpack review --check`; AgentPack will canonicalize safe schema-matching output to TOON.",
             "- If you cannot write the file or validate that it exists, stop and report blocked.",
             "- Run `agentpack review --check` after writing this artifact before continuing.",
         ]
@@ -447,6 +489,57 @@ def _render_stage_prompt(
         lines.extend(f"- {warning}" for warning in preflight["warnings"])
     lines.extend(["", "Reviewer context:", preflight["review_context"] or "(none)"])
     return "\n".join(lines).rstrip() + "\n"
+
+
+def _review_toon_template(kind: str) -> str:
+    if kind == "understanding":
+        return (
+            "@format toon\n"
+            "@root review_understanding\n"
+            "intent:\n"
+            "  issue_ref: null\n"
+            "  requirement: Replace with factual restatement from PR or issue\n"
+            "  author_decisions[]:\n"
+            "    []\n"
+            "change_units[]:\n"
+            "  -\n"
+            "    id: cu1\n"
+            "    location: path/to/changed_file.py:10-24\n"
+            "    kind: core\n"
+            "    what_changed: Replace with factual description of the edit, no judgment\n"
+            "    code: Replace with changed block read from the repository\n"
+            "    referenced_symbols[]:\n"
+            "      []\n"
+            "    callers[]:\n"
+            "      []\n"
+            "    contracts_touched[]:\n"
+            "      []\n"
+            "    local_convention_refs[]:\n"
+            "      []\n"
+            "open_questions[]:\n"
+            "  []\n"
+        )
+    if kind == "findings":
+        return (
+            "@format toon\n"
+            "@root review_findings\n"
+            "findings[]:\n"
+            "  -\n"
+            "    id: f1\n"
+            "    unit: cu1\n"
+            "    lens: unit\n"
+            "    type: logic\n"
+            "    location: path/to/changed_file.py:12\n"
+            "    claim: Replace with a factual review finding\n"
+            "    evidence: path/to/changed_file.py:12 shows the supporting code\n"
+            "    severity: should-fix\n"
+            "    category: defect\n"
+            "    confidence: high\n"
+            "    depends_on: null\n"
+            "    direction: Replace with what would resolve it, or null\n"
+            "coverage: Replace with units examined and any gaps\n"
+        )
+    raise ValueError(f"unknown review template kind: {kind}")
 
 
 def _build_review_context_pack(
@@ -762,7 +855,7 @@ def _review_state(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _check_active_review(root: Path) -> None:
+def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_run_post: bool = False) -> None:
     if not (root / _PREFLIGHT_PATH).exists():
         console.print("[red]No active review preflight found.[/] Run `agentpack review --pr <number>` first.")
         raise typer.Exit(1)
@@ -796,16 +889,39 @@ def _check_active_review(root: Path) -> None:
         console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
         return
     try:
-        _validate_review_artifact(findings, kind="findings")
+        findings_payload = _validate_review_artifact(findings, kind="findings")
     except ValueError as exc:
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
         console.print(f"[red]Stage 2 artifact invalid:[/] {exc}")
         raise typer.Exit(1) from exc
 
+    posted: dict[str, Any] | None = None
+    if post_inline_comments or dry_run_post:
+        try:
+            posted = _post_inline_review_comments(root, preflight, findings_payload, dry_run=dry_run_post)
+        except _ReviewPreflightError as exc:
+            state = _review_state(root, preflight)
+            _write_review_state(root, preflight, state)
+            action = "dry-run inline review payload" if dry_run_post else "post inline review comments"
+            console.print(f"[red]Could not {action}:[/] {exc}")
+            raise typer.Exit(1) from exc
+
     state = _review_state(root, preflight)
+    if posted:
+        state["posted_review"] = posted
     _write_review_state(root, preflight, state)
-    console.print("[green]✓[/] Stage 2 valid. Review artifacts complete; final summary is unblocked.")
+    if posted:
+        if posted.get("status") == "already_posted":
+            console.print(f"[yellow]Review comments already posted:[/] {posted.get('url', '')}")
+        elif posted.get("status") == "no_findings":
+            console.print("[green]✓[/] Stage 2 valid. No findings to post as inline comments.")
+        elif posted.get("status") == "dry_run":
+            console.print(f"[green]✓[/] Inline review payload valid: [bold]{posted.get('request_payload', posted.get('path', ''))}[/]")
+        else:
+            console.print(f"[green]✓[/] Posted inline review comments: [bold]{posted.get('url', '')}[/]")
+    else:
+        console.print("[green]✓[/] Stage 2 valid. Review artifacts complete; final summary is unblocked.")
     console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
 
 
@@ -821,18 +937,19 @@ def _write_review_state(root: Path, preflight: dict[str, Any], state: dict[str, 
 
 def _validate_review_artifact(path: Path, *, kind: str) -> dict[str, Any]:
     try:
-        payload = load_toon(path)
-    except (OSError, ToonParseError, json.JSONDecodeError) as exc:
-        raise ValueError(f"{path.name} is not valid TOON: {exc}") from exc
+        payload = _load_review_artifact_payload(path, kind=kind)
+    except (OSError, ToonParseError, json.JSONDecodeError, ValueError) as exc:
+        repair_path = _write_review_repair_guide(path, kind, str(exc))
+        repair_note = f"; repair guide: {repair_path.name}" if repair_path else ""
+        raise ValueError(f"{path.name} is not valid review TOON: {exc}{repair_note}") from exc
     if not isinstance(payload, dict):
         raise ValueError(f"{path.name} must decode to an object")
-    if kind == "understanding":
-        required = ("intent", "change_units", "open_questions")
-    else:
-        required = ("findings", "coverage")
-    missing = [key for key in required if key not in payload]
-    if missing:
-        raise ValueError(f"{path.name} missing required key(s): {', '.join(missing)}")
+    schema_errors = validate_toon_payload_schema(payload, _review_schema(kind))
+    if schema_errors:
+        details = "; ".join(schema_errors[:5])
+        repair_path = _write_review_repair_guide(path, kind, details)
+        repair_note = f"; repair guide: {repair_path.name}" if repair_path else ""
+        raise ValueError(f"{path.name} schema invalid: {details}{repair_note}")
     root = _validation_root(path)
     citation_validation = (
         _validate_understanding_citations(root, payload)
@@ -846,6 +963,51 @@ def _validate_review_artifact(path: Path, *, kind: str) -> dict[str, Any]:
         report_note = f"; full report: {report_path.name}" if report_path else ""
         raise ValueError(f"{path.name} has invalid or missing citations: {suffix}{report_note}")
     return payload
+
+
+def _load_review_artifact_payload(path: Path, *, kind: str) -> dict[str, Any]:
+    text = path.read_text(encoding="utf-8")
+    try:
+        payload = load_toon(path)
+        if not isinstance(payload, dict):
+            return payload
+        if text.lstrip().startswith("@format toon") and text.strip().startswith("@format toon"):
+            return payload
+    except ToonParseError:
+        pass
+
+    canonical = canonicalize_to_toon_text(text, schema=_review_schema(kind), source=str(path))
+    if canonical.text != text:
+        _atomic_write(path, canonical.text)
+    if not isinstance(canonical.payload, dict):
+        raise ValueError(f"{path.name} must decode to an object")
+    return canonical.payload
+
+
+def _review_schema(kind: str) -> str:
+    return "review-understanding" if kind == "understanding" else "review-findings"
+
+
+def _write_review_repair_guide(path: Path, kind: str, error: str) -> Path | None:
+    try:
+        guide_path = path.with_name(f"{kind}-toon-repair.md")
+        template_kind = "understanding" if kind == "understanding" else "findings"
+        guide = (
+            "# AgentPack Review TOON Repair\n\n"
+            f"Artifact: `{path.name}`\n\n"
+            f"Error: `{error}`\n\n"
+            "Use one of these safe recovery paths:\n\n"
+            "1. Replace the file with canonical TOON using this template and real repo `path:line` evidence.\n"
+            "2. If the agent cannot emit TOON reliably, write valid JSON matching the same schema; "
+            "`agentpack review --check` will canonicalize schema-valid JSON to TOON before continuing.\n\n"
+            "```toon\n"
+            f"{_review_toon_template(template_kind).rstrip()}\n"
+            "```\n"
+        )
+        guide_path.write_text(guide, encoding="utf-8")
+        return guide_path
+    except OSError:
+        return None
 
 
 def _write_review_validation_report(path: Path, kind: str, validation: CitationValidation) -> Path | None:
@@ -932,6 +1094,287 @@ def _validate_understanding_citations(root: Path, payload: dict[str, Any]) -> Ci
                 )
     validation = validate_citations(root, citations)
     return CitationValidation(valid=validation.valid, invalid=[*invalid, *validation.invalid], missing=[*missing, *validation.missing])
+
+
+def _post_inline_review_comments(
+    root: Path,
+    preflight: dict[str, Any],
+    findings_payload: dict[str, Any],
+    *,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    run_dir = root / preflight["paths"]["run_dir"]
+    posted_path = run_dir / "posted-review.json"
+    dry_run_path = run_dir / "inline-review-dry-run.json"
+    payload_path = run_dir / "inline-review-payload.json"
+    findings = findings_payload.get("findings")
+    if posted_path.exists() and not dry_run:
+        try:
+            posted = json.loads(posted_path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError as exc:
+            raise _ReviewPreflightError(f"{_rel_to_root(posted_path, root)} is invalid JSON; remove it to retry") from exc
+        if posted.get("status") == "posted":
+            return {
+                "status": "already_posted",
+                "url": str(posted.get("url") or posted.get("html_url") or ""),
+                "path": _rel_to_root(posted_path, root),
+            }
+        if posted.get("status") == "no_findings" and (not isinstance(findings, list) or not findings):
+            return {**posted, "path": _rel_to_root(posted_path, root)}
+        if posted.get("status") not in {"no_findings"}:
+            raise _ReviewPreflightError(
+                f"{_rel_to_root(posted_path, root)} has unsupported status; remove it to retry"
+            )
+
+    pr_number = _preflight_pr_number(preflight)
+    if pr_number is None:
+        raise _ReviewPreflightError("active review is not bound to a GitHub PR; rerun with `agentpack review --pr <number>`")
+    repo_slug = _preflight_repo_slug(root, preflight)
+    if not repo_slug:
+        raise _ReviewPreflightError("could not determine GitHub repository for the active PR")
+    head_sha = str(preflight.get("git", {}).get("head_sha") or "").strip()
+    if not head_sha:
+        raise _ReviewPreflightError("active review is missing the PR head SHA")
+
+    if not isinstance(findings, list) or not findings:
+        record = {
+            "status": "dry_run" if dry_run else "no_findings",
+            "run_id": preflight["review"]["run_id"],
+            "checked_at": _now_iso() if dry_run else None,
+            "posted_at": None if dry_run else _now_iso(),
+            "repo": repo_slug,
+            "pr": pr_number,
+            "head_sha": head_sha,
+            "comments": 0,
+        }
+        record = {key: value for key, value in record.items() if value is not None}
+        output_path = dry_run_path if dry_run else posted_path
+        _atomic_write(output_path, json.dumps(record, indent=2) + "\n")
+        return {**record, "path": _rel_to_root(output_path, root)}
+
+    commentable_lines = _commentable_right_lines(root, str(preflight.get("diff", {}).get("range") or ""))
+    comments, skipped = _findings_to_inline_comments(findings, commentable_lines)
+    if skipped:
+        raise _ReviewPreflightError(
+            "cannot post every finding inline: "
+            + "; ".join(skipped[:5])
+            + ("; ..." if len(skipped) > 5 else "")
+        )
+    if not comments:
+        raise _ReviewPreflightError("findings TOON produced no inline comments")
+
+    review_body = _review_body(preflight, len(comments))
+    request = {
+        "commit_id": head_sha,
+        "event": "COMMENT",
+        "body": review_body,
+        "comments": comments,
+    }
+    payload_record = {
+        "repo": repo_slug,
+        "pr": pr_number,
+        "endpoint": f"repos/{repo_slug}/pulls/{pr_number}/reviews",
+        "payload": request,
+    }
+    _atomic_write(payload_path, json.dumps(payload_record, indent=2) + "\n")
+    if dry_run:
+        record = {
+            "status": "dry_run",
+            "run_id": preflight["review"]["run_id"],
+            "checked_at": _now_iso(),
+            "repo": repo_slug,
+            "pr": pr_number,
+            "head_sha": head_sha,
+            "comments": len(comments),
+            "request_payload": _rel_to_root(payload_path, root),
+        }
+        _atomic_write(dry_run_path, json.dumps(record, indent=2) + "\n")
+        return {**record, "path": _rel_to_root(dry_run_path, root)}
+
+    response = _post_pull_request_review(root, repo_slug, pr_number, request)
+    posted = {
+        "status": "posted",
+        "run_id": preflight["review"]["run_id"],
+        "posted_at": _now_iso(),
+        "repo": repo_slug,
+        "pr": pr_number,
+        "head_sha": head_sha,
+        "comments": len(comments),
+        "url": str(response.get("html_url") or response.get("url") or ""),
+        "id": response.get("id"),
+        "request_payload": _rel_to_root(payload_path, root),
+    }
+    _atomic_write(posted_path, json.dumps(posted, indent=2) + "\n")
+    return {**posted, "path": _rel_to_root(posted_path, root)}
+
+
+def _preflight_pr_number(preflight: dict[str, Any]) -> int | None:
+    for source in (preflight.get("review", {}).get("target"), preflight.get("pr")):
+        if not isinstance(source, dict):
+            continue
+        try:
+            number = int(source.get("number") or 0)
+        except (TypeError, ValueError):
+            number = 0
+        if number > 0:
+            return number
+    return None
+
+
+def _preflight_repo_slug(root: Path, preflight: dict[str, Any]) -> str:
+    for source in (preflight.get("pr"), preflight.get("review", {}).get("target")):
+        if not isinstance(source, dict):
+            continue
+        url = str(source.get("url") or "")
+        match = re.search(r"github\.com[:/](?P<owner>[^/\s]+)/(?P<repo>[^/\s]+?)(?:\.git)?(?:/pull/\d+)?/?$", url)
+        if match:
+            return f"{match.group('owner')}/{match.group('repo')}"
+    if shutil.which("gh") is None:
+        return ""
+    result = subprocess.run(
+        ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return ""
+    return result.stdout.strip()
+
+
+def _commentable_right_lines(root: Path, diff_range: str) -> dict[str, set[int]]:
+    if not diff_range:
+        return {}
+    result = subprocess.run(
+        ["git", "diff", "--unified=0", diff_range],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return {}
+    return _parse_commentable_right_lines(result.stdout)
+
+
+def _parse_commentable_right_lines(diff_text: str) -> dict[str, set[int]]:
+    commentable: dict[str, set[int]] = {}
+    current_path = ""
+    new_line: int | None = None
+    for line in diff_text.splitlines():
+        diff_match = _DIFF_GIT_RE.match(line)
+        if diff_match:
+            current_path = diff_match.group("new")
+            new_line = None
+            continue
+        if line.startswith("+++ b/"):
+            current_path = line.removeprefix("+++ b/")
+            new_line = None
+            continue
+        if line.startswith("+++ /dev/null"):
+            current_path = ""
+            new_line = None
+            continue
+        hunk_match = _DIFF_HUNK_RE.match(line)
+        if hunk_match:
+            try:
+                new_line = int(hunk_match.group("new_start"))
+            except ValueError:
+                new_line = None
+            continue
+        if not current_path or new_line is None or line.startswith("\\"):
+            continue
+        if line.startswith("-") and not line.startswith("---"):
+            continue
+        if line.startswith("+") and line.startswith("+++"):
+            continue
+        if new_line > 0:
+            commentable.setdefault(current_path, set()).add(new_line)
+        new_line += 1
+    return commentable
+
+
+def _findings_to_inline_comments(
+    findings: list[Any],
+    commentable_lines: dict[str, set[int]],
+) -> tuple[list[dict[str, Any]], list[str]]:
+    comments: list[dict[str, Any]] = []
+    skipped: list[str] = []
+    for index, finding in enumerate(findings, start=1):
+        if not isinstance(finding, dict):
+            skipped.append(f"finding {index}: not an object")
+            continue
+        location = parse_location(str(finding.get("location") or ""))
+        if location is None or location.start_line is None:
+            skipped.append(f"finding {index}: missing valid location path:line")
+            continue
+        path = location.path
+        line = int(location.start_line)
+        if line not in commentable_lines.get(path, set()):
+            skipped.append(f"finding {index}: {path}:{line} is not in the PR diff as a right-side line")
+            continue
+        comments.append(
+            {
+                "path": path,
+                "line": line,
+                "side": "RIGHT",
+                "body": _inline_comment_body(finding, index),
+            }
+        )
+    return comments, skipped
+
+
+def _inline_comment_body(finding: dict[str, Any], index: int) -> str:
+    severity = str(finding.get("severity") or "finding").strip()
+    claim = str(finding.get("claim") or "").strip()
+    evidence = str(finding.get("evidence") or "").strip()
+    finding_id = str(finding.get("id") or f"finding-{index}").strip()
+    parts = [f"**AgentPack review {severity}:** {claim or 'Review finding.'}"]
+    if evidence:
+        parts.append(f"Evidence: {evidence}")
+    parts.append(f"_Finding `{finding_id}` from AgentPack review._")
+    return _clip_text("\n\n".join(parts), 60_000)
+
+
+def _review_body(preflight: dict[str, Any], comment_count: int) -> str:
+    run_id = preflight.get("review", {}).get("run_id", "")
+    return (
+        f"AgentPack review posted {comment_count} inline finding"
+        f"{'' if comment_count == 1 else 's'} from run `{run_id}`."
+    )
+
+
+def _post_pull_request_review(root: Path, repo_slug: str, pr_number: int, payload: dict[str, Any]) -> dict[str, Any]:
+    if shutil.which("gh") is None:
+        raise _ReviewPreflightError("GitHub CLI `gh` is required to post inline review comments")
+    result = subprocess.run(
+        [
+            "gh",
+            "api",
+            f"repos/{repo_slug}/pulls/{pr_number}/reviews",
+            "--method",
+            "POST",
+            "--input",
+            "-",
+        ],
+        cwd=root,
+        input=json.dumps(payload),
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or f"gh api exited {result.returncode}").strip()
+        raise _ReviewPreflightError(detail)
+    try:
+        response = json.loads(result.stdout or "{}")
+    except json.JSONDecodeError:
+        return {}
+    return response if isinstance(response, dict) else {}
+
+
+def _clip_text(value: str, limit: int) -> str:
+    if len(value) <= limit:
+        return value
+    return value[: max(0, limit - 3)].rstrip() + "..."
 
 
 def _semantic_support_judge():

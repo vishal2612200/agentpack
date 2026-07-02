@@ -141,4 +141,4 @@ def test_mcp_server_registers_router_tools(monkeypatch):
         serve()
 
     tool_names = set(FakeMCP.instances[0].tools)
-    assert {"readiness", "route_task", "get_skills", "get_skill", "explain_route"} <= tool_names
+    assert {"readiness", "route_task", "get_skills", "get_skill", "explain_route", "validate_toon"} <= tool_names

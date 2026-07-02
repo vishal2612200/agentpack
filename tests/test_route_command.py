@@ -317,6 +317,59 @@ def test_route_uses_codex_env_over_multi_agent_repo_files(tmp_path, monkeypatch)
     assert "src/agentpack/adapters/detect.py" in selected
 
 
+def test_route_uses_codex_project_markers_over_antigravity_repo_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in ("CODEX_CI", "CODEX_ENVIRONMENT", "CODEX_SHELL", "CODEX_THREAD_ID", "OPENAI_CODEX", "ANTIGRAVITY", "CLAUDECODE"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "hooks.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "GEMINI.md").write_text("antigravity instructions\n", encoding="utf-8")
+    (tmp_path / ".agent" / "skills").mkdir(parents=True)
+    for path in (
+        "src/agentpack/adapters/detect.py",
+        "src/agentpack/commands/review_cmd.py",
+        "src/agentpack/commands/toon_validate.py",
+        "src/agentpack/core/toon_validator.py",
+        "src/agentpack/mcp_server.py",
+        "src/agentpack/router/service.py",
+        "tests/test_mcp_server.py",
+        "tests/test_review_cmd.py",
+        "tests/test_route_command.py",
+        "tests/test_toon_validator.py",
+        "src/agentpack/learning/extractor.py",
+        "src/agentpack/commands/workflow_cmd.py",
+    ):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"# {path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "route",
+            "--task",
+            "Fix remaining AgentPack gaps: PR review post dry-run/E2E safety, MCP TOON canonical output, routing active-agent/noise, and stricter review schema validation.",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    selected = [item["path"] for item in data["selected_files"][:10]]
+    assert data["current_agent"] == "codex"
+    assert data["reviewer_agent"] == "claude"
+    assert data["task_mode"] == "integration_readiness"
+    assert "src/agentpack/adapters/detect.py" in selected
+    assert "src/agentpack/commands/review_cmd.py" in selected
+    assert "src/agentpack/core/toon_validator.py" in selected
+    assert "src/agentpack/mcp_server.py" in selected
+    assert "src/agentpack/learning/extractor.py" not in selected
+    assert "src/agentpack/commands/workflow_cmd.py" not in selected
+
+
 def test_route_refreshes_stale_skills_index(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_route_fixture(tmp_path)

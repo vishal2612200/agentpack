@@ -156,6 +156,40 @@ def test_mcp_validate_toon_rejects_missing_format(tmp_path):
     assert "missing required @format toon" in payload["error"]
 
 
+def test_mcp_validate_toon_accepts_schema_json_fallback(tmp_path):
+    result = _validate_toon_impl(
+        tmp_path,
+        content=json.dumps({"findings": [], "coverage": "complete"}),
+        schema="review-findings",
+        allow_json=True,
+        output_format="json",
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["schema"] == "review-findings"
+    assert payload["input_format"] == "json"
+    assert payload["canonical_available"] is True
+
+
+def test_mcp_validate_toon_can_return_canonical_toon(tmp_path):
+    result = _validate_toon_impl(
+        tmp_path,
+        content=json.dumps({"findings": [], "coverage": "complete"}),
+        schema="review-findings",
+        allow_json=True,
+        return_canonical=True,
+        output_format="json",
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["canonical_root"] == "review_findings"
+    assert payload["canonical_input_format"] == "json"
+    assert payload["canonical_toon"].startswith("@format toon\n@root review_findings\n")
+    assert "findings[]:" in payload["canonical_toon"]
+
+
 def test_mcp_validate_toon_requires_one_source(tmp_path):
     result = _validate_toon_impl(tmp_path, output_format="json")
 

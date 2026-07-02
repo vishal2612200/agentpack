@@ -46,9 +46,10 @@ agentpack review --pr <number-or-url> "$ARGUMENTS"
 4. Treat any non-PR portion of `$ARGUMENTS` only as a reviewer lens. It must not replace the latest PR head, `gh pr view`, `git diff`, or direct code reads.
 5. By default, `agentpack review` starts a fresh run under `.agentpack/reviews/<branch-or-pr>/<run_id>/` and refreshes the stable alias files in `.agentpack/`.
 6. Do not perform the review inline from this command. If you cannot write the required files, stop and report blocked.
-7. Stage 1 writes the run-scoped understanding TOON declared by `agentpack review`.
+7. Stage 1 starts from `.agentpack/review-understanding.template.toon` and writes the run-scoped understanding TOON declared by `agentpack review`.
 8. Run `agentpack review --check`; do not start Stage 2 unless Stage 1 validates.
-9. Stage 2 must read that understanding TOON from disk and then write the run-scoped findings TOON declared by `agentpack review`.
-10. Run `agentpack review --check`; do not produce a final review summary unless the findings TOON exists and validates.
-11. Resume an interrupted run only with `agentpack review --resume <run_id>`.
-12. In the final response, report findings first with file evidence, then state validation exactly: passed, failed, or not run.
+9. Stage 2 must read that understanding TOON from disk, start from `.agentpack/review-findings.template.toon`, and then write the run-scoped findings TOON declared by `agentpack review`.
+10. Run `agentpack review --check --dry-run-post` when you need a controlled inline payload check without calling GitHub. Run `agentpack review --check --post-inline-comments` for real PR-bound review posting. Use `agentpack review --check` only for local fallback reviews. Do not produce a final review summary unless the findings TOON exists, validates, and any intended PR-bound inline post succeeds.
+11. If an older model emits valid JSON or fenced output instead of TOON, rerun `agentpack review --check`; AgentPack canonicalizes schema-valid output to TOON and writes a repair guide for invalid output.
+12. Resume an interrupted run only with `agentpack review --resume <run_id>`.
+13. In the final response, report findings first with file evidence, then state inline-post status and validation exactly: dry-run passed, posted, failed, or not run.

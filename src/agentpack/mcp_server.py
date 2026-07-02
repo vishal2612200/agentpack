@@ -577,10 +577,14 @@ def _validate_toon_impl(
     content: str = "",
     path: str = "",
     require_format: bool = True,
+    schema: str = "",
+    allow_json: bool = False,
+    return_canonical: bool = False,
     output_format: StructuredFormat = "auto",
 ) -> str:
-    from agentpack.core.toon_validator import validate_toon_file, validate_toon_text
+    from agentpack.core.toon_validator import canonicalize_to_toon_text, validate_toon_file, validate_toon_text
 
+    raw_text = ""
     if bool(content) == bool(path):
         payload = {
             "ok": False,
@@ -589,6 +593,10 @@ def _validate_toon_impl(
             "parsed_type": None,
             "error": "provide exactly one of content or path",
             "warnings": [],
+            "schema": schema,
+            "input_format": "",
+            "repair_hint": "",
+            "canonical_available": False,
         }
     elif path:
         target = (root / path).resolve()
@@ -602,11 +610,47 @@ def _validate_toon_impl(
                 "parsed_type": None,
                 "error": "path must stay inside repo root",
                 "warnings": [],
+                "schema": schema,
+                "input_format": "",
+                "repair_hint": "",
+                "canonical_available": False,
             }
         else:
-            payload = validate_toon_file(target, require_format=require_format).as_dict()
+            result = validate_toon_file(
+                target,
+                require_format=require_format,
+                schema=schema,
+                allow_json=allow_json,
+            )
+            payload = result.as_dict()
+            if result.ok and return_canonical:
+                raw_text = target.read_text(encoding="utf-8")
     else:
-        payload = validate_toon_text(content, source="<content>", require_format=require_format).as_dict()
+        result = validate_toon_text(
+            content,
+            source="<content>",
+            require_format=require_format,
+            schema=schema,
+            allow_json=allow_json,
+        )
+        payload = result.as_dict()
+        if result.ok and return_canonical:
+            raw_text = content
+    if return_canonical and payload.get("ok") and raw_text:
+        try:
+            canonical = canonicalize_to_toon_text(
+                raw_text,
+                schema=schema,
+                source=str(payload.get("source") or path or "<content>"),
+                allow_json=allow_json,
+            )
+        except ValueError as exc:
+            payload["ok"] = False
+            payload["error"] = f"unable to render canonical TOON: {exc}"
+        else:
+            payload["canonical_toon"] = canonical.text
+            payload["canonical_root"] = canonical.root
+            payload["canonical_input_format"] = canonical.input_format
     return to_llm(root, payload, requested=output_format, root_name="agentpack_toon_validation")
 
 
@@ -819,13 +863,24 @@ def serve() -> None:
         return _compress_output_impl(_repo_root(), content=content, kind=kind)
 
     @mcp.tool()
-    def validate_toon(content: str = "", path: str = "", require_format: bool = True, format: str = "auto") -> str:
+    def validate_toon(
+        content: str = "",
+        path: str = "",
+        require_format: bool = True,
+        schema: str = "",
+        allow_json: bool = False,
+        return_canonical: bool = False,
+        format: str = "auto",
+    ) -> str:
         """Validate TOON syntax from inline content or a repo-relative file path.
 
         Args:
             content: Inline TOON content. Mutually exclusive with path.
             path: Repo-relative TOON file path. Mutually exclusive with content.
             require_format: Require the first non-empty line to be @format toon.
+            schema: Optional schema: review-understanding | review-findings.
+            allow_json: Accept JSON fallback when schema is provided.
+            return_canonical: Include canonical_toon in the response when validation succeeds.
             format: auto | toon | json.
         """
         return _validate_toon_impl(
@@ -833,6 +888,9 @@ def serve() -> None:
             content=content,
             path=path,
             require_format=require_format,
+            schema=schema,
+            allow_json=allow_json,
+            return_canonical=return_canonical,
             output_format=format,
         )
 

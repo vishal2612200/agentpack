@@ -913,14 +913,17 @@ Output includes relevant files, applied rules, recommended skills, suggested com
 
 ### `agentpack toon-validate`
 
-Validate TOON syntax for agent-facing artifacts without applying a review-specific schema.
+Validate TOON syntax for agent-facing artifacts. Review artifacts can also be checked against the review-specific schemas.
 
 ```bash
 agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon
 agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --format json
+agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon --schema review-understanding
+agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --schema review-findings --allow-json --write-canonical
 ```
 
 By default the validator requires `@format toon` as the first non-empty line. Use `--allow-missing-format` only for legacy files.
+Use `--schema review-understanding` or `--schema review-findings` for review-stage files. With `--allow-json --write-canonical`, valid JSON that matches the selected schema is rewritten as canonical TOON; malformed output still fails. MCP-only agents can call `validate_toon(..., return_canonical=true)` to receive canonical TOON in the response without using the CLI rewrite path.
 
 ---
 
@@ -960,6 +963,10 @@ Prepare the full two-stage PR review bundle for the current branch or checked-ou
 ```bash
 agentpack review
 agentpack review "focus on backward compatibility"
+agentpack review --pr 123 "focus on backward compatibility"
+agentpack review --check
+agentpack review --check --dry-run-post
+agentpack review --check --post-inline-comments
 agentpack review --resume <run_id>
 ```
 
@@ -969,14 +976,21 @@ Writes:
 - `.agentpack/review.prompt.md`
 - `.agentpack/review-understanding.prompt.md`
 - `.agentpack/review-judge.prompt.md`
+- `.agentpack/review-understanding.template.toon`
+- `.agentpack/review-findings.template.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/preflight.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/runbook.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/context.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/citations.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.prompt.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/judge.prompt.md`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.template.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.template.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-payload.json` when inline PR comment payloads are built
+- `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-dry-run.json` when `--dry-run-post` validates the payload without calling GitHub
+- `.agentpack/reviews/<branch-prefix>/<run_id>/posted-review.json` when inline PR comments are posted or intentionally skipped because there are no findings
 
 `review` stays local-first. It does not replace `gh pr view`, `git diff`, or
 direct code inspection. Instead it captures the latest available PR metadata,
@@ -988,16 +1002,29 @@ overwriting the active `.agentpack/context.md` pack.
 
 Review artifacts are claim-grounded. `understanding.toon` and `findings.toon`
 must cite repo facts with valid `path:line` evidence. Resume/preflight
-validation rejects findings with prose-only evidence, missing locations, files
-that do not exist, line ranges outside the current checkout, or stale
-hash-bearing source citations. Finding evidence and Stage 1 resolved-context
-fields such as `referenced_symbols`, `callers`, and `local_convention_refs`
-also have to overlap the cited span enough to catch arbitrary `path:line`
-references that do not support the claim. For stricter meaning-level review,
-set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local JSON-in/JSON-out command;
-review validation sends each mechanically supported claim/citation pair on
-stdin and rejects it when the command returns `{"supported": false, "reason":
-"..."}`.
+validation first canonicalizes safe schema-matching JSON, fenced output, or
+missing-format TOON into canonical TOON. If the output is malformed, review
+validation writes `<stage>-toon-repair.md` next to the artifact with a copy-fill
+template and recovery instructions. It then rejects findings with prose-only
+evidence, missing locations, files that do not exist, line ranges outside the
+current checkout, or stale hash-bearing source citations. Finding evidence and
+Stage 1 resolved-context fields such as `referenced_symbols`, `callers`, and
+`local_convention_refs` also have to overlap the cited span enough to catch
+arbitrary `path:line` references that do not support the claim. For stricter
+meaning-level review, set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local
+JSON-in/JSON-out command; review validation sends each mechanically supported
+claim/citation pair on stdin and rejects it when the command returns
+`{"supported": false, "reason": "..."}`.
+
+After Stage 2 validates, `agentpack review --check --dry-run-post` validates the
+same inline GitHub review payload and writes it to `inline-review-payload.json`
+without calling GitHub. `agentpack review --check --post-inline-comments` posts
+validated findings as one GitHub PR review with inline comments. Posting
+requires a PR-bound preflight, a GitHub repo slug, a PR head SHA, and finding
+locations that map to right-side lines in the PR diff. If any finding cannot be
+posted inline, both dry-run and posting fail closed instead of falling back to a
+broad summary comment. Successful posts are recorded in `posted-review.json` so
+re-running the check does not duplicate PR comments.
 
 The positional argument is optional reviewer context. It shapes prioritization
 only; it must not replace code evidence.
@@ -1120,6 +1147,7 @@ Register in Claude Code settings (`~/.claude/settings.json`):
 | `explain_file(path, task)` | Show score, inclusion mode, reasons, symbols, imports, and importers for one file. |
 | `get_related_files(path, depth)` | Return import-graph neighbours and related tests for a file. |
 | `get_delta_context(max_files)` | Return the latest selected-file delta plus top current selected files. Useful for cheap prompt-time refresh checks. |
+| `validate_toon(content, path, require_format, schema, allow_json, return_canonical)` | Validate TOON or review-stage JSON fallback. With `return_canonical=true`, includes canonical TOON in the response when validation succeeds. |
 | `get_stats()` | Return latest pack stats, savings, selection quality, excluded files, and benchmark-style signals. |
 
 **Live MCP exposure:** CLI `doctor` verifies MCP registration and local runtime readiness. It cannot prove the current agent host actually exposes AgentPack tools; call `readiness()` from that host. If it returns JSON, live exposure is confirmed.
