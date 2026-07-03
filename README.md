@@ -37,7 +37,7 @@
 ---
 
 <p align="center">
-  <img src="docs/assets/agentpack-demo.gif" alt="Terminal demo: AgentPack refreshes context, routes a task to ranked files and warnings, then runs a focused test." width="840">
+  <img src="docs/assets/agentpack-demo.gif" alt="Terminal demo: AgentPack refreshes context, routes a task, recommends skills, checks review output, records learning, inspects advisory memory timeline rows, then runs a focused test." width="840">
 </p>
 
 <p align="center">
@@ -92,7 +92,10 @@ Cursor, Windsurf, Antigravity, and generic agents.
 
 The long-term vision is a practical second brain for development: local memory,
 review evidence, AST/symbol structure, task history, and observer signals that
-help the next agent orient faster. It remains advisory by design. Source files,
+help the next agent orient faster. The shipped memory graph records task-start
+maps, node refs, episodes, procedures, and memory edges under `.agentpack/`;
+`agentpack memory --timeline` shows timestamps, hashes, confidence, stale-path
+checks, and visible reasons. It remains advisory by design. Source files,
 diffs, tests, runtime evidence, and PR review stay the source of truth.
 
 ## Quick Start
@@ -151,6 +154,10 @@ This is useful but not magic. It says AgentPack often gets meaningful files into
 
 E2E outcome proof is tracked separately in [`benchmarks/results/e2e-ab-status.md`](benchmarks/results/e2e-ab-status.md). Do not treat file-selection results as task-success or cost-savings proof.
 
+Memory feedback has its own guardrail: compare ranking with memory off/on using
+`agentpack eval --memory-ab`. Timestamped memory can explain or boost context,
+but it is not task-success proof.
+
 ## New Contributors
 
 Start with [`good first issue`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) or [`help wanted`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22) issues.
@@ -185,6 +192,8 @@ rules, commands, warnings, and matching skills without writing source files.
 stats, and citation provenance for packed claims.
 AgentPack reuses cached file summaries and snapshot metadata so repeated packs do not start from zero.
 Run `agentpack doctor` when an agent integration, MCP setup, hook, or installed CLI path looks stale.
+Inspect advisory memory with `agentpack memory --timeline`; prune local history
+with `agentpack memory --prune`.
 
 ## Capability Map
 
@@ -194,7 +203,7 @@ Run `agentpack doctor` when an agent integration, MCP setup, hook, or installed 
 | Control plane | `next`, `status`, `guard`, MCP readiness, thread state, freshness checks, and exact repair commands |
 | Token control | budgeted packs, token contracts, delta-context guidance, cached summaries, and retrieval IDs |
 | Review and proof | citation-backed review artifacts, review preflight, benchmark misses, and local validation guidance |
-| Advisory memory | task memory, learning notes, observer signals, and repeated-work diagnostics that stay below source/test evidence |
+| Advisory memory | task-start maps, node refs, episodic/procedural links, timeline/staleness checks, and observer signals below source/test evidence |
 
 ## Current Focus
 
@@ -203,6 +212,7 @@ Run `agentpack doctor` when an agent integration, MCP setup, hook, or installed 
 - Use token contracts to recommend full context vs delta context.
 - Keep repair output explicit: what failed, why it matters, the exact command, and whether work can safely continue.
 - Keep review, TOON, route explainability, and MCP troubleshooting grounded in source, diff, test, and PR evidence.
+- Keep advisory memory auditable with timestamps, provenance, confidence, hashes, stale checks, and visible reasons.
 
 ## What We Want To Prove Next
 
@@ -291,6 +301,7 @@ Implementation deep dives: [`docs/architecture.md`](docs/architecture.md), [`doc
 - no cloud indexing
 - no embeddings or API calls for scan, rank, pack, stats, or benchmark
 - generated files live under `.agentpack/`
+- local task/memory artifacts can include task text, paths, hashes, reasons, timestamps, and confidence
 - review packs before sharing them outside your machine
 
 Details: [`docs/privacy.md`](docs/privacy.md), [`docs/threat-model.md`](docs/threat-model.md), [`docs/data-flow.md`](docs/data-flow.md), and [`SECURITY.md`](SECURITY.md).

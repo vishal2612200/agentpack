@@ -20,6 +20,7 @@ DOCS = [
     ROOT / "docs/agent-plugins.md",
     ROOT / "docs/codex-plugin.md",
     ROOT / "docs/benchmarking.md",
+    ROOT / "docs/demo.md",
     ROOT / "docs/development.md",
     ROOT / "docs/limitations.md",
 ]
@@ -82,6 +83,45 @@ def test_public_version_claims_match_package_metadata() -> None:
     assert f'__version__ = "{version}"' in init_text
     assert f'"version": "{version}"' in npm_text
     assert f"Alpha: `{version}`." in readme_text
+
+
+def test_readme_explains_advisory_memory_timeline() -> None:
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "agentpack memory --timeline" in readme_text
+    assert "agentpack eval --memory-ab" in readme_text
+    assert "runtime evidence" in readme_text
+    assert "source of truth" in readme_text
+    assert "task text, paths, hashes, reasons, timestamps, and confidence" in readme_text
+
+
+def test_docs_visual_assets_cover_route_review_learn_and_memory() -> None:
+    route_demo = ROOT / "docs" / "assets" / "agentpack-route-demo.svg"
+    social = ROOT / "docs" / "assets" / "agentpack-social.svg"
+    icon = ROOT / "docs" / "assets" / "icon.svg"
+    gif = ROOT / "docs" / "assets" / "agentpack-demo.gif"
+    mp4 = ROOT / "docs" / "assets" / "agentpack-demo.mp4"
+    mkdocs = (ROOT / "mkdocs.yml").read_text(encoding="utf-8")
+
+    assert route_demo.read_text(encoding="utf-8") == (ROOT / "assets" / "route-demo.svg").read_text(
+        encoding="utf-8"
+    )
+    assert icon.read_text(encoding="utf-8") == (ROOT / "assets" / "icon.svg").read_text(encoding="utf-8")
+    route_demo_text = route_demo.read_text(encoding="utf-8")
+    social_text = social.read_text(encoding="utf-8")
+    for expected in (
+        "Skill recommendations",
+        "agentpack review --check",
+        "agentpack learn",
+        "agentpack memory --timeline",
+    ):
+        assert expected in route_demo_text
+        assert expected in social_text
+    assert "logo: assets/icon.svg" in mkdocs
+    assert "favicon: assets/icon.svg" in mkdocs
+    assert "social_image: assets/agentpack-social.svg" in mkdocs
+    assert 0 < gif.stat().st_size < 2_000_000
+    assert 0 < mp4.stat().st_size < 500_000
 
 
 def test_e2e_claims_stay_pending_without_public_ab_report() -> None:

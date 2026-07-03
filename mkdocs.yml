@@ -8,6 +8,8 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  logo: assets/icon.svg
+  favicon: assets/icon.svg
   features:
     - navigation.instant
     - navigation.sections
@@ -19,6 +21,7 @@ plugins:
   - search
 
 extra:
+  social_image: assets/agentpack-social.svg
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/vishal2612200/agentpack

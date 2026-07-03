@@ -56,7 +56,12 @@ def test_codex_plugin_has_distribution_screenshot() -> None:
     )
     text = PLUGIN_SCREENSHOT.read_text(encoding="utf-8")
     assert "<svg" in text
-    assert "AgentPack route demo" in text
+    assert "AgentPack route, skills, review, learn, and memory demo" in text
+    assert "Skill recommendations" in text
+    assert "agentpack review --check --dry-run-post" in text
+    assert "agentpack learn" in text
+    assert "agentpack memory --timeline" in text
+    assert "Advisory signals" in text
 
 
 def test_hol_plugin_scanner_workflow_exists() -> None:
