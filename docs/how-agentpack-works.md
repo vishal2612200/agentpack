@@ -60,7 +60,11 @@ what proof still needs to be checked.
 
    AgentPack mirrors bounded local events from task memory, route, learn, and review flows into `.agentpack/observer-events.jsonl`. It derives `.agentpack/observer-brief.md` and dashboard cards that explain relationships such as "this file was changed in similar work but was not selected last time." The observer layer is deliberately local and advisory; direct code, diffs, tests, and PR evidence remain the source of truth.
 
-8. **Measure**
+8. **Remember**
+
+   AgentPack records an append-only memory graph under `.agentpack/`: task-start snapshots, node refs, task events, episodes, procedures, and memory edges. This makes the first context pack the map before work starts, while later events become the travel log. Retrieval requires provenance, source hashes, confidence, and visible reasons; stale or failed memory can warn, but only validated current memories can boost future ranking.
+
+9. **Measure**
 
    `agentpack benchmark` scores expected-file recall, token precision, pack size, misses, and skill routing metrics. Benchmark cases can include `expected_skills` and `avoid_skills` to catch weak skill keywords or noisy skill recommendations.
 

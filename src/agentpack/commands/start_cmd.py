@@ -8,8 +8,10 @@ import typer
 from agentpack.commands._shared import console, _root
 from agentpack.core.command_surface import refresh_command_args
 from agentpack.core.context_pack import load_pack_metadata
+from agentpack.core import git
 from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.integrations.platform import cli_module_argv
+from agentpack.learning.task_memory import record_task_start_snapshot
 from agentpack.session.state import TASK_FILE
 
 
@@ -31,6 +33,7 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
         root = _root()
         thread_id = resolve_session_thread_option(thread)
+        dirty_files_before = sorted(git.dirty_files(root)) if git.is_git_repo(root) else []
         task_path = _task_path(root, thread_id)
         task_path.parent.mkdir(parents=True, exist_ok=True)
         task_path.write_text(task + "\n", encoding="utf-8")
@@ -50,6 +53,17 @@ def register(app: typer.Typer) -> None:
         if result.returncode != 0:
             raise typer.Exit(result.returncode)
         context_path = _context_path(root, thread_id, agent)
+        try:
+            record_task_start_snapshot(
+                root,
+                task=task,
+                thread=thread_id or "",
+                agent=agent,
+                context_path=context_path,
+                dirty_files_before=dirty_files_before,
+            )
+        except Exception:
+            pass
         console.print(f"[green]✓[/] Context ready: [bold]{_rel(context_path, root)}[/]")
 
 

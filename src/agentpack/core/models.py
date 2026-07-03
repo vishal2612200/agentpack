@@ -45,6 +45,9 @@ class Symbol(BaseModel):
     signature: str | None = None
     summary: str | None = None
     body: str | None = None  # source text captured at extraction time; no re-read needed
+    node_id: str = ""
+    signature_hash: str = ""
+    source_hash: str = ""
 
 
 class Citation(BaseModel):

@@ -1320,17 +1320,35 @@ def _apply_ranking_feedback_boosts(
     if str(memory_setting).strip().lower() == "off":
         return scored
     boosts = ranking_feedback_boosts(root, task)
+    episodic_reasons: dict[str, str] = {}
     try:
-        from agentpack.learning.episodes import episodic_memory_boosts
+        from agentpack.learning.episodes import episodic_memory_matches
 
-        episodic_boosts = episodic_memory_boosts(
+        episodic_matches = episodic_memory_matches(
             root,
             task,
             output_path=cfg.learning.episodic_cases_output,
+            procedures_path=getattr(cfg.learning, "procedures_output", ".agentpack/procedures.jsonl"),
             max_boost=float(getattr(cfg.context, "memory_boost_weight", 12.0)),
         )
     except Exception:
-        episodic_boosts = {}
+        episodic_matches = []
+    episodic_boosts: dict[str, float] = {}
+    for match in episodic_matches:
+        path = str(match.get("path") or "")
+        boost = float(match.get("boost") or 0)
+        if not path or boost <= 0:
+            continue
+        episodic_boosts[path] = max(episodic_boosts.get(path, 0.0), boost)
+        procedure_titles = [
+            str(item.get("title") or item.get("procedure_id") or "")
+            for item in match.get("procedures") or []
+            if isinstance(item, dict)
+        ]
+        reason = str(match.get("visible_reason") or "episodic memory similar task")
+        if procedure_titles:
+            reason += f"; procedure={procedure_titles[0]}"
+        episodic_reasons[path] = f"{reason}; confidence={float(match.get('confidence') or 0):.2f}"
     for path, boost in episodic_boosts.items():
         boosts[path] = max(boosts.get(path, 0.0), boost)
     if not boosts:
@@ -1341,7 +1359,9 @@ def _apply_ranking_feedback_boosts(
         if boost <= 0 or fi.path in changed_paths:
             adjusted.append((fi, score, reasons))
             continue
-        label = "episodic memory similar task" if fi.path in episodic_boosts else "learning feedback miss"
+        label = episodic_reasons.get(fi.path) or (
+            "episodic memory similar task" if fi.path in episodic_boosts else "learning feedback miss"
+        )
         adjusted.append((fi, score + boost, [*reasons, f"{label} boost +{boost:.0f}"]))
     return adjusted
 

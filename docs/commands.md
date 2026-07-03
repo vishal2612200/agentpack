@@ -173,9 +173,16 @@ uses `JIRA_BASE_URL` plus either `JIRA_BEARER_TOKEN` or `JIRA_EMAIL` with
 ```bash
 agentpack memory
 agentpack memory --json
+agentpack memory --timeline
+agentpack memory --timeline --json --limit 100
 agentpack memory --prune --dry-run
 agentpack memory --prune --max-events 2000 --max-episodes 1000
 ```
+
+`--timeline` joins task-start snapshots, episodic cases, procedures, and memory
+edges into timestamped rows with version keys, record hashes, relation IDs,
+confidence, visible reason, and stale path flags. Use it to inspect ordering and
+relationships without treating memory as source of truth.
 
 `--prune` keeps the newest session events and episodic cases according to
 runtime retention limits. Use `--dry-run` before writing. `agentpack doctor`

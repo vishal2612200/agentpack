@@ -9,6 +9,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agentpack.core.models import ContextPack, FileInfo, OmittedRelevantFile, SelectedFile
+from agentpack.core.node_identity import symbol_node_id
 from agentpack.core.redactor import redact_secrets
 from agentpack.core.scanner import file_hash
 from agentpack.core.token_estimator import estimate_tokens
@@ -23,6 +24,7 @@ class PackRegistryRecord(BaseModel):
     kind: RegistryKind
     include_mode: str
     symbol: str | None = None
+    node_id: str = ""
     file_hash: str | None = None
     content_hash: str
     tokens: int
@@ -163,12 +165,14 @@ def _symbol_records(sf: SelectedFile, fi: FileInfo | None) -> list[PackRegistryR
     for sym in sf.symbols:
         content = sym.body or sym.signature or sym.summary or sym.name
         content_hash = _hash_text(f"{sf.path}:{sym.name}:{content}")
+        node_id = sym.node_id or symbol_node_id(sf.path, sym, source_hash=fi.hash if fi else sf.source_hash or "")
         records.append(PackRegistryRecord(
             block_id=_block_id(f"{sf.path}::{sym.name}", content_hash),
             path=sf.path,
             kind="selected",
             include_mode="symbol",
             symbol=sym.name,
+            node_id=node_id,
             file_hash=fi.hash if fi else None,
             content_hash=content_hash,
             tokens=estimate_tokens(content),
@@ -246,12 +250,14 @@ def _format_retrieval(record: PackRegistryRecord, content: str, *, stale: bool, 
         status.append("truncated")
     suffix = f" ({', '.join(status)})" if status else ""
     symbol_line = f"- symbol: {record.symbol}\n" if record.symbol else ""
+    node_line = f"- node_id: `{record.node_id}`\n" if record.node_id else ""
     return (
         f"## {record.path}{suffix}\n\n"
         f"- block_id: `{record.block_id}`\n"
         f"- kind: {record.kind}\n"
         f"- mode: {record.include_mode}\n"
         f"{symbol_line}"
+        f"{node_line}"
         f"- tokens: {record.tokens:,}\n\n"
         "```text\n"
         f"{content}\n"

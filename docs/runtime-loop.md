@@ -79,6 +79,37 @@ calls, no dashboard rendering, and no generated lesson. `agentpack learn` and
 the plugin read task facts later when the developer explicitly asks to learn,
 quiz, interview, or debug from recent work.
 
+Task starts also write `.agentpack/task-starts.jsonl`. That record is the map
+before the drive: task text, agent/thread identity, branch, git SHA, dirty-file
+baseline, selected files, context-pack hash, and symbol/node references from the
+latest pack registry. Later task events and episodes can refer back to that
+start snapshot without treating it as truth after the repo changes.
+
+AgentPack's memory graph is append-only and advisory:
+
+- **Node refs** identify code locations using file path, symbol, source hash,
+  content hash, and a stable `node_id` where the pack registry captured a
+  symbol.
+- **Task events** are bounded travel-log facts about reads, edits, decisions,
+  failures, and validation.
+- **Episodes** summarize completed work with changed files, checks, touched
+  nodes, final hashes, and outcome.
+- **Procedures** in `.agentpack/procedures.jsonl` are reusable playbooks linked
+  to validated episodes. They can suggest a route when task terms and current
+  code locations match prior work.
+- **Memory edges** in `.agentpack/memory-edges.jsonl` connect nodes, episodes,
+  and procedures with provenance, relationship hash, confidence, source hash,
+  and a visible reason.
+- `agentpack memory --timeline` joins task starts, episodes, procedures, and
+  edges into timestamped rows for ordering, version analysis, stale-path checks,
+  and relationship inspection.
+
+The trust order is deliberate: live source and tests outrank current diff,
+task-start snapshots, episodic memory, and procedures. Memory can boost ranking
+or explain why context was included, but it cannot replace `rg`, `git diff`,
+direct file reads, tests, or PR evidence. Set `AGENTPACK_MEMORY_FEEDBACK=off` or
+`[context].memory_feedback = "off"` to disable memory-based ranking.
+
 The observer layer relates route selections, task memory, learning output, and
 review outcomes into a small local brief at `.agentpack/observer-brief.md`.
 Those relationships are hypotheses: they can suggest files that prior similar

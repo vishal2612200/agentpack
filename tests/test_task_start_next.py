@@ -43,11 +43,45 @@ def test_start_writes_task_and_delegates_pack(tmp_path: Path, monkeypatch) -> No
 
     class Result:
         returncode = 0
+        stdout = ""
+        stderr = ""
 
     def fake_run(command, **kwargs):
         calls.append([str(part) for part in command])
         (tmp_path / ".agentpack").mkdir(exist_ok=True)
-        (tmp_path / ".agentpack" / "pack_metadata.json").write_text('{"context_path": ".agentpack/context.md"}', encoding="utf-8")
+        scoped = tmp_path / ".agentpack" / "threads" / "codex-local"
+        scoped.mkdir(parents=True, exist_ok=True)
+        (scoped / "context.claude.md").write_text("packed context\n", encoding="utf-8")
+        (scoped / "pack_metadata.json").write_text(
+            '{"context_path": ".agentpack/threads/codex-local/context.claude.md", "selected_files": ["src/cache.py"]}',
+            encoding="utf-8",
+        )
+        (tmp_path / ".agentpack" / "pack-registry.json").write_text(
+            json.dumps(
+                {
+                    "version": 1,
+                    "task": "fix cache",
+                    "generated_at": "2026-07-03T00:00:00+00:00",
+                    "snapshot_root_hash": "root-hash",
+                    "records": [
+                        {
+                            "block_id": "src__cache.py:abc",
+                            "path": "src/cache.py",
+                            "kind": "selected",
+                            "include_mode": "symbol",
+                            "symbol": "refresh_cache",
+                            "node_id": "node:cache",
+                            "file_hash": "file-hash",
+                            "content_hash": "content-hash",
+                            "tokens": 5,
+                            "score": 100,
+                            "reasons": ["symbol keyword match"],
+                        }
+                    ],
+                }
+            ),
+            encoding="utf-8",
+        )
         return Result()
 
     monkeypatch.setattr("agentpack.commands.start_cmd.subprocess.run", fake_run)
@@ -56,8 +90,18 @@ def test_start_writes_task_and_delegates_pack(tmp_path: Path, monkeypatch) -> No
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / ".agentpack" / "threads" / "codex-local" / "task.md").read_text(encoding="utf-8") == "fix cache\n"
-    assert calls and calls[0][-2:] == ["--thread", "codex-local"]
+    pack_calls = [call for call in calls if "agentpack.cli" in call]
+    assert pack_calls and pack_calls[0][-2:] == ["--thread", "codex-local"]
     assert "Context ready" in result.output
+    snapshots = [
+        json.loads(line)
+        for line in (tmp_path / ".agentpack" / "task-starts.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert snapshots[-1]["task"] == "fix cache"
+    assert snapshots[-1]["thread"] == "codex-local"
+    assert snapshots[-1]["context_pack_hash"]
+    assert snapshots[-1]["selected_files"] == ["src/cache.py"]
+    assert snapshots[-1]["node_refs"][0]["node_id"] == "node:cache"
 
 
 def test_next_recommends_init_when_uninitialized(tmp_path: Path, monkeypatch) -> None:

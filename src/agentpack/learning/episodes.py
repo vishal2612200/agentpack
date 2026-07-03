@@ -6,9 +6,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentpack.core.node_identity import hash_text, normalize_repo_path
 from agentpack.core.scanner import file_hash
+from agentpack.learning.procedures import matching_procedures, record_memory_edge
 
 EPISODIC_CASES_PATH = ".agentpack/episodic-cases.jsonl"
+EPISODE_SCHEMA_VERSION = 2
 
 
 def record_episode(
@@ -22,27 +25,50 @@ def record_episode(
     failure_class: str = "",
     failure_source: str = "",
     context_hash: str = "",
+    task_id: str = "",
+    touched_nodes: list[dict[str, Any]] | None = None,
+    procedure_ids: list[str] | None = None,
+    final_git_sha: str = "",
+    diff_hash: str = "",
     output_path: str = EPISODIC_CASES_PATH,
 ) -> None:
     if not task and not changed_files:
         return
+    timestamp = datetime.now(timezone.utc).isoformat()
+    clean_changed = _bounded_paths(changed_files)
+    clean_selected = _bounded_paths(selected_files)
+    episode_id = "episode:" + hash_text("|".join([task, ",".join(clean_changed), timestamp]))[:16]
+    nodes = _bounded_nodes(touched_nodes or _nodes_from_latest_task_start(root, [*clean_selected, *clean_changed]))
     record = {
-        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "schema_version": EPISODE_SCHEMA_VERSION,
+        "episode_id": episode_id,
+        "timestamp": timestamp,
+        "completed_at": timestamp,
+        "recorded_at": timestamp,
+        "episode_version": f"{episode_id}@{timestamp}",
+        "task_id": task_id,
         "task": task,
         "concepts": sorted(_terms(task)),
-        "selected_files": _bounded_paths(selected_files),
-        "changed_files": _bounded_paths(changed_files),
+        "selected_files": clean_selected,
+        "changed_files": clean_changed,
         "path_hashes": _path_hashes(root, [*selected_files, *changed_files]),
+        "touched_nodes": nodes,
+        "procedure_ids": _bounded_strings(procedure_ids or [], limit=20),
         "checks": checks or [],
         "passed": passed,
         "failure_class": failure_class,
         "failure_source": failure_source,
         "context_hash": context_hash,
+        "final_git_sha": final_git_sha,
+        "diff_hash": diff_hash,
+        "confidence": 1.0 if passed else 0.4 if passed is False else 0.6,
+        "visible_reason": "completed task episode with source hashes and touched nodes",
     }
     path = root / output_path
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(record, sort_keys=True, separators=(",", ":")) + "\n")
+    _record_episode_edges(root, record)
 
 
 def episodic_memory_boosts(
@@ -50,13 +76,39 @@ def episodic_memory_boosts(
     task: str,
     *,
     output_path: str = EPISODIC_CASES_PATH,
+    procedures_path: str = ".agentpack/procedures.jsonl",
     max_boost: float = 12.0,
     limit: int = 500,
 ) -> dict[str, float]:
+    boosts: dict[str, float] = {}
+    for match in episodic_memory_matches(
+        root,
+        task,
+        output_path=output_path,
+        procedures_path=procedures_path,
+        max_boost=max_boost,
+        limit=limit,
+    ):
+        path = str(match.get("path") or "")
+        boost = float(match.get("boost") or 0)
+        if path and boost > 0:
+            boosts[path] = min(max_boost, boosts.get(path, 0.0) + boost)
+    return boosts
+
+
+def episodic_memory_matches(
+    root: Path,
+    task: str,
+    *,
+    output_path: str = EPISODIC_CASES_PATH,
+    procedures_path: str = ".agentpack/procedures.jsonl",
+    max_boost: float = 12.0,
+    limit: int = 500,
+) -> list[dict[str, Any]]:
     task_terms = _terms(task)
     if not task_terms:
-        return {}
-    boosts: dict[str, float] = {}
+        return []
+    matches: list[dict[str, Any]] = []
     for record in _read_jsonl(root / output_path, limit=limit):
         if record.get("passed") is False:
             continue
@@ -68,11 +120,30 @@ def episodic_memory_boosts(
         if not overlap:
             continue
         weight = min(max_boost, 4.0 + len(overlap) * 2.0)
+        confidence = min(0.95, 0.55 + len(overlap) * 0.06)
+        procedures = matching_procedures(root, task, record, output_path=procedures_path)
+        if procedures:
+            weight = min(max_boost, weight + 2.0)
+            confidence = min(0.98, confidence + 0.1)
         path_hashes = record.get("path_hashes") if isinstance(record.get("path_hashes"), dict) else {}
         for path in record.get("changed_files") or []:
             if isinstance(path, str) and _path_is_current(root, path, path_hashes):
-                boosts[path] = min(max_boost, boosts.get(path, 0.0) + weight)
-    return boosts
+                matches.append(
+                    {
+                        "path": normalize_repo_path(path),
+                        "boost": weight,
+                        "episode_id": str(record.get("episode_id") or ""),
+                        "task_id": str(record.get("task_id") or ""),
+                        "confidence": confidence,
+                        "visible_reason": (
+                            f"episodic memory similar task; overlap={', '.join(sorted(overlap)[:5])}; "
+                            "source hash still current"
+                        ),
+                        "node_ids": _node_ids_for_path(record, path),
+                        "procedures": procedures,
+                    }
+                )
+    return matches
 
 
 def _read_jsonl(path: Path, *, limit: int) -> list[dict[str, Any]]:
@@ -117,6 +188,104 @@ def _bounded_paths(paths: list[str], limit: int = 80) -> list[str]:
     return out
 
 
+def _bounded_strings(values: list[str], limit: int) -> list[str]:
+    result: list[str] = []
+    seen: set[str] = set()
+    for value in values:
+        clean = str(value).strip()
+        if not clean or clean in seen:
+            continue
+        seen.add(clean)
+        result.append(clean[:160])
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _bounded_nodes(nodes: list[dict[str, Any]], limit: int = 80) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for node in nodes:
+        if not isinstance(node, dict):
+            continue
+        node_id = str(node.get("node_id") or "").strip()
+        path = normalize_repo_path(str(node.get("path") or ""))
+        if not node_id or node_id in seen:
+            continue
+        seen.add(node_id)
+        result.append(
+            {
+                "node_id": node_id[:160],
+                "path": path,
+                "symbol": str(node.get("symbol") or "")[:160],
+                "kind": str(node.get("kind") or "")[:40],
+                "source_hash": str(node.get("source_hash") or "")[:120],
+                "confidence": _confidence(node.get("confidence"), default=1.0),
+                "observed_at": str(node.get("observed_at") or "")[:80],
+                "visible_reason": str(node.get("visible_reason") or "node touched by task")[:240],
+            }
+        )
+        if len(result) >= limit:
+            break
+    return result
+
+
+def _nodes_from_latest_task_start(root: Path, paths: list[str]) -> list[dict[str, Any]]:
+    start_path = root / ".agentpack" / "task-starts.jsonl"
+    records = _read_jsonl(start_path, limit=1)
+    if not records:
+        return []
+    path_set = set(_bounded_paths(paths))
+    nodes: list[dict[str, Any]] = []
+    for node in records[-1].get("node_refs") or []:
+        if isinstance(node, dict) and (not path_set or normalize_repo_path(str(node.get("path") or "")) in path_set):
+            nodes.append(node)
+    return nodes
+
+
+def _node_ids_for_path(record: dict[str, Any], path: str) -> list[str]:
+    rel = normalize_repo_path(path)
+    ids: list[str] = []
+    for node in record.get("touched_nodes") or []:
+        if isinstance(node, dict) and normalize_repo_path(str(node.get("path") or "")) == rel:
+            node_id = str(node.get("node_id") or "")
+            if node_id:
+                ids.append(node_id)
+    return ids[:10]
+
+
+def _record_episode_edges(root: Path, record: dict[str, Any]) -> None:
+    episode_id = str(record.get("episode_id") or "")
+    provenance = {
+        "task_id": str(record.get("task_id") or ""),
+        "episode_id": episode_id,
+        "timestamp": str(record.get("timestamp") or ""),
+    }
+    for node in record.get("touched_nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        record_memory_edge(
+            root,
+            from_id=str(node.get("node_id") or ""),
+            to_id=episode_id,
+            edge_type="node_episode",
+            confidence=_confidence(node.get("confidence"), default=_confidence(record.get("confidence"), default=0.6)),
+            reason=str(node.get("visible_reason") or "node touched by episode"),
+            provenance=provenance,
+            source_hash=str(node.get("source_hash") or ""),
+        )
+    for procedure_id in record.get("procedure_ids") or []:
+        record_memory_edge(
+            root,
+            from_id=episode_id,
+            to_id=str(procedure_id),
+            edge_type="episode_procedure",
+            confidence=_confidence(record.get("confidence"), default=0.6),
+            reason="procedure linked by completed episode",
+            provenance=provenance,
+        )
+
+
 def _path_hashes(root: Path, paths: list[str]) -> dict[str, str]:
     hashes: dict[str, str] = {}
     for path in _bounded_paths(paths):
@@ -145,3 +314,11 @@ def _path_is_current(root: Path, path: str, path_hashes: object) -> bool:
         return file_hash(abs_path) == expected
     except OSError:
         return False
+
+
+def _confidence(value: object, *, default: float) -> float:
+    try:
+        parsed = float(value if value is not None else default)
+    except (TypeError, ValueError):
+        parsed = default
+    return max(0.0, min(1.0, parsed))

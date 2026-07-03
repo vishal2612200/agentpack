@@ -51,6 +51,9 @@ pr_comment_output = ".agentpack/pr-learning-comment.md"
 feedback_output = ".agentpack/learning-feedback.jsonl"
 ranking_feedback_output = ".agentpack/ranking-feedback.jsonl"
 episodic_cases_output = ".agentpack/episodic-cases.jsonl"
+task_starts_output = ".agentpack/task-starts.jsonl"
+procedures_output = ".agentpack/procedures.jsonl"
+memory_edges_output = ".agentpack/memory-edges.jsonl"
 dashboard_output = ".agentpack/learning-dashboard.html"
 team_lessons_output = ".agentpack/team-lessons.md"
 provider_command = ""
@@ -91,6 +94,12 @@ outcomes provide small, receipt-backed ranking boosts. Episodic boosts are
 ignored when the remembered file is missing or its recorded hash no longer
 matches the current checkout. Set it to `"off"` for baseline comparisons or if
 local memory becomes noisy.
+
+Task-start snapshots, procedures, and memory edges are local append-only
+artifacts. They let AgentPack connect task context to code locations and prior
+validated work while keeping live source and tests authoritative. Memory records
+carry hashes, provenance, confidence, and visible reasons; stale records remain
+hints.
 
 `max_session_events` and `max_episodic_cases` are retention limits used by
 `agentpack memory --prune`. Existing repos receive these defaults at runtime

@@ -354,9 +354,11 @@ def _pack_context_impl(
     from agentpack.application.pack_service import PackService, PackRequest
     from agentpack.adapters.detect import detect_agent
     from agentpack.renderers.markdown import render_claude
+    from agentpack.learning.task_memory import record_task_start_snapshot
 
     provided_task = bool(task.strip())
     had_task_md = _task_md_body(root, thread_id or None) is not None
+    dirty_files_before = sorted(git.dirty_files(root)) if provided_task and git.is_git_repo(root) else []
     resolved_task = _resolve_mcp_task(root, task, thread_id or None)
     agent = detect_agent(root)
     result = PackService().run(PackRequest(
@@ -370,6 +372,18 @@ def _pack_context_impl(
         task_source="mcp" if provided_task else ("task.md" if had_task_md else "git"),
         thread_id=thread_id or None,
     ))
+    if provided_task:
+        try:
+            record_task_start_snapshot(
+                root,
+                task=resolved_task,
+                thread=thread_id or "",
+                agent=agent,
+                context_path=result.out_path,
+                dirty_files_before=dirty_files_before,
+            )
+        except Exception:
+            pass
     return _truncate_to_budget(render_claude(result.pack), max_tokens)
 
 
