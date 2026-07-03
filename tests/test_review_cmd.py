@@ -63,7 +63,8 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["review"]["branch_prefix"] == "pr-6"
     assert preflight["review"]["target"] == {"raw": "6", "number": 6, "url": "https://example.com/pr/6", "source": "option"}
     assert preflight["execution_contract"] == {
-        "structured_format": "TOON",
+        "structured_format": "JSON or TOON",
+        "canonical_format": "TOON",
         "requires_write_to_file": True,
         "requires_read_file_between_stages": True,
         "forbid_inline_review": True,
@@ -71,6 +72,8 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
         "stage_order": ["understanding", "judge"],
     }
     assert preflight["git"]["head_sha"] == "pr-head-sha"
+    assert preflight["citation_source"]["mode"] == "git-head"
+    assert preflight["review"]["scaffold"] == "light"
     assert preflight["diff"]["base_ref"] == "origin/main"
     assert preflight["diff"]["head_ref"] == "origin/pr/6"
     assert preflight["diff"]["range"] == "origin/main...origin/pr/6"
@@ -81,6 +84,7 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["changed_files"] == [
         {
             "path": "src/foo.py",
+            "head_blob_sha": "",
             "related_tests": ["tests/test_foo.py"],
         }
     ]
@@ -176,6 +180,40 @@ def test_review_command_explicit_pr_fetch_failure_blocks_without_fallback(tmp_pa
     assert "--allow-local-fallback" in result.output
 
 
+def test_review_command_supports_strict_and_light_scaffolds(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    runner = CliRunner()
+
+    strict = runner.invoke(app, ["review", "--allow-local-fallback", "--strict", "small docs review"])
+
+    assert strict.exit_code == 0, strict.output
+    strict_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+    assert strict_preflight["review"]["scaffold"] == "strict"
+    assert "Review scaffold: strict" in (repo / ".agentpack" / "review.prompt.md").read_text(encoding="utf-8")
+
+    light = runner.invoke(app, ["review", "--allow-local-fallback", "--light", "security token review"])
+
+    assert light.exit_code == 0, light.output
+    light_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+    assert light_preflight["review"]["scaffold"] == "light"
+
+    conflict = runner.invoke(app, ["review", "--allow-local-fallback", "--strict", "--light", "conflict"])
+
+    assert conflict.exit_code == 1
+    assert "Use only one of --strict or --light" in conflict.output
+
+
 def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -224,6 +262,8 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert preflight["paths"]["understanding_template"] in runbook
     assert preflight["paths"]["findings_template"] in runbook
     assert "## Hard Gates" in runbook
+    assert "Review scaffold:" in runbook
+    assert "Citation source:" in runbook
     assert "AgentPack Context Preflight" in runbook
     assert "agentpack_pack_context" in runbook
     assert "Do not perform the review inline" in runbook
@@ -241,6 +281,7 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "## Execution Gates" in understanding_prompt
     assert "Do not answer inline from this stage prompt." in understanding_prompt
     assert f"Copy-fill TOON template: {preflight['paths']['understanding_template']}" in understanding_prompt
+    assert "Prefer valid JSON matching the schema" in understanding_prompt
     assert "Start from the copy-fill TOON template" in understanding_prompt
     assert "will canonicalize safe schema-matching output to TOON" in understanding_prompt
     assert f"Output path: {preflight['paths']['understanding_output']}" in understanding_prompt
@@ -364,6 +405,79 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
     assert complete.exit_code == 0, complete.output
     assert "Stage 2 valid" in complete.output
     assert findings.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
+
+
+def test_review_validation_uses_pr_head_citation_source_when_worktree_drifts(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (repo / "src" / "foo.py").write_text("def foo():\n    value = 0\n    return 2\n", encoding="utf-8")
+    run_dir = repo / ".agentpack" / "reviews" / "pr-1" / "run"
+    run_dir.mkdir(parents=True)
+    preflight = {
+        "paths": {"findings_output": ".agentpack/reviews/pr-1/run/findings.toon"},
+        "git": {"head_sha": head_sha},
+        "citation_source": {"mode": "git-head", "head_sha": head_sha},
+    }
+    (run_dir / "preflight.json").write_text(json.dumps(preflight), encoding="utf-8")
+    findings = run_dir / "findings.toon"
+    findings.write_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "f1",
+                        "unit": "cu1",
+                        "location": "src/foo.py:2",
+                        "claim": "foo returns changed value",
+                        "evidence": "src/foo.py:2 shows the returned value",
+                        "severity": "should-fix",
+                    }
+                ],
+                "coverage": "complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _validate_review_artifact(findings, kind="findings")
+
+    assert payload["findings"][0]["id"] == "f1"
+
+
+def test_review_validation_report_suggests_nearby_repair_line(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    invalid = repo / ".agentpack" / "findings-repair.toon"
+    invalid.parent.mkdir(parents=True, exist_ok=True)
+    invalid.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:1\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:1 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: incomplete\n",
+        encoding="utf-8",
+    )
+
+    try:
+        _validate_review_artifact(invalid, kind="findings")
+    except ValueError as exc:
+        assert "suggested=src/foo.py:2" in str(exc)
+    else:
+        raise AssertionError("unsupported evidence should fail citation validation")
+    report = json.loads((repo / ".agentpack" / "findings-validation-errors.json").read_text(encoding="utf-8"))
+    assert report["repair_hints"][0]["suggested"] == "src/foo.py:2"
 
 
 def test_review_check_writes_repair_guide_for_invalid_toon(tmp_path, monkeypatch) -> None:
@@ -510,16 +624,6 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
-    blocked_without_dry_run = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
-    assert blocked_without_dry_run.exit_code == 1
-    assert "requires a fresh" in blocked_without_dry_run.output
-    assert "dry run first" in blocked_without_dry_run.output
-    assert "Repair command: agentpack review --check --dry-run-post" in blocked_without_dry_run.output
-    assert posted_requests == []
-
-    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
-    assert dry_run.exit_code == 0, dry_run.output
-
     posted = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
 
     assert posted.exit_code == 0, posted.output
@@ -543,6 +647,9 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
         }
     ]
     posted_record = json.loads((repo / preflight["paths"]["run_dir"] / "posted-review.json").read_text(encoding="utf-8"))
+    dry_run_record = json.loads((repo / preflight["paths"]["run_dir"] / "inline-review-dry-run.json").read_text(encoding="utf-8"))
+    assert dry_run_record["status"] == "dry_run"
+    assert dry_run_record["payload_sha256"] == posted_record["payload_sha256"]
     assert posted_record["status"] == "posted"
     assert posted_record["comments"] == 1
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))

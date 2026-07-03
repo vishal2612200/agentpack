@@ -1004,6 +1004,8 @@ Prepare the full two-stage PR review bundle for the current branch or checked-ou
 agentpack review
 agentpack review "focus on backward compatibility"
 agentpack review --pr 123 "focus on backward compatibility"
+agentpack review --light --pr 123 "small docs-only review"
+agentpack review --strict --pr 123 "security-sensitive review"
 agentpack review --check
 agentpack review --check --dry-run-post
 agentpack review --check --post-inline-comments
@@ -1041,30 +1043,41 @@ review. Review context is written under the review run directory instead of
 overwriting the active `.agentpack/context.md` pack.
 
 Review artifacts are claim-grounded. `understanding.toon` and `findings.toon`
-must cite repo facts with valid `path:line` evidence. Resume/preflight
-validation first canonicalizes safe schema-matching JSON, fenced output, or
-missing-format TOON into canonical TOON. If the output is malformed, review
-validation writes `<stage>-toon-repair.md` next to the artifact with a copy-fill
-template and recovery instructions. It then rejects findings with prose-only
-evidence, missing locations, files that do not exist, line ranges outside the
-current checkout, or stale hash-bearing source citations. Finding evidence and
-Stage 1 resolved-context fields such as `referenced_symbols`, `callers`, and
-`local_convention_refs` also have to overlap the cited span enough to catch
-arbitrary `path:line` references that do not support the claim. For stricter
-meaning-level review, set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local
+must cite repo facts with valid `path:line` evidence. Review prompts accept
+JSON or TOON; JSON is preferred when multiline fields would make TOON fragile.
+Resume/preflight validation first canonicalizes safe schema-matching JSON,
+fenced output, or missing-format TOON into canonical TOON. If the output is
+malformed, review validation writes `<stage>-toon-repair.md` next to the
+artifact with a copy-fill template and recovery instructions. It then rejects
+findings with prose-only evidence, missing locations, files that do not exist,
+line ranges outside the review source, or stale hash-bearing source citations.
+For PR-bound reviews, citation validation reads file contents from the recorded
+PR head SHA. Local fallback reviews validate against the working tree. Failed
+claim-support checks write `<stage>-validation-errors.json` with nearby
+replacement line hints when AgentPack can find a stronger candidate. Finding
+evidence and Stage 1 resolved-context fields such as `referenced_symbols`,
+`callers`, and `local_convention_refs` also have to overlap the cited span
+enough to catch arbitrary `path:line` references that do not support the claim.
+For stricter meaning-level review, set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local
 JSON-in/JSON-out command; review validation sends each mechanically supported
 claim/citation pair on stdin and rejects it when the command returns
 `{"supported": false, "reason": "..."}`.
 
 After Stage 2 validates, `agentpack review --check --dry-run-post` validates the
 same inline GitHub review payload and writes it to `inline-review-payload.json`
-without calling GitHub. `agentpack review --check --post-inline-comments` posts
-validated findings as one GitHub PR review with inline comments. Posting
+without calling GitHub. `agentpack review --check --post-inline-comments`
+generates the same dry-run record internally, verifies the payload hash, then
+posts validated findings as one GitHub PR review with inline comments. Posting
 requires a PR-bound preflight, a GitHub repo slug, a PR head SHA, and finding
 locations that map to right-side lines in the PR diff. If any finding cannot be
 posted inline, both dry-run and posting fail closed instead of falling back to a
 broad summary comment. Successful posts are recorded in `posted-review.json` so
 re-running the check does not duplicate PR comments.
+
+Review scaffolding adapts to PR size and risk. Small PRs default to a lighter
+scaffold; security/auth/billing/database/migration-style reviews default to
+strict. Use `--light` to force the compact path and `--strict` to force the full
+two-stage scaffold.
 
 The dry-run payload record has this shape:
 

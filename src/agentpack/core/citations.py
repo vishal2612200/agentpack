@@ -8,7 +8,7 @@ import subprocess
 import urllib.error
 import urllib.request
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -19,6 +19,7 @@ from agentpack.core.scanner import file_hash
 LOCATION_RE = re.compile(r"(?P<path><[^>\n]+>|[A-Za-z0-9_./@+~:-]+):(?P<line>\d+)(?:-(?P<end>\d+))?")
 HUNK_RE = re.compile(r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? \+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@")
 SemanticSupportJudge = Callable[[dict[str, Any]], str | None]
+CitationContentResolver = Callable[[Citation], str | None]
 
 
 @dataclass
@@ -26,6 +27,7 @@ class CitationValidation:
     valid: list[Citation]
     invalid: list[str]
     missing: list[str]
+    repairs: list[dict[str, Any]] = field(default_factory=list)
 
     @property
     def coverage(self) -> float:
@@ -177,6 +179,7 @@ def validate_citations(
     required_claims: list[str] | None = None,
     verify_external_content: bool = False,
     external_timeout_s: float = 5.0,
+    content_resolver: CitationContentResolver | None = None,
 ) -> CitationValidation:
     valid: list[Citation] = []
     invalid: list[str] = []
@@ -199,11 +202,12 @@ def validate_citations(
         if citation.start_line is None:
             invalid.append(f"{citation.path}: missing line")
             continue
+        resolved_content = content_resolver(citation) if content_resolver else None
         path = root / citation.path
-        if not path.exists() or not path.is_file():
+        if resolved_content is None and (not path.exists() or not path.is_file()):
             invalid.append(f"{citation.path}:{citation.start_line}: file missing")
             continue
-        if citation.source_hash:
+        if citation.source_hash and resolved_content is None:
             try:
                 current_hash = file_hash(path)
             except OSError as exc:
@@ -212,12 +216,16 @@ def validate_citations(
             if current_hash != citation.source_hash:
                 invalid.append(f"{citation.path}:{citation.start_line}: source hash mismatch")
                 continue
-        try:
-            lines = path.read_text(errors="replace").splitlines()
+        if resolved_content is not None:
+            lines = resolved_content.splitlines()
             line_count = len(lines)
-        except OSError as exc:
-            invalid.append(f"{citation.path}:{citation.start_line}: unreadable ({exc})")
-            continue
+        else:
+            try:
+                lines = path.read_text(errors="replace").splitlines()
+                line_count = len(lines)
+            except OSError as exc:
+                invalid.append(f"{citation.path}:{citation.start_line}: unreadable ({exc})")
+                continue
         if citation.start_line < 1 or citation.start_line > max(line_count, 1):
             invalid.append(f"{citation.path}:{citation.start_line}: line outside file")
             continue
@@ -246,6 +254,7 @@ def validate_claim_support(
     label: str = "claim",
     min_overlap: int = 1,
     semantic_judge: SemanticSupportJudge | None = None,
+    content_resolver: CitationContentResolver | None = None,
 ) -> list[str]:
     """Verify cited spans contain at least one meaningful term from the claim text.
 
@@ -262,15 +271,17 @@ def validate_claim_support(
             continue
         if citation.start_line is None:
             continue
-        span = _citation_span(root, citation)
+        span = _citation_span(root, citation, content_resolver=content_resolver)
         if span is None:
             continue
         overlap = claim_terms & _terms(span)
         if len(overlap) < min_overlap:
+            suggestion = _suggest_citation_line(root, citation, claim_terms, content_resolver=content_resolver)
+            suggested_text = f"; suggested={suggestion}" if suggestion else ""
             invalid.append(
                 f"{label}: {citation.path}:{citation.start_line} does not support claim text; "
                 f"claim={_compact_error_text(claim_text)}; cited={_compact_error_text(span)}; "
-                "fix=cite a line that contains the claimed term, narrow the claim, or mark it unresolved"
+                f"fix=cite a line that contains the claimed term, narrow the claim, or mark it unresolved{suggested_text}"
             )
             continue
         if semantic_judge is not None:
@@ -465,16 +476,52 @@ def _normalize_support(value: str) -> str:
     return " ".join(value.split()).lower()
 
 
-def _citation_span(root: Path, citation: Citation) -> str | None:
-    path = root / citation.path
-    try:
-        lines = path.read_text(errors="replace").splitlines()
-    except OSError:
-        return None
+def _citation_span(
+    root: Path,
+    citation: Citation,
+    *,
+    content_resolver: CitationContentResolver | None = None,
+) -> str | None:
+    content = content_resolver(citation) if content_resolver else None
+    if content is not None:
+        lines = content.splitlines()
+    else:
+        path = root / citation.path
+        try:
+            lines = path.read_text(errors="replace").splitlines()
+        except OSError:
+            return None
     if citation.start_line is None or citation.start_line < 1:
         return None
     end_line = citation.end_line or citation.start_line
     return "\n".join(lines[citation.start_line - 1:end_line])
+
+
+def _suggest_citation_line(
+    root: Path,
+    citation: Citation,
+    claim_terms: set[str],
+    *,
+    content_resolver: CitationContentResolver | None = None,
+) -> str:
+    if not claim_terms:
+        return ""
+    content = content_resolver(citation) if content_resolver else None
+    if content is None:
+        try:
+            content = (root / citation.path).read_text(errors="replace")
+        except OSError:
+            return ""
+    best_line = 0
+    best_overlap = 0
+    for line_number, line in enumerate(content.splitlines(), start=1):
+        overlap = len(claim_terms & _terms(line))
+        if overlap > best_overlap:
+            best_overlap = overlap
+            best_line = line_number
+    if best_line <= 0:
+        return ""
+    return f"{citation.path}:{best_line}"
 
 
 def _claim_terms(value: object) -> set[str]:

@@ -80,6 +80,8 @@ def register(app: typer.Typer) -> None:
             "--dry-run-post",
             help="Validate and write the inline GitHub review payload without calling GitHub.",
         ),
+        strict: bool = typer.Option(False, "--strict", help="Force the full strict review scaffold even for small PRs."),
+        light: bool = typer.Option(False, "--light", help="Force the lighter small-PR review scaffold."),
     ) -> None:
         """Prepare the full two-stage PR review bundle for the current branch or PR."""
         root = _root()
@@ -90,6 +92,9 @@ def register(app: typer.Typer) -> None:
         if check or post_inline_comments or dry_run_post:
             _check_active_review(root, post_inline_comments=post_inline_comments, dry_run_post=dry_run_post)
             return
+        if strict and light:
+            console.print("[red]Use only one of --strict or --light.[/]")
+            raise typer.Exit(1)
 
         if resume.strip():
             preflight = _load_review_run(root, resume.strip())
@@ -108,6 +113,7 @@ def register(app: typer.Typer) -> None:
                     outputs,
                     target=target,
                     allow_local_fallback=allow_local_fallback,
+                    review_mode_override="strict" if strict else "light" if light else "",
                 )
             except _ReviewPreflightError as exc:
                 console.print(f"[red]Review preflight blocked:[/] {exc}")
@@ -188,6 +194,7 @@ def _build_review_preflight(
     *,
     target: dict[str, Any] | None = None,
     allow_local_fallback: bool = False,
+    review_mode_override: str = "",
 ) -> dict[str, Any]:
     branch = outputs["branch"]
     pr = _gh_pr_metadata(root, target)
@@ -198,6 +205,7 @@ def _build_review_preflight(
     changed_files = [
         {
             "path": path,
+            "head_blob_sha": _blob_sha(root, diff_info.get("head_ref") or "HEAD", path),
             "related_tests": find_related_tests(path, all_paths),
         }
         for path in changed_paths
@@ -206,19 +214,22 @@ def _build_review_preflight(
     context_pack = _build_review_context_pack(root, review_context, diff_info, outputs, warnings)
     review_target = _preflight_target(target, pr)
     observer_notes = observer_notes_for_task(root, review_context)
+    review_mode = _review_scaffold_mode(changed_files, review_context, override=review_mode_override)
 
     return {
         "generated_at": _now_iso(),
         "review_context": review_context,
         "review": {
             "mode": "fresh",
+            "scaffold": review_mode,
             "run_id": outputs["run_id"],
             "branch": branch,
             "branch_prefix": outputs["branch_prefix"],
             "target": review_target,
         },
         "execution_contract": {
-            "structured_format": _LLM_REVIEW_FORMAT,
+            "structured_format": "JSON or TOON",
+            "canonical_format": "TOON",
             "requires_write_to_file": True,
             "requires_read_file_between_stages": True,
             "forbid_inline_review": True,
@@ -229,7 +240,16 @@ def _build_review_preflight(
             "branch": branch,
             "branch_prefix": outputs["branch_prefix"],
             "head_sha": sha,
+            "head_ref": diff_info.get("head_ref", ""),
+            "base_sha": _rev_parse(root, diff_info.get("base_ref") or "") if diff_info.get("base_ref") else "",
+            "base_ref": diff_info.get("base_ref", ""),
             "dirty_files": sorted(git_core.dirty_files(root)),
+        },
+        "citation_source": {
+            "mode": "git-head" if diff_info["source"] in {"pr-target", "current-pr"} and sha else "working-tree",
+            "head_sha": sha,
+            "head_ref": diff_info.get("head_ref", ""),
+            "fallback": "working-tree" if diff_info["source"] == "local-fallback" else "",
         },
         "pr": pr,
         "diff": {
@@ -405,6 +425,8 @@ def _load_review_run(root: Path, run_id: str) -> dict[str, Any]:
 
 def _render_review_runbook(preflight: dict[str, Any]) -> str:
     target = preflight["review"].get("target", {})
+    scaffold = str(preflight["review"].get("scaffold") or "standard")
+    citation_source = preflight.get("citation_source") if isinstance(preflight.get("citation_source"), dict) else {}
     return (
         "# AgentPack Review Workflow\n\n"
         "Run the full two-stage review flow for the current PR or branch. Treat the source of truth as the latest PR head, "
@@ -418,11 +440,13 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         "use the current AgentPack CLI refresh command. If you bypass this, state the bypass reason.\n\n"
         "## Preflight\n\n"
         f"- Review mode: {preflight['review'].get('mode', 'fresh')}\n"
+        f"- Review scaffold: {scaffold}\n"
         f"- Review run id: {preflight['review']['run_id']}\n"
         f"- Review run dir: {preflight['paths']['run_dir']}\n"
         f"- Branch: {preflight['git']['branch']}\n"
         f"- Branch prefix: {preflight['git']['branch_prefix']}\n"
         f"- Head SHA: {preflight['git']['head_sha']}\n"
+        f"- Citation source: {citation_source.get('mode', 'working-tree')} {citation_source.get('head_sha', '')}\n"
         f"- Diff range: {preflight['diff']['range']}\n"
         f"- Diff source: {preflight['diff']['source']}\n"
         + (f"- Review target: PR #{target['number']} ({target['source']})\n" if target.get("number") else "")
@@ -448,10 +472,10 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         "5. After Stage 2, run `agentpack review --check --post-inline-comments` for PR-bound runs. "
         "For local-only fallback reviews, run `agentpack review --check`. Do not produce a final summary unless Stage 2 validates.\n\n"
         "## Workflow\n\n"
-        f"1. Read the Stage 1 prompt file and TOON template completely, then produce the understanding {_LLM_REVIEW_FORMAT} at the declared output path.\n"
-        f"2. Run `agentpack review --check` and confirm the understanding {_LLM_REVIEW_FORMAT} file exists and follows the declared schema before moving on.\n"
-        f"3. Read the Stage 2 prompt file and TOON template completely, then produce the findings {_LLM_REVIEW_FORMAT} at the declared output path.\n"
-        f"4. Run `agentpack review --check --post-inline-comments` for PR-bound runs, or `agentpack review --check` for local fallback, and confirm the findings {_LLM_REVIEW_FORMAT} file exists and follows the declared schema before reporting back.\n"
+        "1. Read the Stage 1 prompt file and template completely, then produce JSON or TOON at the declared output path. JSON is preferred when multiline fields are easier that way.\n"
+        "2. Run `agentpack review --check` and confirm the understanding file exists and follows the declared schema before moving on.\n"
+        "3. Read the Stage 2 prompt file and template completely, then produce JSON or TOON findings at the declared output path.\n"
+        "4. Run `agentpack review --check --post-inline-comments` for PR-bound runs, or `agentpack review --check` for local fallback, and confirm the findings file exists and follows the declared schema before reporting back.\n"
         "5. In the final user-facing response, summarize findings and validation gaps without exposing internal stage names.\n"
     )
 
@@ -492,6 +516,7 @@ def _render_stage_prompt(
             "",
             f"- Review run id: {preflight['review']['run_id']}",
             f"- Review mode: {preflight['review'].get('mode', 'fresh')}",
+            f"- Review scaffold: {preflight['review'].get('scaffold', 'standard')}",
             f"- Preflight JSON: {preflight['paths']['preflight']}",
             f"- Head SHA: {preflight['git']['head_sha']}",
             f"- Diff range: {preflight['diff']['range']}",
@@ -501,7 +526,7 @@ def _render_stage_prompt(
             else "- Review target: current branch/local fallback",
             f"- Output path: {_rel_to_root(abs_output, root)}",
             f"- Copy-fill TOON template: {template_path}",
-            f"- Structured output format: {_LLM_REVIEW_FORMAT}",
+            "- Structured output format: JSON or TOON (JSON is preferred for multiline or nested fields; AgentPack canonicalizes valid JSON to TOON)",
         ]
     )
     context_pack = preflight.get("context_pack") if isinstance(preflight.get("context_pack"), dict) else {}
@@ -515,9 +540,10 @@ def _render_stage_prompt(
             "## Execution Gates",
             "",
             "- Do not answer inline from this stage prompt.",
-            "- Start from the copy-fill TOON template if this format is unfamiliar.",
-            "- Write the required TOON artifact to the declared output path and nothing else.",
-            "- If you accidentally wrote JSON or fenced output, run `agentpack review --check`; AgentPack will canonicalize safe schema-matching output to TOON.",
+            "- Prefer valid JSON matching the schema when multiline fields make TOON fragile.",
+            "- Start from the copy-fill TOON template only if TOON is reliable for this artifact.",
+            "- Write the required JSON or TOON artifact to the declared output path and nothing else.",
+            "- If you wrote JSON or fenced output, run `agentpack review --check`; AgentPack will canonicalize safe schema-matching output to TOON.",
             "- If you cannot write the file or validate that it exists, stop and report blocked.",
             "- Run `agentpack review --check` after writing this artifact before continuing.",
         ]
@@ -812,6 +838,49 @@ def _changed_paths(root: Path, diff_range: str) -> list[str]:
     return sorted(line.strip() for line in result.stdout.splitlines() if line.strip())
 
 
+def _blob_sha(root: Path, ref: str, path: str) -> str:
+    if not ref or not path:
+        return ""
+    result = subprocess.run(
+        ["git", "ls-tree", ref, "--", path],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0 or not result.stdout.strip():
+        return ""
+    parts = result.stdout.strip().split()
+    return parts[2] if len(parts) >= 3 else ""
+
+
+def _review_scaffold_mode(
+    changed_files: list[dict[str, Any]],
+    review_context: str,
+    *,
+    override: str = "",
+) -> str:
+    if override in {"light", "strict"}:
+        return override
+    risky_terms = {
+        "auth",
+        "billing",
+        "payment",
+        "security",
+        "permission",
+        "migration",
+        "database",
+        "token",
+        "secret",
+        "privacy",
+    }
+    haystack = " ".join([review_context, *[str(item.get("path") or "") for item in changed_files]]).lower()
+    if any(term in haystack for term in risky_terms):
+        return "strict"
+    if len(changed_files) <= 5:
+        return "light"
+    return "standard"
+
+
 def _warnings(
     root: Path,
     pr: dict[str, Any] | None,
@@ -1031,7 +1100,7 @@ def _write_review_state(root: Path, preflight: dict[str, Any], state: dict[str, 
         _atomic_write(path, content)
 
 
-def _validate_review_artifact(path: Path, *, kind: str) -> dict[str, Any]:
+def _validate_review_artifact(path: Path, *, kind: str, preflight: dict[str, Any] | None = None) -> dict[str, Any]:
     try:
         payload = _load_review_artifact_payload(path, kind=kind)
     except (OSError, ToonParseError, json.JSONDecodeError, ValueError) as exc:
@@ -1047,10 +1116,12 @@ def _validate_review_artifact(path: Path, *, kind: str) -> dict[str, Any]:
         repair_note = f"; repair guide: {repair_path.name}" if repair_path else ""
         raise ValueError(f"{path.name} schema invalid: {details}{repair_note}")
     root = _validation_root(path)
+    preflight = preflight or _preflight_for_artifact(root, path)
+    content_resolver = _review_citation_content_resolver(root, preflight)
     citation_validation = (
-        _validate_understanding_citations(root, payload)
+        _validate_understanding_citations(root, payload, content_resolver=content_resolver)
         if kind == "understanding"
-        else _validate_findings_citations(root, payload)
+        else _validate_findings_citations(root, payload, content_resolver=content_resolver)
     )
     if citation_validation.invalid or citation_validation.missing:
         details = [*citation_validation.invalid[:5], *citation_validation.missing[:5]]
@@ -1114,6 +1185,7 @@ def _write_review_validation_report(path: Path, kind: str, validation: CitationV
             "kind": kind,
             "invalid": validation.invalid,
             "missing": validation.missing,
+            "repair_hints": _citation_repair_hints(validation.invalid),
             "valid_count": len(validation.valid),
         }
         report_path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
@@ -1122,7 +1194,78 @@ def _write_review_validation_report(path: Path, kind: str, validation: CitationV
         return None
 
 
-def _validate_findings_citations(root: Path, payload: dict[str, Any]) -> CitationValidation:
+def _citation_repair_hints(invalid: list[str]) -> list[dict[str, str]]:
+    hints: list[dict[str, str]] = []
+    for item in invalid:
+        match = re.search(r"(?P<path>[A-Za-z0-9_./@+~:-]+):(?P<line>\d+).*suggested=(?P<suggested>[A-Za-z0-9_./@+~:-]+:\d+)", item)
+        if not match:
+            continue
+        hints.append(
+            {
+                "failed": f"{match.group('path')}:{match.group('line')}",
+                "suggested": match.group("suggested"),
+                "reason": "cited line did not support claim text",
+            }
+        )
+    return hints
+
+
+def _preflight_for_artifact(root: Path, path: Path) -> dict[str, Any] | None:
+    candidates = [path.parent / "preflight.json", root / _PREFLIGHT_PATH]
+    for candidate in candidates:
+        if not candidate.exists():
+            continue
+        try:
+            preflight = json.loads(candidate.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        paths = preflight.get("paths") if isinstance(preflight.get("paths"), dict) else {}
+        known = {
+            str(paths.get("understanding_output") or ""),
+            str(paths.get("findings_output") or ""),
+        }
+        rel = _rel_to_root(path, root)
+        if candidate == path.parent / "preflight.json" or rel in known:
+            return preflight
+    return None
+
+
+def _review_citation_content_resolver(root: Path, preflight: dict[str, Any] | None):
+    if not preflight:
+        return None
+    citation_source = preflight.get("citation_source") if isinstance(preflight.get("citation_source"), dict) else {}
+    head_sha = str(citation_source.get("head_sha") or preflight.get("git", {}).get("head_sha") or "").strip()
+    if citation_source.get("mode") != "git-head" or not head_sha:
+        return None
+    cache: dict[str, str | None] = {}
+
+    def resolver(citation: Citation) -> str | None:
+        path = citation.path
+        if path not in cache:
+            cache[path] = _git_show_file(root, head_sha, path)
+        return cache[path]
+
+    return resolver
+
+
+def _git_show_file(root: Path, ref: str, path: str) -> str | None:
+    result = subprocess.run(
+        ["git", "show", f"{ref}:{path}"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return None
+    return result.stdout
+
+
+def _validate_findings_citations(
+    root: Path,
+    payload: dict[str, Any],
+    *,
+    content_resolver=None,
+) -> CitationValidation:
     raw_findings = payload.get("findings")
     if not isinstance(raw_findings, list):
         return CitationValidation(valid=[], invalid=["findings must be a list"], missing=[])
@@ -1153,13 +1296,19 @@ def _validate_findings_citations(root: Path, payload: dict[str, Any]) -> Citatio
                 evidence_citations,
                 label=f"finding {index}.evidence",
                 semantic_judge=semantic_judge,
+                content_resolver=content_resolver,
             )
         )
-    validation = validate_citations(root, citations)
+    validation = validate_citations(root, citations, content_resolver=content_resolver)
     return CitationValidation(valid=validation.valid, invalid=[*invalid, *validation.invalid], missing=[*missing, *validation.missing])
 
 
-def _validate_understanding_citations(root: Path, payload: dict[str, Any]) -> CitationValidation:
+def _validate_understanding_citations(
+    root: Path,
+    payload: dict[str, Any],
+    *,
+    content_resolver=None,
+) -> CitationValidation:
     raw_units = payload.get("change_units")
     if not isinstance(raw_units, list):
         return CitationValidation(valid=[], invalid=["change_units must be a list"], missing=[])
@@ -1186,9 +1335,10 @@ def _validate_understanding_citations(root: Path, payload: dict[str, Any]) -> Ci
                         field_citations,
                         label=f"change_unit {unit_index}.{field}",
                         semantic_judge=semantic_judge,
+                        content_resolver=content_resolver,
                     )
                 )
-    validation = validate_citations(root, citations)
+    validation = validate_citations(root, citations, content_resolver=content_resolver)
     return CitationValidation(valid=validation.valid, invalid=[*invalid, *validation.invalid], missing=[*missing, *validation.missing])
 
 
@@ -1275,20 +1425,20 @@ def _post_inline_review_comments(
         "payload": request,
     }
     _atomic_write(payload_path, json.dumps(payload_record, indent=2) + "\n")
+    dry_run_record = {
+        "status": "dry_run",
+        "run_id": preflight["review"]["run_id"],
+        "checked_at": _now_iso(),
+        "repo": repo_slug,
+        "pr": pr_number,
+        "head_sha": head_sha,
+        "comments": len(comments),
+        "request_payload": _rel_to_root(payload_path, root),
+        "payload_sha256": request_hash,
+    }
+    _atomic_write(dry_run_path, json.dumps(dry_run_record, indent=2) + "\n")
     if dry_run:
-        record = {
-            "status": "dry_run",
-            "run_id": preflight["review"]["run_id"],
-            "checked_at": _now_iso(),
-            "repo": repo_slug,
-            "pr": pr_number,
-            "head_sha": head_sha,
-            "comments": len(comments),
-            "request_payload": _rel_to_root(payload_path, root),
-            "payload_sha256": request_hash,
-        }
-        _atomic_write(dry_run_path, json.dumps(record, indent=2) + "\n")
-        return {**record, "path": _rel_to_root(dry_run_path, root)}
+        return {**dry_run_record, "path": _rel_to_root(dry_run_path, root)}
 
     _require_matching_dry_run(root, dry_run_path, payload_path, request_hash)
     response = _post_pull_request_review(root, repo_slug, pr_number, request)

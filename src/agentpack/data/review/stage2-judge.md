@@ -51,9 +51,9 @@ For anything that rests on an `open_question`, keep the finding conditional and 
 
 ## Output
 
-Write a single TOON object to the exact output path declared in the AgentPack stage header. Nothing else to stdout. Start from the copy-fill TOON template declared in the stage header if this format is unfamiliar.
+Write a single JSON object or TOON object to the exact output path declared in the AgentPack stage header. Nothing else to stdout. Prefer JSON when multiline fields make TOON indentation fragile; AgentPack will canonicalize schema-valid JSON to TOON during `agentpack review --check`. Use the copy-fill TOON template only when TOON is reliable for this artifact.
 
-If your model cannot reliably emit TOON, write valid JSON matching the schema below to the output path and then run `agentpack review --check`; AgentPack will canonicalize schema-valid JSON or fenced output into TOON before continuing. Do not continue past a failed check.
+After writing the artifact, run `agentpack review --check`. It canonicalizes schema-valid JSON or fenced output into TOON before continuing. Do not continue past a failed check.
 
 Minimal TOON shape:
 
