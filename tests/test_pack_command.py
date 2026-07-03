@@ -51,7 +51,7 @@ def test_pack_auto_repairs_stale_agent_rule_block(tmp_path, monkeypatch) -> None
     ).read_text(encoding="utf-8")
 
 
-def test_pack_plain_ignores_ambient_thread_env(tmp_path, monkeypatch) -> None:
+def test_pack_plain_uses_ambient_thread_env_and_refuses_global_task(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_THREAD_ID", "codex-env")
     (tmp_path / ".agentpack").mkdir()
@@ -59,6 +59,21 @@ def test_pack_plain_ignores_ambient_thread_env(tmp_path, monkeypatch) -> None:
     (tmp_path / "auth.py").write_text("def check_auth(): return True\n", encoding="utf-8")
 
     result = CliRunner().invoke(app, ["pack", "--agent", "generic"])
+
+    assert result.exit_code == 1
+    assert "No task is set for AgentPack session codex-env" in result.output
+    assert "Fix auth bug" not in result.output
+    assert not (tmp_path / ".agentpack" / "threads" / "codex-env" / "context.md").exists()
+
+
+def test_pack_global_opt_out_uses_legacy_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_THREAD_ID", "codex-env")
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Fix auth bug\n", encoding="utf-8")
+    (tmp_path / "auth.py").write_text("def check_auth(): return True\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["pack", "--agent", "generic", "--thread", "global"])
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / ".agentpack" / "context.md").exists()
@@ -83,7 +98,8 @@ def test_pack_thread_auto_uses_agentpack_thread_env(tmp_path, monkeypatch) -> No
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("AGENTPACK_THREAD_ID", "codex/env")
     (tmp_path / ".agentpack").mkdir()
-    (tmp_path / ".agentpack" / "task.md").write_text("Fix auth bug\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "threads" / "codex-env").mkdir(parents=True)
+    (tmp_path / ".agentpack" / "threads" / "codex-env" / "task.md").write_text("Fix auth bug\n", encoding="utf-8")
     (tmp_path / "auth.py").write_text("def check_auth(): return True\n", encoding="utf-8")
 
     result = CliRunner().invoke(app, ["pack", "--agent", "generic", "--thread", "auto"])

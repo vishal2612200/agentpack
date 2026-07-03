@@ -7,6 +7,7 @@ from agentpack.core.thread_context import (
     build_thread_index_row,
     detect_conflicts,
     resolve_thread_id,
+    resolve_session_thread_option,
     resolve_thread_option,
     sanitize_thread_id,
     thread_paths,
@@ -24,6 +25,17 @@ def test_resolve_thread_option_keeps_legacy_mode_without_explicit_auto() -> None
     assert resolve_thread_option("", env) is None
     assert resolve_thread_option("auto", env) == "env-thread"
     assert resolve_thread_option("explicit", env) == "explicit"
+
+
+def test_resolve_session_thread_option_uses_ambient_env_by_default() -> None:
+    env = {"AGENTPACK_THREAD_ID": "agentpack/session", "CLAUDE_SESSION_ID": "claude/session"}
+
+    assert resolve_session_thread_option("", env) == "agentpack-session"
+    assert resolve_session_thread_option(None, env) == "agentpack-session"
+    assert resolve_session_thread_option("auto", env) == "agentpack-session"
+    assert resolve_session_thread_option("global", env) is None
+    assert resolve_session_thread_option("legacy", env) is None
+    assert resolve_session_thread_option("explicit", env) == "explicit"
 
 
 def test_sanitize_thread_id_limits_to_safe_chars() -> None:

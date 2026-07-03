@@ -13,6 +13,7 @@ from agentpack.core import git as _git
 from agentpack.core.command_surface import refresh_commands
 from agentpack.core.config import load_config
 from agentpack.core.task_freshness import read_task_md, write_task_md
+from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.integrations.platform import cli_module_argv, detached_popen
 
 _CODING_PROMPT_RE = re.compile(
@@ -194,8 +195,14 @@ def _mcp_installed(root: Path) -> bool:
     return False
 
 
-def _load_task_md(root: Path) -> str:
+def _load_task_md(root: Path, thread_id: str | None = None) -> str:
     """Return task.md content if user has written a real task (not the default placeholder)."""
+    scoped = thread_paths(root, thread_id)
+    if scoped:
+        try:
+            return scoped.task.read_text(encoding="utf-8").strip()[:200] if scoped.task.exists() else ""
+        except OSError:
+            return ""
     return (read_task_md(root) or "")[:200]
 
 
@@ -221,16 +228,23 @@ def _looks_like_review_prompt(prompt: str) -> bool:
         return False
     return bool(_REVIEW_PROMPT_RE.search(stripped))
 
-def _review_preflight_note(*, review_intent: bool, context_stale: bool, has_mcp: bool, task: str) -> str:
+def _review_preflight_note(
+    *,
+    review_intent: bool,
+    context_stale: bool,
+    has_mcp: bool,
+    task: str,
+    thread_id: str | None = None,
+) -> str:
     if not review_intent:
         return ""
     if has_mcp:
         refresh = (
             f'If the AgentPack MCP tool is visible, call agentpack_pack_context(task="{task}") before PR diff/code review; '
-            f"otherwise run `{refresh_commands('auto').primary}` and use direct repo evidence."
+            f"otherwise run `{_refresh_command(thread_id)}` and use direct repo evidence."
         )
     else:
-        refresh = f"Run `{refresh_commands('auto').primary}` before PR diff/code review."
+        refresh = f"Run `{_refresh_command(thread_id)}` before PR diff/code review."
     lines = [
         "REVIEW DETECTED: refresh AgentPack context before PR diff/code review.",
         refresh,
@@ -258,10 +272,11 @@ def _should_emit_review_preflight(
     task: str,
     packed_root_hash: str | None,
     current_root_hash: str | None,
+    thread_id: str | None = None,
 ) -> bool:
     if not review_intent:
         return False
-    reminder_path = root / ".agentpack" / ".review_preflight_reminded"
+    reminder_path = _session_state_path(root, ".review_preflight_reminded", thread_id)
     key = _review_reminder_key(task, packed_root_hash, current_root_hash)
     try:
         if reminder_path.exists() and reminder_path.read_text(encoding="utf-8") == key:
@@ -386,7 +401,12 @@ def _has_vague_task_reference(prompt: str) -> bool:
     return bool(prompt_words & _VAGUE_TASK_REFERENCES)
 
 
-def _write_task_md(root: Path, task: str) -> None:
+def _write_task_md(root: Path, task: str, thread_id: str | None = None) -> None:
+    scoped = thread_paths(root, thread_id)
+    if scoped:
+        scoped.task.parent.mkdir(parents=True, exist_ok=True)
+        scoped.task.write_text(task.strip() + "\n", encoding="utf-8")
+        return
     write_task_md(root, task)
 
 
@@ -396,9 +416,10 @@ def _resolve_task(
     *,
     task_switch_detection: bool = True,
     task_switch_min_terms: int = 1,
+    thread_id: str | None = None,
 ) -> str:
     """Merge task.md + prompt into best task description for repack."""
-    task_md = _load_task_md(root)
+    task_md = _load_task_md(root, thread_id)
     prompt_task = _prompt_task(prompt)
     if (
         task_switch_detection
@@ -443,8 +464,9 @@ def _load_top_files(root: Path, n: int = 5) -> list[dict]:
     return _load_hints(root, n)
 
 
-def _load_pack_metadata(root: Path) -> dict:
-    meta_path = root / ".agentpack" / "pack_metadata.json"
+def _load_pack_metadata(root: Path, thread_id: str | None = None) -> dict:
+    scoped = thread_paths(root, thread_id)
+    meta_path = scoped.metadata if scoped else root / ".agentpack" / "pack_metadata.json"
     if not meta_path.exists():
         return {}
     try:
@@ -453,19 +475,19 @@ def _load_pack_metadata(root: Path) -> dict:
         return {}
 
 
-def _load_pack_task(root: Path) -> str:
-    return str(_load_pack_metadata(root).get("task", "") or "")
+def _load_pack_task(root: Path, thread_id: str | None = None) -> str:
+    return str(_load_pack_metadata(root, thread_id).get("task", "") or "")
 
 
-def _load_delta_summary(root: Path) -> str:
-    meta = _load_pack_metadata(root)
+def _load_delta_summary(root: Path, thread_id: str | None = None) -> str:
+    meta = _load_pack_metadata(root, thread_id)
     freshness = meta.get("freshness") or {}
     delta = freshness.get("delta_summary", "")
     return str(delta).splitlines()[0][:240] if delta else ""
 
 
-def _packed_root_hash(root: Path) -> str | None:
-    value = _load_pack_metadata(root).get("snapshot_root_hash")
+def _packed_root_hash(root: Path, thread_id: str | None = None) -> str | None:
+    value = _load_pack_metadata(root, thread_id).get("snapshot_root_hash")
     return str(value) if value else None
 
 
@@ -511,8 +533,8 @@ def _stale_note(reasons: list[str]) -> str:
     return f"stale reason: {', '.join(reasons)}\n" if reasons else ""
 
 
-def _mcp_status_note(root: Path, *, has_mcp: bool, task: str) -> str:
-    reminder_path = root / ".agentpack" / ".mcp_reminded"
+def _mcp_status_note(root: Path, *, has_mcp: bool, task: str, thread_id: str | None = None) -> str:
+    reminder_path = _session_state_path(root, ".mcp_reminded", thread_id)
     key = json.dumps({"task": task, "has_mcp": has_mcp}, sort_keys=True)
     try:
         if reminder_path.exists() and reminder_path.read_text(encoding="utf-8") == key:
@@ -539,11 +561,12 @@ def _mcp_status_note(root: Path, *, has_mcp: bool, task: str) -> str:
 
 def _run_session_start(root: Path) -> None:
     """Clear sentinels so first prompt gets fresh context."""
+    thread_id = resolve_session_thread_option("")
     for sentinel in [
-        root / ".agentpack" / ".mcp_reminded",
-        root / ".agentpack" / ".context_injected",
-        root / ".agentpack" / ".no_task_reminded",
-        root / ".agentpack" / ".review_preflight_reminded",
+        _session_state_path(root, ".mcp_reminded", thread_id),
+        _session_state_path(root, ".context_injected", thread_id),
+        _session_state_path(root, ".no_task_reminded", thread_id),
+        _session_state_path(root, ".review_preflight_reminded", thread_id),
     ]:
         try:
             sentinel.unlink(missing_ok=True)
@@ -556,16 +579,23 @@ def _run_git_auto_repack(root: Path, agent: str) -> None:
     config_path = root / ".agentpack" / "config.toml"
     if not config_path.exists():
         return
+    args = cli_module_argv("pack", "--agent", agent, "--task", "auto", "--mode", "balanced")
+    thread_id = resolve_session_thread_option("")
+    if thread_id:
+        args.extend(["--thread", thread_id])
     detached_popen(
-        cli_module_argv("pack", "--agent", agent, "--task", "auto", "--mode", "balanced"),
+        args,
         cwd=root,
     )
 
 
-def _run_blocking_pack(root: Path) -> tuple[bool, str]:
+def _run_blocking_pack(root: Path, thread_id: str | None = None) -> tuple[bool, str]:
+    args = cli_module_argv("pack", "--task", "auto", "--mode", "balanced")
+    if thread_id:
+        args.extend(["--thread", thread_id])
     try:
         result = subprocess.run(
-            cli_module_argv("pack", "--task", "auto", "--mode", "balanced"),
+            args,
             cwd=root,
             capture_output=True,
             text=True,
@@ -586,18 +616,23 @@ def _run_user_prompt_submit(root: Path) -> None:
         prompt = ""
 
     cfg = load_config(root)
-    task_md = _load_task_md(root)
+    thread_id = resolve_session_thread_option("")
+    task_md = _load_task_md(root, thread_id)
     if not task_md:
         if _looks_like_coding_prompt(prompt):
-            reminder = root / ".agentpack" / ".no_task_reminded"
+            reminder = _session_state_path(root, ".no_task_reminded", thread_id)
             if not reminder.exists():
                 try:
+                    reminder.parent.mkdir(parents=True, exist_ok=True)
                     reminder.write_text("1", encoding="utf-8")
                 except Exception:
                     pass
+                start_cmd = 'agentpack start "describe the task"'
+                if thread_id:
+                    start_cmd += f" --thread {thread_id}"
                 _emit_additional_context(
-                    "AgentPack idle. No active task in `.agentpack/task.md`.\n"
-                    "Run `agentpack start \"describe the task\"` to enable prompt-time hints."
+                    f"AgentPack idle. No active task in `{_task_label(thread_id)}`.\n"
+                    f"Run `{start_cmd}` to enable prompt-time hints."
                 )
         return
 
@@ -614,16 +649,17 @@ def _run_user_prompt_submit(root: Path) -> None:
         prompt,
         task_switch_detection=cfg.hooks.task_switch_detection,
         task_switch_min_terms=cfg.hooks.task_switch_min_terms,
+        thread_id=thread_id,
     )
     if task_switched and task != "auto":
         try:
-            _write_task_md(root, task)
+            _write_task_md(root, task, thread_id)
         except Exception:
             pass
 
     current_hash = _current_root_hash(root)
-    packed_task = _load_pack_task(root)
-    packed_root_hash = _packed_root_hash(root)
+    packed_task = _load_pack_task(root, thread_id)
+    packed_root_hash = _packed_root_hash(root, thread_id)
     repo_changed = bool(current_hash and packed_root_hash and current_hash != packed_root_hash)
     pack_missing = not packed_task or not packed_root_hash
     pack_task_changed = bool(task != "auto" and packed_task and packed_task != task)
@@ -642,7 +678,7 @@ def _run_user_prompt_submit(root: Path) -> None:
     if context_stale:
         refresh_state = "refresh pending"
         if blocking_refresh:
-            ok, detail = _run_blocking_pack(root)
+            ok, detail = _run_blocking_pack(root, thread_id)
             refresh_state = "refreshed" if ok else "refresh failed"
             refresh_error = detail
             if ok:
@@ -652,9 +688,9 @@ def _run_user_prompt_submit(root: Path) -> None:
                 task_switched = False
 
     has_mcp = _mcp_installed(root)
-    current_task = _load_task_md(root) or _infer_live_task(root)
+    current_task = _load_task_md(root, thread_id) or _infer_live_task(root)
     review_intent = _looks_like_review_prompt(prompt)
-    delta = _load_delta_summary(root)
+    delta = _load_delta_summary(root, thread_id)
     safe_hints = not pack_missing and not pack_task_changed and not task_switched and not repo_changed
     raw_hints = _load_hints(root, n=5 if has_mcp else 8) if safe_hints else []
     hints = _filter_runtime_infra_hints(current_task, raw_hints)
@@ -665,17 +701,19 @@ def _run_user_prompt_submit(root: Path) -> None:
         task=current_task,
         packed_root_hash=packed_root_hash,
         current_root_hash=current_hash,
+        thread_id=thread_id,
     )
     review_note = _review_preflight_note(
         review_intent=review_intent,
         context_stale=context_stale,
         has_mcp=has_mcp,
         task=current_task,
+        thread_id=thread_id,
     ) if emit_review_preflight else ""
     review_stage_gate = _review_stage_gate_note(root, review_intent=review_intent)
     source_note = _source_of_truth_note(current_task)
     stale_detail = _stale_note(stale_reasons)
-    mcp_detail = _mcp_status_note(root, has_mcp=has_mcp, task=current_task)
+    mcp_detail = _mcp_status_note(root, has_mcp=has_mcp, task=current_task, thread_id=thread_id)
 
     if has_mcp:
         if hints:
@@ -718,7 +756,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + mcp_detail
                 + (
                     "If the AgentPack MCP tool is visible, call agentpack_get_context(); "
-                    f"otherwise run `{refresh_commands('auto').primary}` and use direct repo search."
+                    f"otherwise run `{_refresh_command(thread_id)}` and use direct repo search."
                 )
             )
         elif refresh_state == "refresh failed":
@@ -734,7 +772,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + (f"refresh error: {refresh_error}\n" if refresh_error else "")
                 + (
                     'If the AgentPack MCP tool is visible, call agentpack_pack_context(task="..."); '
-                    f"otherwise run `{refresh_commands('auto').primary}` and use direct repo search."
+                    f"otherwise run `{_refresh_command(thread_id)}` and use direct repo search."
                 )
             )
         elif hints_suppressed:
@@ -748,7 +786,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + (f"delta: {delta}\n" if delta else "")
                 + (
                     "If the AgentPack MCP tools are visible, call agentpack_pack_context(task=\"...\") for a fresh pack; "
-                    f"otherwise run `{refresh_commands('auto').primary}` or use direct repo search."
+                    f"otherwise run `{_refresh_command(thread_id)}` or use direct repo search."
                 )
             )
         else:
@@ -758,7 +796,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + mcp_detail
                 + (
                     'If the AgentPack MCP tool is visible, call agentpack_pack_context(task="..."); '
-                    f"otherwise run `{refresh_commands('auto').primary}`."
+                    f"otherwise run `{_refresh_command(thread_id)}`."
                 )
             )
     else:
@@ -799,7 +837,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + source_note
                 + stale_detail
                 + mcp_detail
-                + f"Run `{refresh_commands('auto').primary}`. If tools stay unavailable, use direct repo search."
+                + f"Run `{_refresh_command(thread_id)}`. If tools stay unavailable, use direct repo search."
             )
         elif refresh_state == "refresh failed":
             msg = (
@@ -812,7 +850,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + stale_detail
                 + mcp_detail
                 + (f"refresh error: {refresh_error}\n" if refresh_error else "")
-                + f"Run `{refresh_commands('auto').primary}` to rebuild the current task pack."
+                + f"Run `{_refresh_command(thread_id)}` to rebuild the current task pack."
             )
         elif hints_suppressed:
             msg = (
@@ -823,11 +861,14 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + source_note
                 + mcp_detail
                 + (f"delta: {delta}\n" if delta else "")
-                + f"Run `{refresh_commands('auto').primary}` for a fresh pack, or use direct repo search."
+                + f"Run `{_refresh_command(thread_id)}` for a fresh pack, or use direct repo search."
             )
         else:
+            pack_cmd = "agentpack pack --task auto"
+            if thread_id:
+                pack_cmd += f" --thread {thread_id}"
             msg = (
-                "AgentPack active. Write `.agentpack/task.md`, then run `agentpack pack --task auto` to build context.\n"
+                f"AgentPack active. Write `{_task_label(thread_id)}`, then run `{pack_cmd}` to build context.\n"
                 + mcp_detail
                 + "For auto context, install MCP: agentpack install --agent claude"
             )
@@ -836,3 +877,18 @@ def _run_user_prompt_submit(root: Path) -> None:
             msg = msg[:2970] + "\n... [truncated]"
 
     _emit_additional_context(msg)
+
+
+def _refresh_command(thread_id: str | None = None) -> str:
+    command = refresh_commands("auto").primary
+    return f"{command} --thread {thread_id}" if thread_id else command
+
+
+def _session_state_path(root: Path, filename: str, thread_id: str | None = None) -> Path:
+    scoped = thread_paths(root, thread_id)
+    return (scoped.base / filename) if scoped else (root / ".agentpack" / filename)
+
+
+def _task_label(thread_id: str | None = None) -> str:
+    scoped = thread_paths(Path("."), thread_id)
+    return str(scoped.task) if scoped else ".agentpack/task.md"

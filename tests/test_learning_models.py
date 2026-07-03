@@ -34,6 +34,8 @@ def test_learning_config_defaults():
     assert cfg.learning.concept_provider_required is False
     assert cfg.learning.inject_agent_lessons is True
     assert cfg.learning.min_groundedness_score == 70
+    assert cfg.runtime.observer_events_output == ".agentpack/observer-events.jsonl"
+    assert cfg.runtime.observer_brief_output == ".agentpack/observer-brief.md"
 
 
 def test_learning_config_model_accepts_overrides():

@@ -28,6 +28,9 @@ from agentpack.core.citations import (
 from agentpack.core.models import Citation
 from agentpack.core.toon_parser import ToonParseError, load_toon
 from agentpack.core.toon_validator import canonicalize_to_toon_text, validate_toon_payload_schema
+from agentpack.observer.brief import write_observer_brief
+from agentpack.observer.events import record_review_observation
+from agentpack.observer.priors import observer_notes_for_task
 
 _PREFLIGHT_PATH = Path(".agentpack/review-preflight.json")
 _RUNBOOK_PATH = Path(".agentpack/review.prompt.md")
@@ -144,6 +147,21 @@ def register(app: typer.Typer) -> None:
             abs_path = root / rel_path
             abs_path.parent.mkdir(parents=True, exist_ok=True)
             _atomic_write(abs_path, content)
+        try:
+            changed_file_paths = [
+                str(item.get("path") or "")
+                for item in preflight.get("changed_files", [])
+                if isinstance(item, dict) and item.get("path")
+            ]
+            record_review_observation(
+                root,
+                task=str(preflight.get("review_context") or "review"),
+                status="preflight",
+                changed_files=changed_file_paths,
+            )
+            write_observer_brief(root, task=str(preflight.get("review_context") or "review"))
+        except Exception:
+            pass
 
         console.print(f"[green]✓[/] Review run id: [bold]{preflight['review']['run_id']}[/]")
         console.print(f"[green]✓[/] Review run dir: [bold]{preflight['paths']['run_dir']}[/]")
@@ -187,6 +205,7 @@ def _build_review_preflight(
     warnings, info = _warnings(root, pr, diff_info, changed_paths)
     context_pack = _build_review_context_pack(root, review_context, diff_info, outputs, warnings)
     review_target = _preflight_target(target, pr)
+    observer_notes = observer_notes_for_task(root, review_context)
 
     return {
         "generated_at": _now_iso(),
@@ -240,6 +259,11 @@ def _build_review_preflight(
             "active_state": str(_STATE_PATH),
         },
         "context_pack": context_pack,
+        "observer": {
+            "advisory": True,
+            "brief": ".agentpack/observer-brief.md",
+            "notes": observer_notes,
+        },
         "changed_files": changed_files,
         "warnings": warnings,
         "info": info,
@@ -406,6 +430,7 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         + (f"- AgentPack context: `{preflight['context_pack']['path']}` ({preflight['context_pack']['tokens']} tokens)\n" if preflight.get("context_pack", {}).get("path") else "")
         + (f"- PR: #{preflight['pr']['number']} — {preflight['pr']['title']}\n" if preflight.get("pr") else "")
         + (f"- PR URL: {preflight['pr']['url']}\n" if preflight.get("pr") and preflight["pr"].get("url") else "")
+        + _render_review_observer_runbook(preflight)
         + "\n## Generated Artifacts\n\n"
         + f"- Preflight JSON: `{preflight['paths']['preflight']}`\n"
         f"- Stage 1 prompt: `{preflight['paths']['understanding_prompt']}`\n"
@@ -429,6 +454,20 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         f"4. Run `agentpack review --check --post-inline-comments` for PR-bound runs, or `agentpack review --check` for local fallback, and confirm the findings {_LLM_REVIEW_FORMAT} file exists and follows the declared schema before reporting back.\n"
         "5. In the final user-facing response, summarize findings and validation gaps without exposing internal stage names.\n"
     )
+
+
+def _render_review_observer_runbook(preflight: dict[str, Any]) -> str:
+    observer = preflight.get("observer") if isinstance(preflight.get("observer"), dict) else {}
+    notes = observer.get("notes") if isinstance(observer.get("notes"), list) else []
+    if not notes:
+        return ""
+    lines = ["\n## Observer Signals\n\n", "These are advisory priors only; do not cite them as review evidence.\n"]
+    for item in notes[:5]:
+        if not isinstance(item, dict):
+            continue
+        confidence = float(item.get("confidence") or 0.0)
+        lines.append(f"- `{item.get('path', '')}`: {item.get('reason', '')} (confidence {confidence:.2f})\n")
+    return "".join(lines)
 
 
 def _render_stage_prompt(
@@ -936,6 +975,25 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
     if posted:
         state["posted_review"] = posted
     _write_review_state(root, preflight, state)
+    try:
+        raw_findings = findings_payload.get("findings")
+        findings_count = len(raw_findings) if isinstance(raw_findings, list) else 0
+        changed_file_paths = [
+            str(item.get("path") or "")
+            for item in preflight.get("changed_files", [])
+            if isinstance(item, dict) and item.get("path")
+        ]
+        record_review_observation(
+            root,
+            task=str(preflight.get("review_context") or "review"),
+            status="complete",
+            changed_files=changed_file_paths,
+            findings_count=findings_count,
+            posted_status=str((posted or {}).get("status") or ""),
+        )
+        write_observer_brief(root, task=str(preflight.get("review_context") or "review"))
+    except Exception:
+        pass
     if posted:
         if posted.get("status") == "already_posted":
             console.print(f"[yellow]Review comments already posted:[/] {posted.get('url', '')}")

@@ -6,8 +6,10 @@ import typer
 from rich.table import Table
 
 from agentpack.commands._shared import console, _root
+from agentpack.control_plane import build_control_plane_snapshot
 from agentpack.core.command_surface import refresh_commands
 from agentpack.core.modes import MODE_HELP, invalid_mode_message, is_requested_mode, normalize_mode
+from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.session.state import TASK_FILE
 
 
@@ -17,9 +19,10 @@ _PLACEHOLDER_TASK = "Write or update the current coding task here."
 def register(app: typer.Typer) -> None:
     @app.command()
     def quickstart(
-        task: str = typer.Option("", "--task", help="Optional task to show or write into .agentpack/task.md."),
+        task: str = typer.Option("", "--task", help="Optional task to show or write into the current AgentPack task file."),
         mode: str = typer.Option("balanced", "--mode", help=f"Suggested mode ({MODE_HELP})."),
-        write: bool = typer.Option(False, "--write", help="Write --task into .agentpack/task.md."),
+        write: bool = typer.Option(False, "--write", help="Write --task into the current AgentPack task file."),
+        thread: str = typer.Option("", "--thread", help="Use thread-scoped context state (auto by default in agent sessions; use 'global' for legacy global state)."),
     ) -> None:
         """Show one clear first-run path for this repo."""
         if not is_requested_mode(mode):
@@ -31,14 +34,16 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
 
         root = _root()
+        thread_id = resolve_session_thread_option(thread)
         written = False
         if write:
-            task_path = root / TASK_FILE
+            scoped = thread_paths(root, thread_id)
+            task_path = scoped.task if scoped else root / TASK_FILE
             task_path.parent.mkdir(parents=True, exist_ok=True)
             task_path.write_text(task.strip() + "\n", encoding="utf-8")
             written = True
 
-        state = _quickstart_state(root, task.strip(), mode, written=written)
+        state = _quickstart_state(root, task.strip(), mode, written=written, thread_id=thread_id)
 
         console.print("\n[bold]AgentPack quickstart[/]")
         console.print(state["summary"])
@@ -68,8 +73,9 @@ def _shell_single_quote(value: str) -> str:
     return "'" + value.replace("'", "'\"'\"'") + "'"
 
 
-def _task_status(root: Path) -> tuple[bool, str]:
-    task_path = root / TASK_FILE
+def _task_status(root: Path, thread_id: str | None = None) -> tuple[bool, str]:
+    scoped = thread_paths(root, thread_id)
+    task_path = scoped.task if scoped else root / TASK_FILE
     if not task_path.exists():
         return False, ""
     text = task_path.read_text(encoding="utf-8").strip()
@@ -82,10 +88,19 @@ def _task_status(root: Path) -> tuple[bool, str]:
     return True, first
 
 
-def _quickstart_state(root: Path, task: str, mode: str, *, written: bool = False) -> dict[str, object]:
-    initialized = (root / ".agentpack" / "config.toml").exists()
-    has_task, current_task = _task_status(root)
-    has_context = (root / ".agentpack" / "context.md").exists() or (root / ".agentpack" / "context.claude.md").exists()
+def _quickstart_state(
+    root: Path,
+    task: str,
+    mode: str,
+    *,
+    written: bool = False,
+    thread_id: str | None = None,
+) -> dict[str, object]:
+    snapshot = build_control_plane_snapshot(root, thread_id=thread_id, check_files=False)
+    initialized = snapshot.setup.initialized
+    has_task, current_task = _task_status(root, thread_id)
+    has_context = snapshot.context.status == "fresh"
+    thread_suffix = f" --thread {thread_id}" if thread_id else ""
 
     steps: list[tuple[str, str, str]] = []
     optional: list[tuple[str, str]] = []
@@ -98,14 +113,14 @@ def _quickstart_state(root: Path, task: str, mode: str, *, written: bool = False
 
     if written:
         notes.append(f"Saved task: {task}")
-        steps.append(("next", refresh_commands("auto").primary, "refresh context for the saved task"))
+        steps.append(("next", refresh_commands("auto").primary + thread_suffix, "refresh context for the saved task"))
     elif task:
-        steps.append(("next", f"agentpack start {_shell_single_quote(task)}", "write task and refresh context in one command"))
+        steps.append(("next", f"agentpack start {_shell_single_quote(task)}{thread_suffix}", "write task and refresh context in one command"))
     elif not has_task:
-        steps.append(("next", "agentpack start 'fix auth token expiry'", "replace example with one concrete task"))
+        steps.append(("next", f"agentpack start 'fix auth token expiry'{thread_suffix}", "replace example with one concrete task"))
     else:
         notes.append(f"Current task: {current_task}")
-        steps.append(("next", "agentpack next --fix", "check repo state and safely refresh stale context"))
+        steps.append(("next", f"agentpack next --fix{thread_suffix}", "check repo state and safely refresh stale context"))
 
     steps.append(("verify", "agentpack doctor --agent auto", "check installed CLI, MCP registration, hooks, and repo integration"))
 
@@ -115,6 +130,8 @@ def _quickstart_state(root: Path, task: str, mode: str, *, written: bool = False
 
     if has_context:
         notes.append("A context pack already exists; rerun pack after changing task text.")
+    if thread_id:
+        notes.append(f"Using AgentPack session: {thread_id}")
     if not task and not has_task:
         notes.append("Specific tasks beat vague ones: include subsystem, symptom, and file/module names when known.")
 

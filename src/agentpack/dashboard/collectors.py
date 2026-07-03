@@ -21,6 +21,8 @@ from agentpack.dashboard.models import (
     LearningArtifact,
     LearningMemory,
     LearningWeakSpot,
+    ObserverInsightRow,
+    ObserverSummary,
     LoopSummary,
     ProjectInfo,
     SelectedFileRow,
@@ -37,6 +39,7 @@ from agentpack.dashboard.models import (
 )
 from agentpack.learning.sessions import summarize_weak_spots
 from agentpack.learning.task_memory import recent_task_memories
+from agentpack.observer.brief import build_observer_brief
 from agentpack.router.models import SkillArtifact
 from agentpack.router.skills_index import ensure_inventory_index
 
@@ -97,6 +100,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     learning = _learning_artifacts(agentpack_dir)
     learning_memories = _learning_memories(root)
     learning_weak_spots = _learning_weak_spots(root)
+    observer = _observer_summary(root, task_text)
     benchmarks = _benchmark_summary(
         _load_jsonl(agentpack_dir / "metrics.jsonl"),
         _load_jsonl(agentpack_dir / "benchmark_results.jsonl"),
@@ -121,6 +125,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         learning=learning,
         learning_memories=learning_memories,
         learning_weak_spots=learning_weak_spots,
+        observer=observer,
         benchmarks=benchmarks,
         threads=threads,
         loop=loop,
@@ -630,6 +635,44 @@ def _learning_memories(root: Path) -> list[LearningMemory]:
             )
         )
     return rows
+
+
+def _observer_summary(root: Path, task: str) -> ObserverSummary:
+    try:
+        brief = build_observer_brief(root, task=task)
+    except Exception as exc:
+        return ObserverSummary(
+            event_types={"error": 1},
+            insights=[
+                ObserverInsightRow(
+                    kind="error",
+                    title="Observer summary unavailable",
+                    detail=str(exc),
+                    action="Run `agentpack guard --agent codex --repair-stale --refresh-context` and retry.",
+                    confidence=0.0,
+                )
+            ],
+        )
+    event_types = brief.stats.get("types") if isinstance(brief.stats, dict) else {}
+    if not isinstance(event_types, dict):
+        event_types = {}
+    return ObserverSummary(
+        generated_at=brief.generated_at,
+        events=_as_int(brief.stats.get("events") if isinstance(brief.stats, dict) else 0, 0),
+        event_types={str(key): _as_int(value, 0) for key, value in event_types.items()},
+        insights=[
+            ObserverInsightRow(
+                kind=insight.kind,
+                title=insight.title,
+                detail=insight.detail,
+                action=insight.action,
+                confidence=insight.confidence,
+                related_files=insight.related_files,
+                evidence=insight.evidence,
+            )
+            for insight in brief.insights[:8]
+        ],
+    )
 
 
 def _learning_weak_spots(root: Path) -> list[LearningWeakSpot]:

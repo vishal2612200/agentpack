@@ -132,6 +132,28 @@ class TestRunUserPromptSubmit:
         assert "src/a.py" in ctx
         assert len(ctx) < 1000  # tiny hint, not full injection
 
+    def test_prompt_hook_uses_ambient_session_task(self, repo: Path, monkeypatch) -> None:
+        monkeypatch.setattr("pathlib.Path.home", lambda: repo)
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "claude/local")
+        scoped = repo / ".agentpack" / "threads" / "claude-local"
+        scoped.mkdir(parents=True)
+        (repo / ".agentpack" / "task.md").write_text("old global task\n", encoding="utf-8")
+        (scoped / "task.md").write_text("fix scoped login\n", encoding="utf-8")
+        _write_snapshot(repo, "hash1")
+        _write_metrics(repo, ["src/scoped.py"])
+        (scoped / "pack_metadata.json").write_text(
+            json.dumps({"task": "fix scoped login", "snapshot_root_hash": "hash1", "token_estimate": 100}),
+            encoding="utf-8",
+        )
+        (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"agentpack": {}}}))
+
+        out = self._capture_output(repo, {"prompt": "fix scoped login"}, monkeypatch)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+
+        assert "task: fix scoped login" in ctx
+        assert "old global task" not in ctx
+        assert "src/scoped.py" in ctx
+
     def test_stale_review_context_suppresses_file_hints(self, repo: Path, monkeypatch) -> None:
         monkeypatch.setattr("pathlib.Path.home", lambda: repo)
         _write_snapshot(repo, "hash1")

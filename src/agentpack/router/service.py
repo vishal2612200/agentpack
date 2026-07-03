@@ -13,6 +13,7 @@ from agentpack.core import git
 from agentpack.adapters.detect import detect_agent
 from agentpack.application.pack_service import PackPlanner, PackRequest
 from agentpack.core.config import load_config
+from agentpack.observer.priors import observer_notes_for_task, observer_route_priors
 from agentpack.session.events import read_events
 from agentpack.session.references import extract_issue_references, merge_issue_references
 from agentpack.router.discovery import discover_inventory, inventory_for_route
@@ -86,6 +87,8 @@ class RouteService:
             plan.all_changed,
             pr_paths,
         )
+        observer_priors = observer_route_priors(root, task)
+        selected_files = _with_observer_prior_files(root, selected_files, observer_priors)
         selected_paths = [item["path"] for item in selected_files]
         selection_explanations = _selection_explanations(selected_files, task, priority_paths)
         omitted_files = _route_omitted_files(
@@ -118,6 +121,9 @@ class RouteService:
         notes = _routing_notes(task_mode, pr_paths)
         if routing_task != task:
             notes.append("Used recent issue references from AgentPack memory as routing hints.")
+        observer_notes = observer_notes_for_task(root, task)
+        if observer_notes:
+            notes.append("Observer priors are advisory only; verify source and diff evidence before acting.")
 
         result = RouteResult(
             task=task,
@@ -137,6 +143,7 @@ class RouteService:
             suggested_commands=commands,
             evidence_checklist=checklist,
             routing_notes=notes,
+            observer_notes=observer_notes,
             prompt_quality_warnings=prompt_quality.warnings,
             recommended_prompt_template=prompt_quality.template,
             safety_warnings=safety_warnings,
@@ -216,6 +223,25 @@ def _selected_file_dict(item) -> dict:
         "include_mode": item.include_mode,
         "reasons": item.reasons,
     }
+
+
+def _with_observer_prior_files(root: Path, selected_files: list[dict], priors: list[Any]) -> list[dict]:
+    selected_paths = {str(item.get("path") or "") for item in selected_files}
+    additions: list[dict[str, Any]] = []
+    for prior in priors[:3]:
+        path = str(getattr(prior, "path", "") or "")
+        if not path or path in selected_paths or not (root / path).exists():
+            continue
+        additions.append({
+            "path": path,
+            "score": 72.0 + float(getattr(prior, "confidence", 0.0)) * 10.0,
+            "include_mode": "summary",
+            "reasons": ["observer prior from similar prior work", str(getattr(prior, "reason", "") or "")],
+        })
+        selected_paths.add(path)
+    if not additions:
+        return selected_files
+    return selected_files + additions
 
 
 def _selection_explanations(

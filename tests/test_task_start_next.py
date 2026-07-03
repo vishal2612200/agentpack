@@ -75,7 +75,7 @@ def test_next_recommends_missing_task_for_initialized_repo(tmp_path: Path, monke
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".agentpack").mkdir()
     (tmp_path / ".agentpack" / "config.toml").write_text("[context]\n", encoding="utf-8")
-    monkeypatch.setattr("agentpack.commands.next_cmd._context_is_fresh", lambda _root: (True, "fresh"))
+    monkeypatch.setattr("agentpack.commands.next_cmd._context_is_fresh", lambda _root, **_kwargs: (True, "fresh"))
 
     result = CliRunner().invoke(app, ["next", "--json"])
 
@@ -84,3 +84,21 @@ def test_next_recommends_missing_task_for_initialized_repo(tmp_path: Path, monke
     assert "missing_task" in kinds
     missing = next(item for item in json.loads(result.output)["recommendations"] if item["kind"] == "missing_task")
     assert "Generic or placeholder tasks" in missing["why_it_matters"]
+
+
+def test_next_fix_does_not_refresh_missing_session_task(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CLAUDE_SESSION_ID", "claude-local")
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("[context]\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "task.md").write_text("old global task\n", encoding="utf-8")
+    calls: list[object] = []
+    monkeypatch.setattr("agentpack.commands.next_cmd.run_refresh", lambda *args, **kwargs: calls.append((args, kwargs)))
+
+    result = CliRunner().invoke(app, ["next", "--fix", "--json"])
+
+    assert result.exit_code == 0, result.output
+    kinds = [item["kind"] for item in json.loads(result.output)["recommendations"]]
+    assert "missing_task" in kinds
+    assert "stale_context" in kinds
+    assert calls == []

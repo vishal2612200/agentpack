@@ -69,11 +69,31 @@ With AgentPack:    agent starts near the right files.
 
 No cloud index. No embeddings. No model calls for scan/rank/pack. Just local repo analysis, ranked context, and receipts for what got included or skipped.
 
-It is not a repo dump. It is not a second brain. It is not a promise that your agent will be right.
+It is not a repo dump. It is not a generic memory app. It is not a promise that your agent will be right.
 
 It is a preflight map: likely files, likely tests, the right local skill or rule, commands, warnings, and a compact pack your agent can inspect before touching code.
 
 The first run builds local summaries and repo signals. Later runs reuse that cache, so agents do less repeat discovery and spend more of their budget on the actual change.
+
+## What We Are Solving
+
+AgentPack exists because developer-agent work has three recurring failure modes:
+
+- **Cold-start drift**: every new chat repeats repo discovery, burns tokens, and may anchor on the wrong files.
+- **Session collision**: two chats in the same repo can accidentally share stale task context and continue old work.
+- **Context inflation**: agents ask for full repo context when a task, delta, or one related file would be enough.
+
+The direction is a local developer control plane, not another autonomous agent.
+`quickstart`, `start`, `next`, and `doctor` are the human-facing loop.
+MCP `readiness()`, `get_context()`, `get_delta_context()`, and route/explain
+tools are the agent-facing loop. Both read the same task/session/context/token
+state, so AgentPack can answer "what now?" consistently across Codex, Claude,
+Cursor, Windsurf, Antigravity, and generic agents.
+
+The long-term vision is a practical second brain for development: local memory,
+review evidence, AST/symbol structure, task history, and observer signals that
+help the next agent orient faster. It remains advisory by design. Source files,
+diffs, tests, runtime evidence, and PR review stay the source of truth.
 
 ## Quick Start
 
@@ -85,16 +105,18 @@ agentpack --version
 Inside your repo:
 
 ```bash
-agentpack init --yes
+agentpack quickstart
 agentpack start "fix auth token expiry"
 agentpack next
 agentpack doctor --agent auto
 ```
 
 Then give `.agentpack/context.md` to your agent, or let MCP-capable agents call AgentPack tools directly.
-Core onboarding is `quickstart`, `start`, `next`, and `doctor`. Use `route`,
-`pack`, and `benchmark` when you need deeper inspection or measurement.
-Everything else is an advanced workflow or release/diagnostic helper.
+Core onboarding is `quickstart`, `start`, `next`, and `doctor`. `next` is the
+single "what now?" command: it checks setup, task/session state, context
+freshness, thread overlap, and token guidance. Use `route`, `pack`, and
+`benchmark` when you need deeper inspection or measurement. Everything else is
+an advanced workflow or release/diagnostic helper.
 
 For one-shot use without installing:
 
@@ -106,70 +128,14 @@ For JavaScript/TypeScript projects, npm wrapper is available:
 
 ```bash
 npx @vishal2612200/agentpack --version
-npx @vishal2612200/agentpack init --yes
-npx @vishal2612200/agentpack task set "fix auth token expiry"
-npx @vishal2612200/agentpack pack --task auto
+npx @vishal2612200/agentpack quickstart
+npx @vishal2612200/agentpack start "fix auth token expiry"
+npx @vishal2612200/agentpack next
 ```
-
-## New Contributors
-
-Start with [`good first issue`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) or [`help wanted`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22) issues.
-If this would be your first open-source contribution, use the smaller
-[`first-timers-only`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22first-timers-only%22) queue.
-Contribution setup and review expectations are in [CONTRIBUTING.md](CONTRIBUTING.md).
-
-## Quick Demo
-
-Route task first:
-
-```bash
-agentpack route --task "fix billing webhook retry handling"
-```
-
-AgentPack returns likely files, why-selected and why-not-selected notes, tests, rules, commands, and warnings without changing source files.
-It also recommends matching skills or agent rules when the task points at a known workflow, framework, language, or repo convention.
-
-Build context pack next:
-
-```bash
-agentpack task set "fix billing webhook retry handling"
-agentpack pack --task auto
-```
-
-AgentPack writes local context under `.agentpack/`, including selected files, omitted-file receipts, freshness checks, token stats, and `.agentpack/citations.json` source provenance for the packed claims.
-It reuses cached file summaries and snapshot metadata so repeated packs do not start from zero.
-Run `agentpack doctor` when an agent integration, MCP setup, hook, or installed CLI path looks stale.
-
-## What AgentPack Gives Your Agent
-
-- ranked files for current task
-- skill and rule routing for current task
-- likely tests and commands
-- repo rules and agent instructions
-- compact context pack under budget
-- curated broad repo context for review/share/audit tasks without a separate bundle command
-- citation-backed provenance for packed claims and review artifacts
-- review preflight and staged review prompts for file-grounded PR review
-- local memory, evaluation, and runtime/performance diagnostics for repeat workflows
-- cached summaries for faster repeated orientation
-- omitted-file receipts for review
-- freshness warnings when task or git state changes
-- local benchmark data when selected context misses real changed files
-
-## What's Current In 0.3.35
-
-- First-run output is clearer: `quickstart`, `next`, and top-level help now point new users through one core path before optional diagnostics.
-- `doctor`, `repair`, `guard`, and `review --check` now print more explicit failure, impact, repair command, and safe-to-continue guidance.
-- Review inline posting is safer: live GitHub comments require a matching `--dry-run-post` payload hash before `--post-inline-comments`.
-- MCP structured outputs and TOON validation are stricter, including canonical TOON output for agents that need repairable structured responses.
-- Route output now explains both why files were selected and why common candidates were omitted.
-- Codex, Claude, Cursor, Windsurf, and Antigravity detection and distributed guidance were refreshed so active-agent and fallback behavior are easier to audit.
 
 ## Proof So Far
 
 AgentPack's current public benchmark checks one narrow thing: whether selected context overlaps with files actually changed in historical commits. Treat it as evidence for a ranked starting map, not proof that any agent will finish every task faster or better.
-
-Current scoped result:
 
 | Signal | Result | Developer meaning |
 |---|---:|---|
@@ -184,6 +150,59 @@ Source: [`benchmarks/results/2026-06-25-public.md`](benchmarks/results/2026-06-2
 This is useful but not magic. It says AgentPack often gets meaningful files into a small pack. It does not replace source inspection, tests, runtime evidence, or review. Agent success A/B benchmarks should report task success, tool calls, token cost, validation quality, and time-to-first-correct-file.
 
 E2E outcome proof is tracked separately in [`benchmarks/results/e2e-ab-status.md`](benchmarks/results/e2e-ab-status.md). Do not treat file-selection results as task-success or cost-savings proof.
+
+## New Contributors
+
+Start with [`good first issue`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) or [`help wanted`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22) issues.
+If this would be your first open-source contribution, use the smaller
+[`first-timers-only`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22first-timers-only%22) queue.
+Contribution setup and review expectations are in [CONTRIBUTING.md](CONTRIBUTING.md).
+
+## Quick Demo
+
+Start with the control-plane loop:
+
+```bash
+agentpack quickstart
+agentpack start "fix billing webhook retry handling"
+agentpack next
+```
+
+AgentPack writes local task/context state under `.agentpack/`, checks freshness,
+and tells you the next safe action. MCP-capable agents use the same state
+through `readiness()`, `get_context()`, and `get_delta_context()`.
+
+Use route and pack when you want deeper inspection:
+
+```bash
+agentpack route --task "fix billing webhook retry handling"
+agentpack pack --task auto
+```
+
+`route` returns likely files, why-selected and why-not-selected notes, tests,
+rules, commands, warnings, and matching skills without writing source files.
+`pack` renders selected files, omitted-file receipts, freshness checks, token
+stats, and citation provenance for packed claims.
+AgentPack reuses cached file summaries and snapshot metadata so repeated packs do not start from zero.
+Run `agentpack doctor` when an agent integration, MCP setup, hook, or installed CLI path looks stale.
+
+## Capability Map
+
+| Area | What AgentPack provides |
+|---|---|
+| Orientation | ranked files, likely tests, commands, repo rules, skills, and why/why-not receipts |
+| Control plane | `next`, `status`, `guard`, MCP readiness, thread state, freshness checks, and exact repair commands |
+| Token control | budgeted packs, token contracts, delta-context guidance, cached summaries, and retrieval IDs |
+| Review and proof | citation-backed review artifacts, review preflight, benchmark misses, and local validation guidance |
+| Advisory memory | task memory, learning notes, observer signals, and repeated-work diagnostics that stay below source/test evidence |
+
+## Current Focus
+
+- Make `quickstart`, `start`, `next`, and `doctor` the default human loop.
+- Keep `next`, `quickstart`, `status`, `guard`, and MCP readiness on one shared control-plane snapshot.
+- Use token contracts to recommend full context vs delta context.
+- Keep repair output explicit: what failed, why it matters, the exact command, and whether work can safely continue.
+- Keep review, TOON, route explainability, and MCP troubleshooting grounded in source, diff, test, and PR evidence.
 
 ## What We Want To Prove Next
 
@@ -233,16 +252,6 @@ AgentPack does not upload code and does not turn AgentPack into a coding agent.
 
 See [`docs/agent-plugins.md`](docs/agent-plugins.md) and [`docs/codex-plugin.md`](docs/codex-plugin.md).
 
-## How AgentPack Compares
-
-| Tool type | What it does | AgentPack difference |
-|---|---|---|
-| Repo dumpers | Dump selected or all files | AgentPack ranks files by task |
-| Coding agents | Edit code | AgentPack prepares context before editing |
-| IDE search | Finds files on demand | AgentPack pre-routes before agent starts |
-| Skills/rules | Change agent behavior | AgentPack routes the matching skill or rule for the task |
-| Cache warmers | Speed repeated scans | AgentPack reuses summaries and snapshots inside the context workflow |
-
 ## When To Use It
 
 Use AgentPack when:
@@ -256,7 +265,7 @@ Use AgentPack when:
 - teams have useful skills/rules but agents do not reliably pick the right one
 - repeated agent sessions keep rediscovering the same repo structure
 
-Do not use AgentPack when:
+Skip AgentPack or keep it as a light preflight when:
 
 - repo is tiny
 - question is one-shot and read-only
@@ -264,13 +273,17 @@ Do not use AgentPack when:
 - you need autonomous coding, not context preparation
 - native IDE search is already enough for task
 
-## How It Works
+## Boundaries
 
-AgentPack scans repo locally, builds and reuses file summaries, indexes local skills and rules, combines filename, git, config, dependency, summary, memory, and benchmark signals, ranks likely files for task, then renders a compact context pack. Review/share/audit tasks also get broad module summaries and inventory receipts in the same artifact.
+AgentPack is closest to a local preflight and control plane:
 
-It can expose the same workflow through CLI, markdown files, MCP tools, hooks, plugins, and CI.
+- unlike repo dumpers, it ranks and compresses by task
+- unlike coding agents, it does not edit code
+- unlike IDE search, it routes before the agent starts wandering
+- unlike generic skills/rules, it recommends the ones that fit the task
+- unlike generic memory, its observer signals stay advisory and local
 
-Deep dive: [`docs/architecture.md`](docs/architecture.md), [`docs/how-agentpack-works.md`](docs/how-agentpack-works.md), and [`docs/commands.md`](docs/commands.md).
+Implementation deep dives: [`docs/architecture.md`](docs/architecture.md), [`docs/how-agentpack-works.md`](docs/how-agentpack-works.md), and [`docs/commands.md`](docs/commands.md).
 
 ## Trust And Privacy
 

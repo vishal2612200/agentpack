@@ -30,7 +30,7 @@ Use only local files first:
 
 ```bash
 test -f .agentpack/context.compact.md && sed -n '1,220p' .agentpack/context.compact.md
-test -f .agentpack/task.md && sed -n '1,40p' .agentpack/task.md
+agentpack task show || true
 test -f .agentpack/session.json && sed -n '1,120p' .agentpack/session.json
 test -f .agentpack/learning.md && sed -n '1,220p' .agentpack/learning.md
 test -f .agentpack/agent-lessons.md && sed -n '1,160p' .agentpack/agent-lessons.md

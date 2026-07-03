@@ -132,6 +132,24 @@ class LearningWeakSpot(BaseModel):
     evidence_files: list[str] = Field(default_factory=list)
 
 
+class ObserverInsightRow(BaseModel):
+    kind: str
+    title: str
+    detail: str = ""
+    action: str = ""
+    confidence: float = 0.0
+    related_files: list[str] = Field(default_factory=list)
+    evidence: list[str] = Field(default_factory=list)
+
+
+class ObserverSummary(BaseModel):
+    generated_at: str = ""
+    events: int = 0
+    event_types: dict[str, int] = Field(default_factory=dict)
+    insights: list[ObserverInsightRow] = Field(default_factory=list)
+    brief_path: str = ".agentpack/observer-brief.md"
+
+
 class BenchmarkSummary(BaseModel):
     latest: dict[str, Any] = Field(default_factory=dict)
     averages: dict[str, float] = Field(default_factory=dict)
@@ -186,6 +204,7 @@ class DashboardSnapshot(BaseModel):
     learning: list[LearningArtifact] = Field(default_factory=list)
     learning_memories: list[LearningMemory] = Field(default_factory=list)
     learning_weak_spots: list[LearningWeakSpot] = Field(default_factory=list)
+    observer: ObserverSummary = Field(default_factory=ObserverSummary)
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)
     loop: LoopSummary = Field(default_factory=LoopSummary)

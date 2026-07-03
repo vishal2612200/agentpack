@@ -134,6 +134,7 @@ def test_route_json_returns_stable_keys_and_does_not_write_context(tmp_path, mon
         "suggested_commands",
         "evidence_checklist",
         "routing_notes",
+        "observer_notes",
         "prompt_quality_warnings",
         "recommended_prompt_template",
         "safety_warnings",
@@ -165,6 +166,37 @@ def test_route_json_flag_alias_returns_machine_readable_output(tmp_path, monkeyp
     assert data["task"] == "fix flaky payment webhook test"
     assert data["selected_files"]
     assert data["agent_prompt"]
+
+
+def test_route_surfaces_observer_prior_as_advisory_context(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_route_fixture(tmp_path)
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "router.py").write_text("def route_task():\n    return []\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "observer-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-03T00:00:00Z",
+                "task": "improve route explainability",
+                "payload": {
+                    "changed_files": ["src/router.py"],
+                    "selected_files": [],
+                    "selected_misses": ["src/router.py"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["route", "--task", "route explainability", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["observer_notes"][0]["path"] == "src/router.py"
+    assert any(item["path"] == "src/router.py" for item in data["selected_files"])
+    assert "Observer priors are advisory" in "\n".join(data["routing_notes"])
 
 
 def test_route_invalid_format_exits_nonzero_and_mentions_json_alias(tmp_path, monkeypatch):

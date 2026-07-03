@@ -7,7 +7,7 @@ import typer
 
 from agentpack.commands._shared import console, _root
 from agentpack.core.execution_state import build_execution_state
-from agentpack.core.thread_context import resolve_thread_option, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 
 VALID_STATUSES = {"planned", "in_progress", "blocked", "done"}
 
@@ -20,11 +20,11 @@ def register(app: typer.Typer) -> None:
 
 @state_app.command("show")
 def show_state(
-    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state."),
+    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     root = _root()
-    scoped = thread_paths(root, resolve_thread_option(thread))
+    scoped = thread_paths(root, resolve_session_thread_option(thread))
     state = build_execution_state(root, scoped)
     if json_output:
         typer.echo(json.dumps(state, indent=2, sort_keys=True))
@@ -50,7 +50,7 @@ def show_state(
 def set_state(
     status: str = typer.Argument(..., help="planned|in_progress|blocked|done"),
     summary: str = typer.Option("", "--summary", help="Task state summary."),
-    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state."),
+    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
 ) -> None:
     _write_state(status, summary=summary, thread=thread)
 
@@ -58,13 +58,13 @@ def set_state(
 @state_app.command("done")
 def done_state(
     summary: str = typer.Option("", "--summary", help="Completion summary."),
-    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state."),
+    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
 ) -> None:
     _write_state("done", summary=summary, thread=thread)
 
 
 def _state_path(root: Path, thread: str) -> Path:
-    scoped = thread_paths(root, resolve_thread_option(thread))
+    scoped = thread_paths(root, resolve_session_thread_option(thread))
     return scoped.task_state if scoped else root / ".agentpack" / "task_state.md"
 
 

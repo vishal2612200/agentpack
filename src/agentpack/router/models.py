@@ -80,6 +80,7 @@ class RouteResult(BaseModel):
     suggested_commands: list[CommandSuggestion] = Field(default_factory=list)
     evidence_checklist: list[str] = Field(default_factory=list)
     routing_notes: list[str] = Field(default_factory=list)
+    observer_notes: list[dict] = Field(default_factory=list)
     prompt_quality_warnings: list[str] = Field(default_factory=list)
     recommended_prompt_template: list[str] = Field(default_factory=list)
     safety_warnings: list[str] = Field(default_factory=list)

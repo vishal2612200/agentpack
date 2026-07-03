@@ -132,6 +132,38 @@ def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
     assert snapshot.learning_memories[0].concepts == ["caching"]
 
 
+def test_project_dashboard_reads_observer_summary(tmp_path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "cache.py").write_text("CACHE = {}\n", encoding="utf-8")
+    (agentpack / "task.md").write_text("Fix cache ttl bug\n", encoding="utf-8")
+    (agentpack / "observer-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-03T00:00:00Z",
+                "task": "Fix cache ttl bug",
+                "payload": {
+                    "changed_files": ["src/cache.py"],
+                    "selected_files": [],
+                    "selected_misses": ["src/cache.py"],
+                    "tests": [],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    assert snapshot.observer.events == 1
+    assert snapshot.observer.event_types["task_memory"] == 1
+    assert snapshot.observer.insights
+    assert snapshot.observer.insights[0].kind in {"counterfactual", "route_prior", "test_gap"}
+
+
 def test_project_dashboard_summarizes_learning_weak_spots(tmp_path) -> None:
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()

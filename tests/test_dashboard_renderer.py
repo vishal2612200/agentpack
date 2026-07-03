@@ -7,6 +7,8 @@ from agentpack.dashboard.models import (
     LearningArtifact,
     LearningWeakSpot,
     LoopSummary,
+    ObserverInsightRow,
+    ObserverSummary,
     ProjectInfo,
     SelectedFileRow,
     SkillDomainSummary,
@@ -43,6 +45,21 @@ def test_render_dashboard_html_contains_core_sections() -> None:
                     evidence_files=["src/cache.py"],
                 )
             ],
+            observer=ObserverSummary(
+                events=1,
+                event_types={"task_memory": 1},
+                insights=[
+                    ObserverInsightRow(
+                        kind="counterfactual",
+                        title="Prior route context missed changed files",
+                        detail="A prior task changed src/cache.py without selecting it.",
+                        action="Inspect src/cache.py as a hypothesis.",
+                        confidence=0.62,
+                        related_files=["src/cache.py"],
+                        evidence=["Fix cache ttl bug"],
+                    )
+                ],
+            ),
             benchmarks=BenchmarkSummary(averages={"selection_recall": 0.8, "skill_recall_at_3": 0.9}),
             loop=LoopSummary(
                 exists=True,
@@ -72,6 +89,10 @@ def test_render_dashboard_html_contains_core_sections() -> None:
     assert "0.900" in html
     assert 'class="section-header"' in html
     assert 'href="#inventory"' in html
+    assert 'href="#observer"' in html
+    assert "Observer" in html
+    assert "Prior route context missed changed files" in html
+    assert "Observer signals are hypotheses" in html
     assert 'class="table-wrap"' in html
     assert 'class="learning-list"' in html
     assert "weak spot" in html

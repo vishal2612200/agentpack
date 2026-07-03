@@ -41,8 +41,10 @@ from agentpack.core.command_surface import available_cli_commands, fallback_agen
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.structured_format import StructuredFormat, to_llm
 from agentpack.core.task_freshness import read_task_md, task_freshness, write_task_md
-from agentpack.core.thread_context import resolve_thread_option, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, task_is_done, thread_paths
 from agentpack.core.token_estimator import estimate_tokens
+from agentpack.control_plane import build_control_plane_snapshot, plan_next_actions
+from agentpack.control_plane.renderer import token_hint
 
 
 def _repo_root() -> Path:
@@ -77,6 +79,10 @@ MCP_TOOL_NAMES = (
 def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str:
     metadata = load_pack_metadata(root) or {}
     freshness = metadata.get("freshness") or {}
+    thread_id = resolve_session_thread_option("")
+    snapshot = build_control_plane_snapshot(root, thread_id=thread_id, check_files=False)
+    recommendations = plan_next_actions(snapshot)
+    recommended_next_tool = _recommended_mcp_tool(snapshot, [item.kind for item in recommendations])
     payload = {
         "ok": True,
         "proof": "This response proves the current host can call AgentPack MCP tools.",
@@ -88,6 +94,17 @@ def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str
         "mcp_tools": list(MCP_TOOL_NAMES),
         "cli_commands": list(available_cli_commands()),
         "refresh_command": refresh_commands("auto").primary,
+        "recommended_next_tool": recommended_next_tool,
+        "reason": recommendations[0].reason if recommendations else "context is ready for the current task",
+        "avoid": _mcp_avoid_list(snapshot, [item.kind for item in recommendations]),
+        "token_hint": token_hint(snapshot),
+        "control_plane": {
+            "thread_id": snapshot.task.thread_id,
+            "context_status": snapshot.context.status,
+            "context_reason": snapshot.context.reason,
+            "token_contract": snapshot.tokens.model_dump(mode="json"),
+            "next_actions": [item.model_dump(mode="json") for item in recommendations[:5]],
+        },
         "latest_context": {
             "task": metadata.get("task"),
             "generated_at": metadata.get("generated_at"),
@@ -96,7 +113,31 @@ def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str
             "worktree_path": freshness.get("worktree_path"),
         },
     }
-    return to_llm(root, payload, requested=output_format, root_name="agentpack_readiness")
+    requested = "toon" if output_format == "auto" else output_format
+    return to_llm(root, payload, requested=requested, root_name="agentpack_readiness")
+
+
+def _recommended_mcp_tool(snapshot, kinds: list[str]) -> str:
+    if "init" in kinds:
+        return "route_task"
+    if "missing_task" in kinds or "done_task" in kinds:
+        return "start_task"
+    if "stale_context" in kinds or snapshot.context.status != "fresh":
+        return "get_context"
+    if snapshot.tokens.estimated_tokens and snapshot.tokens.budget and snapshot.tokens.usage_ratio >= 0.85:
+        return "get_delta_context"
+    return "get_context"
+
+
+def _mcp_avoid_list(snapshot, kinds: list[str]) -> list[str]:
+    avoid: list[str] = []
+    if snapshot.context.status == "fresh":
+        avoid.append("pack_context unless task text changed")
+    if "missing_task" in kinds or "done_task" in kinds:
+        avoid.append("get_context until a concrete active task is set")
+    if snapshot.tokens.estimated_tokens and snapshot.tokens.budget and snapshot.tokens.usage_ratio >= 0.85:
+        avoid.append("full pack_context for small follow-up reads")
+    return avoid
 
 
 def _metadata_provenance(root: Path, metadata: dict | None) -> dict[str, object]:
@@ -184,6 +225,12 @@ def _truncate_to_budget(text: str, max_tokens: int = 20000) -> str:
 def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
     """Read the latest context pack, blocking to refresh when task.md changed."""
     scoped = thread_paths(root, thread_id)
+    if task_is_done(root, scoped.thread_id if scoped else None):
+        label = f"AgentPack session {scoped.thread_id}" if scoped else "AgentPack task"
+        return (
+            f"> {label} is marked done. Completed context will not be reused.\n\n"
+            "Start a new task/session with `agentpack start \"describe the task\"` or MCP `start_task(...)`."
+        )
     pack_path = None
     candidates = (
         (scoped.context_claude, scoped.context) if scoped else (root / ".agentpack" / "context.claude.md", root / ".agentpack" / "context.md")
@@ -260,7 +307,9 @@ def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
 
 def _task_md_body(root: Path, thread_id: str | None = None) -> str | None:
     scoped = thread_paths(root, thread_id)
-    if scoped and scoped.task.exists():
+    if scoped:
+        if not scoped.task.exists():
+            return None
         raw = scoped.task.read_text(encoding="utf-8").strip()
         return raw or None
     return read_task_md(root)
@@ -283,6 +332,11 @@ def _resolve_mcp_task(root: Path, task: str = "", thread_id: str | None = None) 
     task_md = _task_md_body(root, thread_id)
     if task_md:
         return task_md
+    if thread_id:
+        raise ValueError(
+            f"No task is set for AgentPack session {thread_id}. "
+            "Call start_task(task=...) or pack_context(task=...) before requesting context."
+        )
     inferred, _source = git.infer_task_with_source(root) if git.is_git_repo(root) else ("general", "fallback")
     return inferred
 
@@ -319,15 +373,14 @@ def _pack_context_impl(
     return _truncate_to_budget(render_claude(result.pack), max_tokens)
 
 
-def _explain_file_impl(root: Path, path: str, task: str = "") -> str:
+def _explain_file_impl(root: Path, path: str, task: str = "", thread_id: str | None = None) -> str:
     """Testable core of the explain_file MCP tool."""
     from agentpack.application.pack_service import PackPlanner, PackRequest, _sf_tokens
     from agentpack.adapters.detect import detect_agent
 
     resolved_task = task
     if not resolved_task:
-        task_md = root / ".agentpack" / "task.md"
-        resolved_task = task_md.read_text(encoding="utf-8").strip() if task_md.exists() else "general"
+        resolved_task = _task_md_body(root, thread_id) or "general"
 
     plan = PackPlanner().plan(PackRequest(
         root=root,
@@ -394,14 +447,13 @@ def _explain_file_impl(root: Path, path: str, task: str = "") -> str:
     return "\n".join(lines)
 
 
-def _get_related_files_impl(root: Path, path: str, depth: int = 1) -> str:
+def _get_related_files_impl(root: Path, path: str, depth: int = 1, thread_id: str | None = None) -> str:
     """Testable core of the get_related_files MCP tool."""
     from agentpack.application.pack_service import PackPlanner, PackRequest
     from agentpack.adapters.detect import detect_agent
 
     depth = max(1, min(depth, 2))
-    task_md = root / ".agentpack" / "task.md"
-    task = task_md.read_text(encoding="utf-8").strip() if task_md.exists() else "general"
+    task = _task_md_body(root, thread_id) or "general"
 
     plan = PackPlanner().plan(PackRequest(
         root=root,
@@ -714,7 +766,7 @@ def serve() -> None:
 
     @mcp.tool()
     def start_task(task: str, mode: str = "balanced", budget: int = 0, max_tokens: int = 20000, thread_id: str = "") -> str:
-        """Start a new coding task: write task.md, pack context, and return it.
+        """Start a new coding task: write session task.md, pack context, and return it.
 
         This is the recommended MCP-first entry point at the start of a task.
         """
@@ -724,7 +776,7 @@ def serve() -> None:
             mode=mode,
             budget=budget,
             max_tokens=max_tokens,
-            thread_id=resolve_thread_option(thread_id) or "",
+            thread_id=resolve_session_thread_option(thread_id) or "",
         )
 
     @mcp.tool()
@@ -732,8 +784,8 @@ def serve() -> None:
         """Generate a ranked context pack.
 
         Args:
-            task: Optional task text. If provided, AgentPack writes it to .agentpack/task.md.
-                  If omitted, AgentPack reads task.md or infers from git.
+            task: Optional task text. If provided, AgentPack writes it to the current session task.md.
+                  If omitted, scoped sessions require an existing session task; legacy global mode may infer from git.
             mode: lite | balanced (default) | deep.
             budget: Token budget, 0 = config default (usually 40000).
             max_tokens: Maximum tokens to return (default 20000). Increase for deep context.
@@ -746,7 +798,7 @@ def serve() -> None:
             mode=mode,
             budget=budget,
             max_tokens=max_tokens,
-            thread_id=resolve_thread_option(thread_id) or "",
+            thread_id=resolve_session_thread_option(thread_id) or "",
         )
 
     @mcp.tool()
@@ -778,16 +830,16 @@ def serve() -> None:
 
     @mcp.tool()
     def get_context(thread_id: str = "") -> str:
-        """Return the latest context pack, auto-refreshing when task.md changed.
+        """Return the latest session context pack, auto-refreshing when task.md changed.
 
         Fast for fresh packs. Blocks for one refresh if the current task differs from the packed task.
         Returns empty string if no pack exists yet.
         """
-        return _get_context_impl(_repo_root(), resolve_thread_option(thread_id))
+        return _get_context_impl(_repo_root(), resolve_session_thread_option(thread_id))
 
     @mcp.tool()
     def refresh() -> str:
-        """Refresh context using the current task.md (or git-inferred task).
+        """Refresh context using the current ambient session task file.
 
         Equivalent to running `agentpack session refresh`.
         Returns summary of what was packed.
@@ -801,7 +853,8 @@ def serve() -> None:
         agent = state.agent if state else detect_agent(root)
         mode = state.mode if state else "balanced"
 
-        result = run_refresh(root, agent, mode, 0)
+        thread = resolve_session_thread_option("")
+        result = run_refresh(root, agent, mode, 0, thread_id=thread)
         if result is None:
             return "Refresh failed."
         return (
@@ -811,19 +864,19 @@ def serve() -> None:
         )
 
     @mcp.tool()
-    def explain_file(path: str, task: str = "") -> str:
+    def explain_file(path: str, task: str = "", thread_id: str = "") -> str:
         """Return score breakdown and symbol list for a specific file.
 
         Args:
             path: Repo-relative file path (e.g. "src/auth/session.py").
-            task: Optional task description to score against. Defaults to current task.md.
+            task: Optional task description to score against. Defaults to current session task.md.
 
         Returns a markdown string with score signals, include mode, token count, and symbols.
         """
-        return _explain_file_impl(_repo_root(), path, task)
+        return _explain_file_impl(_repo_root(), path, task, resolve_session_thread_option(thread_id))
 
     @mcp.tool()
-    def get_related_files(path: str, depth: int = 1) -> str:
+    def get_related_files(path: str, depth: int = 1, thread_id: str = "") -> str:
         """Return import-graph neighbours of a file (files it imports + files that import it).
 
         Args:
@@ -832,7 +885,7 @@ def serve() -> None:
 
         Returns a markdown list of related files with their relationship type.
         """
-        return _get_related_files_impl(_repo_root(), path, depth)
+        return _get_related_files_impl(_repo_root(), path, depth, resolve_session_thread_option(thread_id))
 
     @mcp.tool()
     def get_delta_context(max_files: int = 12) -> str:

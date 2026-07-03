@@ -2,6 +2,24 @@
 
 AgentPack is a local context router. It does not upload your repo or require embeddings to build a pack. The default path is deterministic and offline: scan the working tree, rank likely-relevant files, compress them into a budget, cache expensive local work, and let agents retrieve more detail when needed.
 
+## Why These Layers Exist
+
+AgentPack is designed around a simple constraint: agents should not start by
+rediscovering the project from scratch, but they also should not trust stale
+generated context as truth.
+
+That is why the system separates four responsibilities:
+
+- **Orientation**: route, pack, and explain point at likely files, tests, skills, and commands.
+- **State control**: `next`, `status`, `guard`, and MCP readiness decide whether the current task/context/session is safe to use.
+- **Token control**: pack metadata records a token contract so agents can prefer delta or targeted retrieval when full context is unnecessary.
+- **Learning control**: memory, learn, review, and observer flows record bounded local evidence for future orientation without making it authoritative.
+
+The result should feel less like "ask the model to remember everything" and
+more like a local flight checklist for each task: what is the task, which
+session owns it, what context is fresh, what changed, what is worth reading, and
+what proof still needs to be checked.
+
 ## Pipeline
 
 1. **Scan**
@@ -36,9 +54,13 @@ AgentPack is a local context router. It does not upload your repo or require emb
 
 6. **Route**
 
-   `agentpack route --task "..."` and the MCP router return likely files, scoped rules, installed skills, commands, and safety warnings without writing a full context pack. Skill routing uses explicit metadata first, then local text signals such as BM25-style domain scoring and dynamic keyphrase triggers.
+   `agentpack route --task "..."` and the MCP router return likely files, scoped rules, installed skills, commands, and safety warnings without writing a full context pack. Skill routing uses explicit metadata first, then local text signals such as BM25-style domain scoring and dynamic keyphrase triggers. When local observer history exists, route output may include advisory priors from similar previous tasks; those priors are only a starting hypothesis and must be verified from source.
 
-7. **Measure**
+7. **Observe**
+
+   AgentPack mirrors bounded local events from task memory, route, learn, and review flows into `.agentpack/observer-events.jsonl`. It derives `.agentpack/observer-brief.md` and dashboard cards that explain relationships such as "this file was changed in similar work but was not selected last time." The observer layer is deliberately local and advisory; direct code, diffs, tests, and PR evidence remain the source of truth.
+
+8. **Measure**
 
    `agentpack benchmark` scores expected-file recall, token precision, pack size, misses, and skill routing metrics. Benchmark cases can include `expected_skills` and `avoid_skills` to catch weak skill keywords or noisy skill recommendations.
 

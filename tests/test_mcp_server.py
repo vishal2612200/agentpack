@@ -102,6 +102,8 @@ def test_readiness_impl_can_emit_json(tmp_path):
 
     payload = json.loads(result)
     assert payload["mcp_server"] == "agentpack"
+    assert payload["recommended_next_tool"] in {"route_task", "start_task", "get_context", "get_delta_context"}
+    assert "token_hint" in payload
 
 
 def test_route_task_impl_can_emit_toon(tmp_path):
@@ -275,6 +277,19 @@ def test_get_context_reads_thread_scoped_pack(tmp_path):
     assert "# scoped pack" in result
 
 
+def test_get_context_refuses_done_thread_context(tmp_path):
+    scoped = tmp_path / ".agentpack" / "threads" / "codex-local"
+    scoped.mkdir(parents=True)
+    (scoped / "context.md").write_text("# old done pack")
+    (scoped / "task_state.md").write_text("Status: done\nSummary: Finished\n", encoding="utf-8")
+
+    result = _get_context_impl(tmp_path, thread_id="codex-local")
+
+    assert "marked done" in result
+    assert "Completed context will not be reused" in result
+    assert "# old done pack" not in result
+
+
 def test_get_context_auto_refreshes_when_hashes_differ(tmp_path):
     (tmp_path / ".agentpack").mkdir()
     (tmp_path / ".agentpack" / "context.claude.md").write_text("# pack content")
@@ -425,6 +440,18 @@ def test_resolve_mcp_task_reads_existing_task_md(tmp_path):
     (tmp_path / ".agentpack" / "task.md").write_text("fix cached context\n", encoding="utf-8")
 
     assert _resolve_mcp_task(tmp_path) == "fix cached context"
+
+
+def test_resolve_mcp_task_refuses_scoped_global_fallback(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("old global task\n", encoding="utf-8")
+
+    try:
+        _resolve_mcp_task(tmp_path, thread_id="claude-local")
+    except ValueError as exc:
+        assert "No task is set for AgentPack session claude-local" in str(exc)
+    else:
+        raise AssertionError("expected scoped MCP task resolution to refuse global task fallback")
 
 
 def test_pack_context_impl_uses_mcp_task_and_returns_context(tmp_path):

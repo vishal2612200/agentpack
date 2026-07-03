@@ -7,6 +7,7 @@ from agentpack.learning.extractor import build_learning_report
 from agentpack.learning.feedback import ranking_feedback_boosts, record_ranking_feedback
 from agentpack.learning.quality import score_learning_report
 from agentpack.learning.renderers import render_agent_lessons_markdown, render_learning_markdown
+from agentpack.learning.task_memory import build_task_memory_payload
 
 
 def test_learning_report_detects_selected_misses_and_concepts():
@@ -89,3 +90,22 @@ def test_ranking_feedback_boosts_scored_missed_paths(tmp_path):
 
     assert scored[0][1] > 10.0
     assert any("learning feedback miss boost" in reason for reason in scored[0][2])
+
+
+def test_task_memory_uses_thread_scoped_pack_metadata(tmp_path):
+    agentpack = tmp_path / ".agentpack"
+    scoped = agentpack / "threads" / "claude-local"
+    scoped.mkdir(parents=True)
+    agentpack.mkdir(exist_ok=True)
+    (agentpack / "pack_metadata.json").write_text('{"selected_files": ["src/global.py"]}', encoding="utf-8")
+    (scoped / "pack_metadata.json").write_text('{"selected_files": ["src/scoped.py"]}', encoding="utf-8")
+
+    payload = build_task_memory_payload(
+        tmp_path,
+        task="fix scoped session",
+        stage="finish",
+        status="done",
+        thread="claude-local",
+    )
+
+    assert payload["selected_files"] == ["src/scoped.py"]

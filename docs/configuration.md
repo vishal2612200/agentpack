@@ -65,6 +65,8 @@ min_groundedness_score = 70
 [runtime]
 pack_registry_output = ".agentpack/pack-registry.json"
 session_events_output = ".agentpack/session-events.jsonl"
+observer_events_output = ".agentpack/observer-events.jsonl"
+observer_brief_output = ".agentpack/observer-brief.md"
 max_registry_records = 200
 max_retrieve_chars = 20000
 max_output_summary_items = 40

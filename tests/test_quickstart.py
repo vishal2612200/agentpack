@@ -45,3 +45,15 @@ def test_quickstart_write_task(tmp_path: Path, monkeypatch) -> None:
     assert (tmp_path / ".agentpack" / "task.md").read_text(encoding="utf-8") == "fix cache bug\n"
     assert "Saved task: fix cache bug" in result.output
     assert "Optional later" in result.output
+
+
+def test_quickstart_write_task_uses_session_thread(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENTPACK_THREAD_ID", "codex-local")
+
+    result = CliRunner().invoke(app, ["quickstart", "--task", "fix cache bug", "--write"])
+
+    assert result.exit_code == 0
+    assert (tmp_path / ".agentpack" / "threads" / "codex-local" / "task.md").read_text(encoding="utf-8") == "fix cache bug\n"
+    assert not (tmp_path / ".agentpack" / "task.md").exists()
+    assert "Using AgentPack session: codex-local" in result.output

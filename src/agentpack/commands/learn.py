@@ -35,6 +35,8 @@ from agentpack.learning.renderers import (
 from agentpack.learning.sessions import record_learning_sessions
 from agentpack.learning.skill_map import apply_skill_feedback, recommend_practice_drills, render_skill_summary, update_skill_map
 from agentpack.learning.task_memory import latest_task_memory, learning_inputs_from_memory
+from agentpack.observer.brief import write_observer_brief
+from agentpack.observer.events import record_learning_feedback_observation, record_learning_observation
 from agentpack.session.events import record_event
 
 
@@ -113,6 +115,17 @@ def register(app: typer.Typer) -> None:
                 {"feedback": payload["feedback"], "target": payload["target"]},
                 output_path=cfg.runtime.session_events_output,
             )
+            try:
+                task_text = _task_text(root)
+                record_learning_feedback_observation(
+                    root,
+                    task=task_text,
+                    feedback=str(payload["feedback"]),
+                    target=str(payload["target"]),
+                )
+                write_observer_brief(root, task=task_text)
+            except Exception:
+                pass
             console.print(f"[green]✓[/] Recorded learning feedback in {cfg.learning.feedback_output}")
             return
         if request_parts:
@@ -244,6 +257,15 @@ def register(app: typer.Typer) -> None:
                 {"feedback": feedback, "target": feedback_target},
                 output_path=cfg.runtime.session_events_output,
             )
+            try:
+                record_learning_feedback_observation(
+                    root,
+                    task=report.task,
+                    feedback=feedback,
+                    target=feedback_target,
+                )
+            except Exception:
+                pass
         if ci:
             typer.echo(render_quality_markdown(report, quality.score, quality.issues), nl=False)
             if quality.score < cfg.learning.min_groundedness_score:
@@ -275,6 +297,19 @@ def register(app: typer.Typer) -> None:
             },
             output_path=cfg.runtime.session_events_output,
         )
+        try:
+            record_learning_observation(
+                root,
+                task=report.task,
+                concepts=list(report.concepts),
+                selected_hits=len(report.selected_hits),
+                selected_misses=len(report.selected_misses),
+                learning_request=report.learning_request,
+                learning_sessions=learning_session_count,
+            )
+            write_observer_brief(root, task=report.task)
+        except Exception:
+            pass
         console.print(f"[green]✓[/] Wrote {out_path.relative_to(root)}")
 
 

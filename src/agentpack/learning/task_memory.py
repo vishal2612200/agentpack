@@ -5,7 +5,10 @@ from typing import Any
 
 from agentpack.core import git
 from agentpack.core.context_pack import load_pack_metadata
+from agentpack.core.thread_context import thread_paths
 from agentpack.learning.collector import LearningInputs
+from agentpack.observer.events import record_task_observation
+from agentpack.observer.brief import write_observer_brief
 from agentpack.session.events import read_events, record_event
 
 MAX_TASK_CHARS = 500
@@ -48,6 +51,11 @@ def record_task_memory(
         loop_summary=loop_summary,
     )
     record_event(root, "task_memory", payload)
+    try:
+        record_task_observation(root, payload)
+        write_observer_brief(root, task=str(payload.get("task") or ""))
+    except Exception:
+        pass
 
 
 def build_task_memory_payload(
@@ -61,7 +69,7 @@ def build_task_memory_payload(
     loop_summary: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     changed = sorted(git.dirty_files(root))[:MAX_PATHS] if git.is_git_repo(root) else []
-    selected = _selected_files(root)[:MAX_SELECTED]
+    selected = _selected_files(root, thread=thread)[:MAX_SELECTED]
     branch = git.current_branch(root) if git.is_git_repo(root) else None
     sha = git.current_sha(root) if git.is_git_repo(root) else None
     concepts = _infer_concepts(task, changed, selected)
@@ -116,8 +124,9 @@ def learning_inputs_from_memory(memory: dict[str, Any]) -> LearningInputs:
     )
 
 
-def _selected_files(root: Path) -> list[str]:
-    metadata = load_pack_metadata(root) or {}
+def _selected_files(root: Path, thread: str = "") -> list[str]:
+    scoped = thread_paths(root, thread or None)
+    metadata = load_pack_metadata(root, scoped.metadata if scoped else None) or {}
     raw = metadata.get("selected_files_meta") or metadata.get("selected_files") or []
     selected: list[str] = []
     if not isinstance(raw, list):

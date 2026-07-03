@@ -32,9 +32,9 @@ Pack repo context and immediately start working on the task.
 
 If a session is already running (`.agentpack/session.json` exists and `"active": true`):
 
-1. If the user gives a new coding task, write a one-line summary to `.agentpack/task.md`.
+1. If the user gives a new coding task, write it through `agentpack task set "<task>"` so ambient agent sessions use scoped state.
 2. Run `agentpack pack --agent claude --task auto` unless watch mode already refreshed after the task write.
-3. Read `.agentpack/context.md` — context now matches the current task.
+3. Read the context path reported by `agentpack status` — context now matches the current task.
 4. Proceed with the task using the context you just read.
 
 To start a session:
@@ -77,16 +77,21 @@ agentpack pack --agent claude --task auto --mode balanced
 
 Then read `.agentpack/context.claude.md` in full.
 
-## Thread Mode (explicit opt-in)
+## Session Lease Mode
 
-Plain `agentpack pack` and `agentpack status` use the legacy global files:
-`.agentpack/task.md`, `.agentpack/context.md`, and `.agentpack/pack_metadata.json`.
+When an agent host exposes `AGENTPACK_THREAD_ID`, `CODEX_THREAD_ID`,
+`CLAUDE_SESSION_ID`, `CURSOR_SESSION_ID`, `WINDSURF_SESSION_ID`,
+`ANTIGRAVITY_SESSION_ID`, or `GEMINI_SESSION_ID`, AgentPack uses scoped state
+by default. Task, context, state, and metadata live under
+`.agentpack/threads/<id>/...`; `--thread global` opts into the legacy global
+files.
 
-When multiple agents work in the same repo, opt into scoped state:
+When multiple agents work in the same repo and the host does not expose a
+session id, set one explicitly:
 
 ```bash
 export AGENTPACK_THREAD_ID=codex-local
-agentpack pack --agent claude --task auto --thread auto
+agentpack start "fix auth session bug"
 ```
 
 Thread mode writes `.agentpack/threads/<id>/task.md`, `context.md`, `context.claude.md`,
@@ -94,6 +99,9 @@ Thread mode writes `.agentpack/threads/<id>/task.md`, `context.md`, `context.cla
 If another active thread on the same branch/worktree overlaps files, the context and terminal
 output warn without blocking edits. Use `agentpack threads --active` and
 `agentpack state show --thread auto` for coordination.
+
+Completed sessions are terminal: after `agentpack finish`, AgentPack refuses to
+reuse that done context for a new task.
 
 ## Process
 
@@ -121,9 +129,9 @@ test -f .agentpack/config.toml || "$AGENTPACK_BIN" init --yes
 ### Step 3: Determine workflow
 
 **Session active** (`.agentpack/session.json` exists, `"active": true`):
-- Update `.agentpack/task.md` if task changed
+- Update the current session task file if task changed (`agentpack task set "<task>"`)
 - Run `"$AGENTPACK_BIN" pack --agent claude --task auto` unless watch already refreshed it
-- Read `.agentpack/context.md`
+- Read the context path reported by `"$AGENTPACK_BIN" status`
 - Proceed immediately
 
 **No session**:
@@ -180,7 +188,7 @@ Do not ask the user — just refresh and proceed.
 ## Notes
 
 - All commands are local — no API calls
-- `agentpack pack --task "<task>"` writes the task and packs it; `--task auto` reads `.agentpack/task.md`, then falls back to branch name → changed file paths → recent commit
+- `agentpack pack --task "<task>"` writes the task and packs it; `--task auto` reads the current session task file, then in legacy global mode falls back to branch name -> changed file paths -> recent commit
 - Changed files are highest priority in context
 - Session context files: `.agentpack/context.md` (readable), `.agentpack/context.compact.md` (compact)
 - Never overwrite `.agentignore` or `config.toml` without `--force`

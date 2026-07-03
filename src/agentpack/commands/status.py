@@ -3,15 +3,11 @@ from __future__ import annotations
 import typer
 import shutil
 
-from agentpack.core.config import load_config
 from agentpack.core.command_surface import refresh_commands
-from agentpack.core.ignore import load_spec
-from agentpack.core.scanner import scan
-from agentpack.core.snapshot import build_snapshot
-from agentpack.core.context_pack import load_pack_metadata
-from agentpack.core.task_freshness import read_task_md, task_freshness
-from agentpack.core.thread_context import resolve_thread_option, thread_paths
-from agentpack.application.pack_service import AdapterRegistry
+from agentpack.core.task_freshness import read_task_md
+from agentpack.core.thread_context import resolve_session_thread_option
+from agentpack.control_plane import build_control_plane_snapshot
+from agentpack.control_plane.renderer import token_hint
 from agentpack.commands._shared import console, _root
 from agentpack.integrations.agents import check_agent_integration, resolve_agent
 
@@ -24,58 +20,43 @@ def register(app: typer.Typer) -> None:
     @app.command()
     def status(
         deep: bool = typer.Option(False, "--deep", help="Also show CLI, repo, task, and agent integration health."),
-        thread: str = typer.Option("", "--thread", help="Use thread-scoped context state."),
+        thread: str = typer.Option("", "--thread", help="Use thread-scoped context state (auto by default in agent sessions; use 'global' for legacy global state)."),
     ) -> None:
         """Check if the latest context pack is stale."""
         root = _root()
-        cfg = load_config(root)
-        ignore_spec = load_spec(root / cfg.project.ignore_file)
-
-        resolved_thread_id = resolve_thread_option(thread)
-        scoped = thread_paths(root, resolved_thread_id)
-        meta = load_pack_metadata(root, scoped.metadata if scoped else None)
-        if not meta:
+        resolved_thread_id = resolve_session_thread_option(thread)
+        snapshot = build_control_plane_snapshot(root, thread_id=resolved_thread_id, check_files=deep)
+        if snapshot.context.status == "missing":
             console.print("[yellow]No context pack found. Run agentpack pack to generate one.[/]")
             if deep:
-                _print_deep_health(root, meta)
+                _print_deep_health(root, None)
             raise typer.Exit(1)
 
-        scan_result = scan(
-            root,
-            ignore_spec,
-            cfg.context.max_file_tokens,
-            always_skip_paths=AdapterRegistry.generated_output_paths(root, cfg),
-        )
-        current = build_snapshot(scan_result.packable)
-
-        if scoped:
-            task_md = scoped.task.read_text(encoding="utf-8").strip() if scoped.task.exists() else ""
-            task_changed = bool(task_md and task_md != meta.get("task"))
-        else:
-            task_state = task_freshness(root, meta)
-            task_md = task_state.current_task or ""
-            task_changed = task_state.is_stale
-        if current["root_hash"] == meta.get("snapshot_root_hash") and not task_changed:
-            console.print("[green]Context pack is up to date.[/]")
-            console.print(f"  Task: {meta.get('task')}")
-            console.print(f"  Generated: {meta.get('generated_at')}")
-            if scoped:
-                console.print(f"  Thread: {scoped.thread_id}")
+        if snapshot.context.status == "fresh":
+            label = "up to date" if snapshot.context.checked_files else "usable; file scan skipped"
+            console.print(f"[green]Context pack is {label}.[/]")
+            console.print(f"  Task: {snapshot.context.packed_task}")
+            console.print(f"  Generated: {snapshot.context.generated_at}")
+            if snapshot.task.thread_id:
+                console.print(f"  Thread: {snapshot.task.thread_id}")
+            if snapshot.tokens.estimated_tokens:
+                console.print(f"  Token contract: {token_hint(snapshot)}")
             if deep:
-                _print_deep_health(root, meta)
+                _print_deep_health(root, {"task": snapshot.context.packed_task})
         else:
-            if task_changed:
-                source = "thread task.md" if scoped else ".agentpack/task.md"
-                console.print(f"[yellow]Context pack is STALE.[/] {source} changed since last pack.")
-                console.print(f"  Packed task: {meta.get('task')}")
-                console.print(f"  Current task: {task_md}")
+            reason = snapshot.context.reason
+            if reason == ".agentpack/task.md differs from packed task":
+                reason = ".agentpack/task.md changed since last pack"
+            console.print(f"[yellow]Context pack is STALE.[/] {reason}.")
+            if snapshot.context.packed_task and snapshot.task.task and snapshot.context.packed_task != snapshot.task.task:
+                console.print(f"  Packed task: {snapshot.context.packed_task}")
+                console.print(f"  Current task: {snapshot.task.task}")
+            if "task" in snapshot.context.reason:
                 console.print("  AgentPack MCP `get_context()` will auto-refresh this mismatch.")
-            else:
-                console.print("[yellow]Context pack is STALE.[/] Files changed since last pack.")
-            console.print(f"  Last generated: {meta.get('generated_at')}")
-            console.print("  Run [bold]agentpack pack[/] to refresh.")
+            console.print(f"  Last generated: {snapshot.context.generated_at}")
+            console.print(f"  Run [bold]{refresh_commands('auto').repair}[/] to refresh.")
             if deep:
-                _print_deep_health(root, meta)
+                _print_deep_health(root, {"task": snapshot.context.packed_task})
             raise typer.Exit(1)
 
 

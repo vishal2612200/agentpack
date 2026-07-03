@@ -71,6 +71,7 @@ def save_pack_metadata(
     concurrent_context: dict[str, Any] | None = None,
     citation_manifest_path: str = "",
     citation_summary: dict[str, Any] | None = None,
+    token_contract: dict[str, Any] | None = None,
     metadata_path: Path | None = None,
 ) -> None:
     generated_at = (
@@ -97,6 +98,7 @@ def save_pack_metadata(
         "concurrent_context": concurrent_context or {},
         "citation_manifest_path": citation_manifest_path,
         "citation_summary": citation_summary or {},
+        "token_contract": token_contract or {},
     }
     if freshness:
         for key in (
@@ -112,6 +114,9 @@ def save_pack_metadata(
             "task_class",
             "context_intent",
             "broad_context",
+            "owner_thread_id",
+            "thread_id",
+            "task_status",
             "citation_manifest_path",
         ):
             if key in freshness:

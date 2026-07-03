@@ -8,7 +8,7 @@ import typer
 
 from agentpack.commands._shared import console, _root
 from agentpack.core.command_surface import refresh_command_args
-from agentpack.core.thread_context import resolve_thread_option, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.session.state import TASK_FILE
 
@@ -21,7 +21,7 @@ def register(app: typer.Typer) -> None:
 
 @task_app.command("show")
 def show_task(
-    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state."),
+    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
     json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
 ) -> None:
     root = _root()
@@ -46,7 +46,7 @@ def show_task(
 @task_app.command("set")
 def set_task(
     task_text: str = typer.Argument(..., help="Task text to write."),
-    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state."),
+    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
     pack: bool = typer.Option(False, "--pack", help="Run agentpack pack after writing the task."),
     guard: bool = typer.Option(False, "--guard", help="Run the installed refresh/repair command after writing."),
     agent: str = typer.Option("auto", "--agent", help="Agent to pass to pack/guard."),
@@ -71,7 +71,7 @@ def set_task(
 
 @task_app.command("clear")
 def clear_task(
-    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state."),
+    thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
 ) -> None:
     root = _root()
     path = _task_path(root, thread)
@@ -83,13 +83,13 @@ def clear_task(
 
 
 def _task_path(root: Path, thread: str) -> Path:
-    thread_id = resolve_thread_option(thread)
+    thread_id = resolve_session_thread_option(thread)
     scoped = thread_paths(root, thread_id)
     return scoped.task if scoped else root / TASK_FILE
 
 
 def _thread_id(root: Path, thread: str) -> str | None:
-    scoped = thread_paths(root, resolve_thread_option(thread))
+    scoped = thread_paths(root, resolve_session_thread_option(thread))
     return scoped.thread_id if scoped else None
 
 

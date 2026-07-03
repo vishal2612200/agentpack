@@ -22,7 +22,7 @@ from agentpack.core.loop_protocol import (
     resolve_runner_adapter,
     run_loop,
 )
-from agentpack.core.thread_context import resolve_thread_option
+from agentpack.core.thread_context import resolve_session_thread_option
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.learning.task_memory import record_task_memory
 
@@ -31,7 +31,7 @@ def register(app: typer.Typer) -> None:
     @app.command("work")
     def work(
         task_text: str = typer.Argument(..., help="Task text to start."),
-        thread: str = typer.Option("", "--thread", help="Use thread-scoped task/context state."),
+        thread: str = typer.Option("", "--thread", help="Use thread-scoped task/context state (auto by default in agent sessions; use 'global' for legacy global state)."),
         agent: str = typer.Option("auto", "--agent", help="Agent to initialize and refresh for."),
         mode: str = typer.Option("balanced", "--mode", help="Pack/guard mode."),
         budget: int = typer.Option(0, "--budget", help="Token budget (0 = config default)."),
@@ -50,6 +50,7 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Initialize if needed, write a task, refresh context, and show next steps."""
         root = _root()
+        thread_id = resolve_session_thread_option(thread)
         stages: list[dict[str, Any]] = []
         if not no_init and not (root / ".agentpack" / "config.toml").exists():
             stages.append(_run("init", cli_module_argv("init", "--yes", "--agent", agent), root))
@@ -57,8 +58,8 @@ def register(app: typer.Typer) -> None:
                 _finish(stages, json_output)
 
         start_args = ["start", task_text, "--agent", agent, "--mode", mode]
-        if thread:
-            start_args.extend(["--thread", thread])
+        if thread_id:
+            start_args.extend(["--thread", thread_id])
         if budget:
             start_args.extend(["--budget", str(budget)])
         if workspace:
@@ -104,7 +105,7 @@ def register(app: typer.Typer) -> None:
             loop_summary = run_loop(
                 root,
                 state,
-                refresh=lambda: _refresh_loop_context(root, agent, mode, budget, resolve_thread_option(thread)),
+                refresh=lambda: _refresh_loop_context(root, agent, mode, budget, thread_id),
             ).model_dump(mode="json")
             _record_task_memory_safe(
                 root,
@@ -124,25 +125,26 @@ def register(app: typer.Typer) -> None:
     def finish(
         since: str = typer.Option("", "--since", help="Git ref for benchmark capture, e.g. main or HEAD~1."),
         task: str = typer.Option("", "--task", help="Task text for benchmark capture and completion summary."),
-        thread: str = typer.Option("", "--thread", help="Use thread-scoped state."),
+        thread: str = typer.Option("", "--thread", help="Use thread-scoped state (auto by default in agent sessions; use 'global' for legacy global state)."),
         summary: str = typer.Option("Finished by agentpack finish.", "--summary", help="Completion summary."),
         skip_checks: bool = typer.Option(False, "--skip-checks", help="Skip agentpack dev-check."),
         skip_diagnosis: bool = typer.Option(False, "--skip-diagnosis", help="Skip selection diagnosis write."),
         skip_benchmark_capture: bool = typer.Option(False, "--skip-benchmark-capture", help="Skip benchmark case capture."),
-        archive_thread: bool = typer.Option(False, "--archive-thread", help="Archive the thread after marking state done."),
+        archive_thread: bool = typer.Option(False, "--archive-thread", help="Deprecated compatibility flag; session-scoped finish archives automatically."),
         allow_empty_capture: bool = typer.Option(False, "--allow-empty-capture", help="Allow benchmark capture with no expected files."),
         allow_high_risk: bool = typer.Option(False, "--allow-high-risk", help="Allow finish after inspecting a high-risk Ralph Loop diff."),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
     ) -> None:
         """Run finish checks, capture benchmark evidence, and mark work done."""
         root = _root()
+        thread_id = resolve_session_thread_option(thread)
         stages: list[dict[str, Any]] = []
         loop_state = load_loop_state(root)
         cfg = load_config(root)
-        finish_task = task or _read_task(root, thread) or (loop_state.task if loop_state else "")
+        finish_task = task or _read_task(root, thread_id or "") or (loop_state.task if loop_state else "")
         loop_applies = loop_state is not None and cfg.loop.enabled and (not finish_task or finish_task == loop_state.task)
         if loop_applies:
-            blockers = _loop_finish_blockers(root, cfg.loop, loop_state, thread, allow_empty_diff=allow_empty_capture, allow_high_risk=allow_high_risk)
+            blockers = _loop_finish_blockers(root, cfg.loop, loop_state, thread_id or "", allow_empty_diff=allow_empty_capture, allow_high_risk=allow_high_risk)
             if blockers:
                 _finish_blocked(blockers, json_output)
                 raise typer.Exit(1)
@@ -150,7 +152,7 @@ def register(app: typer.Typer) -> None:
         if not skip_diagnosis:
             stages.append(_run("diagnose-selection", cli_module_argv("diagnose-selection", "--write"), root))
         if not skip_benchmark_capture and since:
-            capture_task = task or _read_task(root, thread) or summary
+            capture_task = task or _read_task(root, thread_id or "") or summary
             args = ["benchmark", "capture", "--since", since, "--task", capture_task]
             if allow_empty_capture:
                 args.append("--allow-empty")
@@ -163,7 +165,6 @@ def register(app: typer.Typer) -> None:
             _finish(stages, json_output)
 
         state_args = ["state", "done", "--summary", summary]
-        thread_id = resolve_thread_option(thread)
         if thread_id:
             state_args.extend(["--thread", thread_id])
         stages.append(_run("state-done", cli_module_argv(*state_args), root))
@@ -174,10 +175,10 @@ def register(app: typer.Typer) -> None:
             task=finish_task,
             stage="finish",
             status="done" if stages[-1]["returncode"] == 0 else "failed",
-            thread=thread,
+            thread=thread_id or "",
             summary=summary,
         )
-        if archive_thread and thread_id and stages[-1]["returncode"] == 0:
+        if thread_id and stages[-1]["returncode"] == 0:
             stages.append(_run("threads-archive", cli_module_argv("threads", "archive", thread_id, "--summary", summary), root))
         _finish(stages, json_output)
 
@@ -363,7 +364,7 @@ def _loop_finish_blockers(
         blocker.model_dump(mode="json")
         for blocker in finish_blockers(root, loop_cfg, loop_state, allow_empty_diff=allow_empty_diff, allow_high_risk=allow_high_risk)
     ]
-    fresh, reason = _context_is_fresh(root, thread_id=resolve_thread_option(thread))
+    fresh, reason = _context_is_fresh(root, thread_id=resolve_session_thread_option(thread))
     if not fresh:
         blockers.append(
             {
@@ -474,7 +475,7 @@ def _finish_blocked(blockers: list[dict[str, Any]], json_output: bool) -> None:
 
 
 def _read_task(root: Path, thread: str) -> str:
-    thread_id = resolve_thread_option(thread)
+    thread_id = resolve_session_thread_option(thread)
     if thread_id:
         path = root / ".agentpack" / "threads" / thread_id / "task.md"
     else:

@@ -41,14 +41,16 @@ from agentpack.core.models import (
 )
 from agentpack.core.modes import normalize_mode
 from agentpack.core.pack_registry import save_pack_registry
-from agentpack.core.task_freshness import read_task_md, task_metadata
+from agentpack.core.task_freshness import normalize_task_text, read_task_md, task_hash, task_metadata
 from agentpack.core.thread_context import (
     append_thread_index,
     build_thread_index_row,
     detect_conflicts,
+    read_task_status,
     resolve_thread_id,
     thread_paths,
 )
+from agentpack.core.token_contract import build_token_contract
 from agentpack.core.token_estimator import estimate_tokens
 from agentpack.learning.feedback import ranking_feedback_boosts
 from agentpack.renderers.markdown import render_claude, render_generic
@@ -790,6 +792,8 @@ class PackService:
         execution_state = build_execution_state(root, scoped_paths)
         if scoped_paths:
             freshness["thread_id"] = scoped_paths.thread_id
+            freshness["owner_thread_id"] = scoped_paths.thread_id
+            freshness["task_status"] = read_task_status(root, scoped_paths.thread_id) or "active"
             freshness["thread_paths"] = scoped_paths.as_relative_dict(root)
         thread_row = None
         concurrent_context: dict[str, Any] = {}
@@ -870,6 +874,16 @@ class PackService:
             "selected_files_with_citations": sum(1 for sf in pack_obj.selected_files if sf.citations),
             "manifest_path": citation_manifest_path,
         }
+        selected_files_meta = _selected_file_metadata(pack_obj.selected_files)
+        token_contract = build_token_contract(
+            budget=plan.budget,
+            token_estimate=packed_tokens,
+            raw_repo_tokens=all_tokens,
+            after_ignore_tokens=raw_tokens,
+            selected_files=selected_files_meta,
+            context_path=str(out_path.relative_to(root)),
+            mode=plan.mode,
+        )
         plan.phase_times["render"] = time.perf_counter() - t0
         persist_keyword_plan_stats(root, request.task, plan.keyword_plan)
 
@@ -887,12 +901,13 @@ class PackService:
             token_estimate=packed_tokens,
             freshness=pack_obj.freshness,
             freshness_warnings=pack_obj.freshness_warnings,
-            selected_files=_selected_file_metadata(pack_obj.selected_files),
+            selected_files=selected_files_meta,
             pack_handoff=build_pack_handoff(pack_obj),
             execution_state=pack_obj.execution_state,
             concurrent_context=pack_obj.concurrent_context,
             citation_manifest_path=citation_manifest_path,
             citation_summary=citation_summary,
+            token_contract=token_contract,
             metadata_path=scoped_paths.metadata if scoped_paths else None,
         )
         save_pack_registry(
@@ -1750,7 +1765,14 @@ def _boost_github_pr_paths(
     return adjusted
 
 
-def _task_md_body(root: Path) -> str | None:
+def _task_md_body(root: Path, thread_id: str | None = None) -> str | None:
+    scoped = thread_paths(root, thread_id)
+    if scoped:
+        try:
+            text = scoped.task.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return normalize_task_text(text) or None
     return read_task_md(root)
 
 
@@ -1789,7 +1811,15 @@ def _build_freshness_metadata(
         metadata["full_scan_reason"] = plan.scan_result.full_scan_reason
     if plan.mode_warning:
         metadata["mode_warning"] = plan.mode_warning
-    metadata.update(task_metadata(root, request.task))
+    task_md = _task_md_body(root, request.thread_id)
+    if request.thread_id:
+        metadata["packed_task_hash"] = task_hash(request.task)
+        if task_md:
+            metadata["task_md"] = task_md
+            metadata["task_md_hash"] = task_hash(task_md)
+            metadata["task_matches_task_md"] = task_md == request.task
+    else:
+        metadata.update(task_metadata(root, request.task))
     if plan.workspace:
         metadata["workspace"] = plan.workspace
     if plan.workspace_roots:
@@ -1803,9 +1833,6 @@ def _build_freshness_metadata(
         metadata["git_branch"] = git.current_branch(root)
     if dirty:
         metadata["dirty_files_sample"] = sorted(dirty)[:8]
-    task_md = _task_md_body(root)
-    if task_md:
-        metadata["task_md"] = task_md
     return metadata
 
 

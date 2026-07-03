@@ -74,6 +74,11 @@ def run_refresh(
             task = ""
 
         if not task:
+            if scoped:
+                raise ValueError(
+                    f"no task is set for AgentPack session {scoped.thread_id}; "
+                    "run agentpack start \"describe the task\" for this session"
+                )
             if git.is_git_repo(root):
                 task = git.infer_task_from_git(root)
             else:

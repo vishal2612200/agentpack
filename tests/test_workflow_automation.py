@@ -351,7 +351,7 @@ def test_next_fix_all_safe_initializes_and_writes_diagnosis(tmp_path: Path, monk
         return Result()
 
     monkeypatch.setattr("agentpack.commands.next_cmd.subprocess.run", fake_run)
-    monkeypatch.setattr("agentpack.commands.next_cmd._context_is_fresh", lambda _root: (True, "fresh"))
+    monkeypatch.setattr("agentpack.commands.next_cmd._context_is_fresh", lambda _root, **_kwargs: (True, "fresh"))
 
     result = CliRunner().invoke(app, ["next", "--fix-all-safe", "--json"])
 
