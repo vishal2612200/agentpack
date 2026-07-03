@@ -11,6 +11,14 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ### Added
 - No changes yet.
 
+## [0.3.38] — 2026-07-04
+
+### Fixed
+- Hardened guard and review checks so default guard refreshes use global context unless scoped threading is explicit, stale active review preflight is blocked before artifact validation, and review prompts steer agents toward JSON authoring instead of fragile multiline TOON.
+- Canonicalized schema-valid review JSON into checked TOON handoff files, preserving `understanding.toon` as the Stage 2 input while making Stage 1/Stage 2 easier for agents to write and validate.
+- Added guard/review git preflight metadata so agents decide whether to sync, inspect dirty state, or proceed before refreshing context or starting edits.
+- Skipped expensive prompt-hook work for chat-only prompts and ignored stale review state from other branches, reducing UserPromptSubmit timeout noise and unrelated missing-artifact failures.
+
 ## [0.3.37] — 2026-07-03
 
 ### Added

@@ -1,6 +1,6 @@
 {
   "name": "@vishal2612200/agentpack",
-  "version": "0.3.37",
+  "version": "0.3.38",
   "description": "Local context engine for AI coding agents. Ranks relevant repo files and builds compact task-focused context packs for Claude Code, Codex, Cursor, Windsurf, MCP, and CI workflows.",
   "license": "MIT",
   "homepage": "https://github.com/vishal2612200/agentpack#readme",
