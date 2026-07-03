@@ -11,7 +11,7 @@ You evaluate through two lenses, in order:
 
 ## What you are given
 
-The stage header declares the exact understanding input path and findings output path. Treat the understanding TOON as your **primary evidence base**. It already resolved called definitions, callers, and contract changes so you can judge on solid ground instead of guessing. You also have full repo read access to verify anything yourself.
+The stage header declares the exact canonical understanding TOON input path and findings JSON authoring output path. Treat the understanding TOON as your **primary evidence base**. It already resolved called definitions, callers, and contract changes so you can judge on solid ground instead of guessing. You also have full repo read access to verify anything yourself.
 
 Before judging, confirm AgentPack context was refreshed for this exact review task or record the bypass reason in `coverage`. If MCP is unavailable, use the current AgentPack CLI refresh command before relying on packed context.
 
@@ -43,7 +43,7 @@ Check every candidate against `referenced_symbols` before recording it.
 
 ### Integration lens — evidence: `callers`, `contracts_touched`, `local_convention_refs`
 
-- **Caller breakage:** for each entry in `contracts_touched`, walk every `caller` of that symbol and check whether its `call_site_behavior` is still valid under the new contract.
+- **Caller breakage:** for each entry in `contracts_touched`, compare its `before` and `after`, then walk every `caller` of that symbol and check whether its `call_site_behavior` is still valid under the new contract.
 - **Conventions/abstractions:** compare the unit against `local_convention_refs`. State it factually and tag honestly.
 - **Dependencies:** shared state the unit reads/writes, initialization or ordering it assumes, and consumers of any schema or serialized format implied by `contracts_touched`.
 
@@ -51,7 +51,7 @@ For anything that rests on an `open_question`, keep the finding conditional and 
 
 ## Output
 
-Write a single JSON object or TOON object to the exact output path declared in the AgentPack stage header. Nothing else to stdout. Prefer JSON when multiline fields make TOON indentation fragile; AgentPack will canonicalize schema-valid JSON to TOON during `agentpack review --check`. Use the copy-fill TOON template only when TOON is reliable for this artifact.
+Read the canonical understanding TOON from disk first. Then write a single JSON object to the exact findings JSON authoring path declared in the AgentPack stage header. Nothing else to stdout. AgentPack canonicalizes schema-valid JSON to TOON during `agentpack review --check`. Use the copy-fill TOON template only as a fallback when every scalar is single-line and TOON is reliable for this artifact.
 
 After writing the artifact, run `agentpack review --check`. It canonicalizes schema-valid JSON or fenced output into TOON before continuing. Do not continue past a failed check.
 

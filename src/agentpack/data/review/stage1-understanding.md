@@ -37,14 +37,14 @@ You are running in the checked-out repository at the PR head commit, with shell,
    - **`code`** — inline the full changed block (the entire function/region, not just the `+`/`-` lines).
    - **`referenced_symbols`** — for every repo-local function/type/constant the unit *calls or depends on but does not itself define*, locate the definition with `rg`/read and inline its signature and body with `path:line` and a `confidence`. Only include symbols whose `defined_at` is a real repository `path:line`. Cite the line that contains the signature/body snippet you are using, not just a nearby file or function anchor. Do **not** include language built-ins, standard-library APIs, browser globals, package APIs, or framework APIs as `referenced_symbols` unless the repository defines a local wrapper or type for them. If a repo-local symbol cannot be found, do not guess — emit an open question.
    - **`callers`** — for every symbol this unit *exports or whose contract it changes*, find **every** call site with `rg`. List all of them by location. Inline the code snippet only for call sites whose behavior depends on a contract this unit changed; for the rest, location plus a one-line factual note is enough. Cite the line that contains the call or factual note. Do not sample — a missed caller is a missed integration break later.
-   - **`contracts_touched`** — any change to a signature, return type, thrown errors, schema, serialized format, env/config dependency, or public API, stated as `before -> after`.
+   - **`contracts_touched`** — any change to a signature, return type, thrown errors, schema, serialized format, env/config dependency, or public API. Use objects with `contract`, `before`, `after`, and `evidence`. `evidence` must be a `path:line` where the contract is visible.
    - **`local_convention_refs`** — if the unit does something with an established analog nearby (error handling, data access, logging), point to one existing example with `path:line`. Cite the line that contains the analog behavior. Provide the reference only; do not state whether the unit follows it.
 
 4. **Record open questions.** Anything you could not resolve, and anything the code's behavior depends on that you could not verify from reading (concurrency, external state, runtime config, ordering), each with why it matters. Reference the relevant change unit where applicable.
 
 ## Output
 
-Write a **single JSON object or TOON object** to the exact output path declared in the AgentPack stage header. Write nothing else to stdout. Prefer JSON when multiline fields make TOON indentation fragile; AgentPack will canonicalize schema-valid JSON to TOON during `agentpack review --check`. Use the copy-fill TOON template only when TOON is reliable for this artifact.
+Write a **single JSON object** to the exact JSON authoring path declared in the AgentPack stage header. Write nothing else to stdout. AgentPack canonicalizes schema-valid JSON to TOON during `agentpack review --check`; TOON remains the checked handoff format for Stage 2. Use the copy-fill TOON template only as a fallback when every scalar is single-line and TOON is reliable for this artifact.
 
 After writing the artifact, run `agentpack review --check`. It canonicalizes schema-valid JSON or fenced output into TOON before continuing. Do not continue past a failed check.
 
@@ -70,7 +70,11 @@ change_units[]:
     callers[]:
       []
     contracts_touched[]:
-      []
+      -
+        contract: symbol, schema, env var, or API touched
+        before: Previous contract, or none if new
+        after: New contract
+        evidence: path/to/changed_file.py:10
     local_convention_refs[]:
       []
 open_questions[]:
@@ -111,7 +115,14 @@ Do not answer inline from this stage. If you cannot write the output file, stop 
           "call_site_behavior": "factual: how the call site uses the symbol or its result"
         }
       ],
-      "contracts_touched": ["thing: before -> after"],
+      "contracts_touched": [
+        {
+          "contract": "symbol, schema, env var, serialized format, or public API touched",
+          "before": "previous contract, or none if new",
+          "after": "new contract",
+          "evidence": "path:line showing the contract"
+        }
+      ],
       "local_convention_refs": [
         { "pattern": "what the analog does", "example_at": "path:line" }
       ]

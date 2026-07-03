@@ -34,6 +34,26 @@ def test_guard_refreshes_missing_context_pack(tmp_path, monkeypatch) -> None:
     assert (tmp_path / ".agentpack" / "context.md").exists()
 
 
+def test_guard_blocks_refresh_when_tracked_tree_is_dirty(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Fix guard git preflight\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("print('changed')\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["guard", "--agent", "generic", "--refresh-context"])
+
+    assert result.exit_code == 1
+    assert "tracked local changes present" in result.output
+    assert "Safe to continue: no; resolve git state" in result.output
+    assert not (tmp_path / ".agentpack" / "context.md").exists()
+
+
 def test_guard_plain_uses_global_task_even_with_ambient_thread_env(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_THREAD_ID", "codex-env")

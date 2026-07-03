@@ -3,6 +3,7 @@ from __future__ import annotations
 import typer
 
 from agentpack.commands._shared import console, _root, run_refresh
+from agentpack.core.git_preflight import GitPreflight, run_git_preflight
 from agentpack.core.modes import MODE_HELP, invalid_mode_message, is_requested_mode
 from agentpack.core.thread_context import resolve_session_thread_option
 from agentpack.control_plane.snapshot import context_is_fresh
@@ -49,6 +50,18 @@ def register(app: typer.Typer) -> None:
         agents = expand_agents(agent, root)
         ok = True
 
+        git_preflight = run_git_preflight(root, allow_ff_pull=refresh_context)
+        _print_git_preflight(git_preflight)
+        git_gate_ok = not _git_preflight_blocks(git_preflight)
+        if not git_gate_ok:
+            ok = False
+            _print_action(
+                what_failed=git_preflight.reason,
+                why_it_matters="agents should not pack context or edit before deciding whether local code is current",
+                repair_command=_git_preflight_repair_command(git_preflight),
+                safe_to_continue="no; resolve git state or confirm the local changes are the task target",
+            )
+
         for selected in agents:
             checks = check_agent_integration(root, selected)
             failing = [check for check in checks if not check.ok]
@@ -73,7 +86,7 @@ def register(app: typer.Typer) -> None:
                 console.print(f"[green]✓[/] Agent integration current: {selected}")
 
         context_ok, context_reason = _context_is_fresh(root, thread_id=resolved_thread_id)
-        if not context_ok and refresh_context and not _missing_session_task(context_reason):
+        if not context_ok and refresh_context and git_gate_ok and not _missing_session_task(context_reason):
             selected_agent = agents[0] if agents else "generic"
             console.print(f"[yellow]Refreshing context: {context_reason}[/]")
             stats = run_refresh(root, selected_agent, mode, budget, thread_id=resolved_thread_id)
@@ -117,6 +130,38 @@ def _print_action(*, what_failed: str, why_it_matters: str, repair_command: str,
     console.print(f"    Why it matters: {why_it_matters}")
     console.print(f"    Repair command: {repair_command}")
     console.print(f"    Safe to continue: {safe_to_continue}")
+
+
+def _print_git_preflight(preflight: GitPreflight) -> None:
+    console.print("[green]✓[/] Git preflight")
+    console.print(f"  branch: {preflight.branch or '(none)'}")
+    console.print(f"  upstream: {preflight.upstream or '(none)'}")
+    console.print(f"  clean: {'true' if preflight.clean else 'false'}")
+    console.print(f"  tracked_dirty: {preflight.tracked_dirty_count}")
+    console.print(f"  untracked: {preflight.untracked_count}")
+    console.print(f"  ahead/behind: {preflight.ahead}/{preflight.behind}")
+    console.print(f"  action: {preflight.action}")
+    console.print(f"  reason: {preflight.reason}")
+    if preflight.dirty_sample:
+        console.print(f"  dirty sample: {', '.join(preflight.dirty_sample)}")
+
+
+def _git_preflight_blocks(preflight: GitPreflight) -> bool:
+    return preflight.action.startswith("blocked") or preflight.action == "fetch_failed"
+
+
+def _git_preflight_repair_command(preflight: GitPreflight) -> str:
+    if preflight.action == "blocked_dirty":
+        return "commit/stash/revert tracked changes, or rerun after confirming they are the task target"
+    if preflight.action == "blocked_diverged":
+        return "choose git rebase or merge, then rerun guard"
+    if preflight.action == "blocked_behind":
+        return "git pull --ff-only"
+    if preflight.action == "blocked_pull_failed":
+        return "inspect git pull --ff-only failure and resolve manually"
+    if preflight.action == "fetch_failed":
+        return "restore network/git remote access or rerun when fetch succeeds"
+    return "rerun agentpack guard --repair-stale --refresh-context"
 
 
 def _context_is_fresh(root, thread_id: str | None = None) -> tuple[bool, str]:

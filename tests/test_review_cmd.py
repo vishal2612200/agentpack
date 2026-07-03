@@ -63,7 +63,7 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["review"]["branch_prefix"] == "pr-6"
     assert preflight["review"]["target"] == {"raw": "6", "number": 6, "url": "https://example.com/pr/6", "source": "option"}
     assert preflight["execution_contract"] == {
-        "structured_format": "JSON or TOON",
+        "structured_format": "JSON authoring, canonical TOON handoff",
         "canonical_format": "TOON",
         "requires_write_to_file": True,
         "requires_read_file_between_stages": True,
@@ -79,7 +79,11 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["diff"]["range"] == "origin/main...origin/pr/6"
     assert preflight["diff"]["source"] == "pr-target"
     assert preflight["paths"]["run_dir"].startswith(".agentpack/reviews/pr-6/")
+    assert preflight["paths"]["understanding_authoring_output"].endswith("/understanding.json")
+    assert preflight["paths"]["understanding_canonical_output"].endswith("/understanding.toon")
     assert preflight["paths"]["understanding_output"].startswith(".agentpack/reviews/pr-6/")
+    assert preflight["paths"]["findings_authoring_output"].endswith("/findings.json")
+    assert preflight["paths"]["findings_canonical_output"].endswith("/findings.toon")
     assert preflight["paths"]["findings_output"].startswith(".agentpack/reviews/pr-6/")
     assert preflight["changed_files"] == [
         {
@@ -251,6 +255,10 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert not (repo / ".agentpack" / "context.md").exists()
     assert preflight["paths"]["understanding_output"].startswith(".agentpack/reviews/feature-review/")
     assert preflight["paths"]["findings_output"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["understanding_authoring_output"].endswith("/understanding.json")
+    assert preflight["paths"]["understanding_canonical_output"] == preflight["paths"]["understanding_output"]
+    assert preflight["paths"]["findings_authoring_output"].endswith("/findings.json")
+    assert preflight["paths"]["findings_canonical_output"] == preflight["paths"]["findings_output"]
     assert preflight["paths"]["understanding_template"].startswith(".agentpack/reviews/feature-review/")
     assert preflight["paths"]["findings_template"].startswith(".agentpack/reviews/feature-review/")
 
@@ -271,6 +279,8 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "run `agentpack review --check`; do not start Stage 2" in runbook
     assert "run `agentpack review --check --post-inline-comments` for PR-bound runs" in runbook
     assert "Do not produce a final summary unless Stage 2 validates" in runbook
+    assert "Stage 1 JSON authoring output" in runbook
+    assert "Stage 1 canonical TOON handoff" in runbook
 
     understanding_prompt = understanding_prompt_path.read_text(encoding="utf-8")
     template = _load_review_template("stage1-understanding.md")
@@ -284,8 +294,8 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "Prefer valid JSON matching the schema. This is the default path." in understanding_prompt
     assert "Do not use YAML block scalars" in understanding_prompt
     assert "Start from the copy-fill TOON template" in understanding_prompt
-    assert "will canonicalize safe schema-matching output to TOON" in understanding_prompt
-    assert f"Output path: {preflight['paths']['understanding_output']}" in understanding_prompt
+    assert "will canonicalize schema-valid JSON to TOON" in understanding_prompt
+    assert f"JSON authoring path: {preflight['paths']['understanding_authoring_output']}" in understanding_prompt
     assert understanding_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"change_units"' in understanding_prompt
     assert "@root review_understanding" in understanding_prompt
@@ -297,9 +307,9 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "AgentPack context" in judge_prompt
     assert "Do not answer inline from this stage prompt." in judge_prompt
     assert f"Copy-fill TOON template: {preflight['paths']['findings_template']}" in judge_prompt
-    assert "Do not continue until the declared input TOON exists and has been read from disk." in judge_prompt
-    assert f"Input path: {preflight['paths']['understanding_output']}" in judge_prompt
-    assert f"Output path: {preflight['paths']['findings_output']}" in judge_prompt
+    assert "Do not continue until the declared canonical TOON input exists and has been read from disk." in judge_prompt
+    assert f"Canonical TOON input path: {preflight['paths']['understanding_output']}" in judge_prompt
+    assert f"JSON authoring path: {preflight['paths']['findings_authoring_output']}" in judge_prompt
     assert judge_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"findings"' in judge_prompt
     assert "@root review_findings" in judge_prompt
@@ -393,7 +403,8 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
     assert first.exit_code == 0, first.output
     preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
 
-    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding = repo / preflight["paths"]["understanding_authoring_output"]
+    understanding_canonical = repo / preflight["paths"]["understanding_output"]
     understanding.parent.mkdir(parents=True, exist_ok=True)
     understanding.write_text(
         json.dumps(
@@ -410,9 +421,11 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
 
     assert ready.exit_code == 0, ready.output
     assert "Stage 1 valid" in ready.output
-    assert understanding.read_text(encoding="utf-8").startswith("@format toon\n@root review_understanding\n")
+    assert understanding.read_text(encoding="utf-8").lstrip().startswith("{")
+    assert understanding_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_understanding\n")
 
-    findings = repo / preflight["paths"]["findings_output"]
+    findings = repo / preflight["paths"]["findings_authoring_output"]
+    findings_canonical = repo / preflight["paths"]["findings_output"]
     findings.write_text(
         "```json\n"
         + json.dumps(
@@ -429,7 +442,8 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
 
     assert complete.exit_code == 0, complete.output
     assert "Stage 2 valid" in complete.output
-    assert findings.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
+    assert findings.read_text(encoding="utf-8").startswith("```json\n")
+    assert findings_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
 
 
 def test_review_validation_uses_pr_head_citation_source_when_worktree_drifts(tmp_path) -> None:
@@ -503,6 +517,7 @@ def test_review_validation_report_suggests_nearby_repair_line(tmp_path) -> None:
         raise AssertionError("unsupported evidence should fail citation validation")
     report = json.loads((repo / ".agentpack" / "findings-validation-errors.json").read_text(encoding="utf-8"))
     assert report["repair_hints"][0]["suggested"] == "src/foo.py:2"
+    assert 'src/foo.py:2 "return 2"' in report["repair_hints"][0]["suggestions"]
 
 
 def test_review_check_writes_repair_guide_for_invalid_toon(tmp_path, monkeypatch) -> None:
@@ -771,7 +786,7 @@ def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, mo
         encoding="utf-8",
     )
 
-    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-check"])
 
     assert dry_run.exit_code == 0, dry_run.output
     assert "Inline review payload valid" in dry_run.output
@@ -901,6 +916,16 @@ def test_review_command_resume_reuses_existing_run(tmp_path, monkeypatch) -> Non
     assert resumed_preflight["review"]["mode"] == "resume"
     assert resumed_preflight["review_context"] == "first pass"
 
+    listed = runner.invoke(app, ["review", "--list"])
+    assert listed.exit_code == 0, listed.output
+    assert run_id in listed.output
+
+    latest = runner.invoke(app, ["review", "--resume", "latest"])
+    assert latest.exit_code == 0, latest.output
+    latest_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+    assert latest_preflight["review"]["run_id"] == run_id
+
+
 def test_review_command_warns_on_invalid_understanding_toon(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -918,7 +943,7 @@ def test_review_command_warns_on_invalid_understanding_toon(tmp_path, monkeypatc
     assert second.exit_code == 0, second.output
     second_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
 
-    assert any("invalid understanding TOON" in warning for warning in second_preflight["warnings"])
+    assert any("invalid understanding artifact" in warning for warning in second_preflight["warnings"])
 
 def test_review_command_resume_fails_cleanly_on_invalid_understanding_toon(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
@@ -1050,6 +1075,77 @@ def test_review_findings_validator_can_use_semantic_support_command(tmp_path, mo
         assert "semantic support rejected (semantic mismatch)" in str(exc)
     else:
         raise AssertionError("semantic support command rejection should fail validation")
+
+
+def test_review_understanding_validator_accepts_structured_contracts(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    valid = repo / ".agentpack" / "understanding-contracts-valid.toon"
+    valid.parent.mkdir(parents=True, exist_ok=True)
+    valid.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  -\n"
+        "    id: cu1\n"
+        "    location: src/foo.py:1-2\n"
+        "    kind: core\n"
+        "    what_changed: foo return changed\n"
+        "    code: src/foo.py:2 return 2\n"
+        "    referenced_symbols[]:\n"
+        "      []\n"
+        "    callers[]:\n"
+        "      []\n"
+        "    contracts_touched[]:\n"
+        "      -\n"
+        "        contract: foo return value\n"
+        "        before: returns 1\n"
+        "        after: returns 2\n"
+        "        evidence: src/foo.py:2\n"
+        "    local_convention_refs[]:\n"
+        "      []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    invalid = repo / ".agentpack" / "understanding-contracts-invalid.toon"
+    invalid.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  -\n"
+        "    id: cu1\n"
+        "    location: src/foo.py:1-2\n"
+        "    kind: core\n"
+        "    what_changed: foo return changed\n"
+        "    code: src/foo.py:2 return 2\n"
+        "    referenced_symbols[]:\n"
+        "      []\n"
+        "    callers[]:\n"
+        "      []\n"
+        "    contracts_touched[]:\n"
+        "      -\n"
+        "        contract: foo return value\n"
+        "        before: returns 1\n"
+        "        after: returns 2\n"
+        "    local_convention_refs[]:\n"
+        "      []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+
+    _validate_review_artifact(valid, kind="understanding")
+
+    try:
+        _validate_review_artifact(invalid, kind="understanding")
+    except ValueError as exc:
+        assert "contracts_touched[1] missing required key: evidence" in str(exc)
+    else:
+        raise AssertionError("contract entries without evidence should fail schema validation")
 
 
 def test_review_understanding_validator_rejects_unsupported_symbol_line(tmp_path) -> None:

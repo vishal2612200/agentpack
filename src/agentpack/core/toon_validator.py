@@ -273,7 +273,7 @@ def _validate_review_understanding_payload(payload: Any) -> list[str]:
             if isinstance(unit.get("callers"), list):
                 errors.extend(_validate_callers(unit["callers"], f"change_units[{index}].callers"))
             if isinstance(unit.get("contracts_touched"), list):
-                errors.extend(_validate_string_list(unit["contracts_touched"], f"change_units[{index}].contracts_touched"))
+                errors.extend(_validate_contracts_touched(unit["contracts_touched"], f"change_units[{index}].contracts_touched"))
             if isinstance(unit.get("local_convention_refs"), list):
                 errors.extend(_validate_local_convention_refs(unit["local_convention_refs"], f"change_units[{index}].local_convention_refs"))
     if isinstance(payload.get("open_questions"), list):
@@ -397,8 +397,20 @@ def _validate_callers(items: list[Any], label: str) -> list[str]:
     return errors
 
 
-def _validate_string_list(items: list[Any], label: str) -> list[str]:
-    return [f"{label}[{index}] must be a string" for index, item in enumerate(items, start=1) if not isinstance(item, str)]
+def _validate_contracts_touched(items: list[Any], label: str) -> list[str]:
+    errors: list[str] = []
+    for index, item in enumerate(items, start=1):
+        item_label = f"{label}[{index}]"
+        if isinstance(item, str):
+            continue
+        if not isinstance(item, dict):
+            errors.append(f"{item_label} must be a string or object")
+            continue
+        errors.extend(_require_keys(item, ("contract", "before", "after", "evidence"), item_label))
+        errors.extend(_require_string_fields(item, ("contract", "before", "after", "evidence"), item_label))
+        if "evidence" in item:
+            errors.extend(_require_path_line(item, "evidence", item_label))
+    return errors
 
 
 def _validate_local_convention_refs(items: list[Any], label: str) -> list[str]:

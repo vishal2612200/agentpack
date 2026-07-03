@@ -276,12 +276,15 @@ def validate_claim_support(
             continue
         overlap = claim_terms & _terms(span)
         if len(overlap) < min_overlap:
-            suggestion = _suggest_citation_line(root, citation, claim_terms, content_resolver=content_resolver)
+            suggestions = _suggest_citation_lines(root, citation, claim_terms, content_resolver=content_resolver)
+            suggestion = suggestions[0]["location"] if suggestions else ""
             suggested_text = f"; suggested={suggestion}" if suggestion else ""
+            suggestions_text = f"; suggestions={_format_citation_suggestions(suggestions)}" if suggestions else ""
             invalid.append(
                 f"{label}: {citation.path}:{citation.start_line} does not support claim text; "
                 f"claim={_compact_error_text(claim_text)}; cited={_compact_error_text(span)}; "
-                f"fix=cite a line that contains the claimed term, narrow the claim, or mark it unresolved{suggested_text}"
+                f"fix=cite a line that contains the claimed term, narrow the claim, or mark it unresolved"
+                f"{suggested_text}{suggestions_text}"
             )
             continue
         if semantic_judge is not None:
@@ -497,31 +500,50 @@ def _citation_span(
     return "\n".join(lines[citation.start_line - 1:end_line])
 
 
-def _suggest_citation_line(
+def _suggest_citation_lines(
     root: Path,
     citation: Citation,
     claim_terms: set[str],
     *,
     content_resolver: CitationContentResolver | None = None,
-) -> str:
+) -> list[dict[str, Any]]:
     if not claim_terms:
-        return ""
+        return []
     content = content_resolver(citation) if content_resolver else None
     if content is None:
         try:
             content = (root / citation.path).read_text(errors="replace")
         except OSError:
-            return ""
-    best_line = 0
-    best_overlap = 0
+            return []
+    candidates: list[dict[str, Any]] = []
     for line_number, line in enumerate(content.splitlines(), start=1):
         overlap = len(claim_terms & _terms(line))
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_line = line_number
-    if best_line <= 0:
-        return ""
-    return f"{citation.path}:{best_line}"
+        if overlap <= 0:
+            continue
+        snippet = " ".join(line.strip().split())
+        if not snippet:
+            continue
+        candidates.append(
+            {
+                "location": f"{citation.path}:{line_number}",
+                "snippet": _compact_error_text(snippet, limit=100),
+                "overlap": overlap,
+                "distance": abs(line_number - (citation.start_line or line_number)),
+            }
+        )
+    candidates.sort(key=lambda item: (-int(item["overlap"]), int(item["distance"]), str(item["location"])))
+    return [{key: value for key, value in item.items() if key != "distance"} for item in candidates[:3]]
+
+
+def _format_citation_suggestions(suggestions: list[dict[str, Any]]) -> str:
+    formatted: list[str] = []
+    for item in suggestions[:3]:
+        location = str(item.get("location") or "")
+        snippet = str(item.get("snippet") or "")
+        if not location:
+            continue
+        formatted.append(f'{location} "{snippet}"')
+    return " | ".join(formatted)
 
 
 def _claim_terms(value: object) -> set[str]:

@@ -1015,8 +1015,11 @@ agentpack review --light --pr 123 "small docs-only review"
 agentpack review --strict --pr 123 "security-sensitive review"
 agentpack review --check
 agentpack review --check --dry-run-post
+agentpack review --check --dry-run-check
 agentpack review --check --post-inline-comments
 agentpack review --resume <run_id>
+agentpack review --resume latest
+agentpack review --list
 ```
 
 Writes:
@@ -1035,8 +1038,10 @@ Writes:
 - `.agentpack/reviews/<branch-prefix>/<run_id>/judge.prompt.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.template.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/findings.template.toon`
-- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon`
-- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.json` as the Stage 1 authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon` as the Stage 1 canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.json` as the Stage 2 authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon` as the Stage 2 canonical handoff
 - `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-payload.json` when inline PR comment payloads are built
 - `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-dry-run.json` when `--dry-run-post` validates the payload without calling GitHub
 - `.agentpack/reviews/<branch-prefix>/<run_id>/posted-review.json` when inline PR comments are posted or intentionally skipped because there are no findings
@@ -1049,11 +1054,12 @@ understanding-plus-judge prompt bundle for a host agent to perform the actual
 review. Review context is written under the review run directory instead of
 overwriting the active `.agentpack/context.md` pack.
 
-Review artifacts are claim-grounded. `understanding.toon` and `findings.toon`
-must cite repo facts with valid `path:line` evidence. Review prompts accept
-JSON or TOON; JSON is preferred when multiline fields would make TOON fragile.
-Resume/preflight validation first canonicalizes safe schema-matching JSON,
-fenced output, or missing-format TOON into canonical TOON. If the output is
+Review artifacts are claim-grounded. Stage agents write JSON by default, then
+`agentpack review --check` validates and canonicalizes that JSON into
+`understanding.toon` or `findings.toon`. Stage 2 reads canonical
+`understanding.toon`, so TOON remains the inter-stage handoff format while JSON
+is only the authoring format. Resume/preflight validation also accepts legacy
+TOON artifacts and fenced JSON, then writes canonical TOON. If the output is
 malformed, review validation writes `<stage>-toon-repair.md` next to the
 artifact with a copy-fill template and recovery instructions. It then rejects
 findings with prose-only evidence, missing locations, files that do not exist,
@@ -1065,6 +1071,9 @@ replacement line hints when AgentPack can find a stronger candidate. Finding
 evidence and Stage 1 resolved-context fields such as `referenced_symbols`,
 `callers`, and `local_convention_refs` also have to overlap the cited span
 enough to catch arbitrary `path:line` references that do not support the claim.
+Stage 1 `contracts_touched` entries may use structured
+`contract`/`before`/`after`/`evidence` objects so contract evidence is explicit
+instead of buried in prose.
 For stricter meaning-level review, set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local
 JSON-in/JSON-out command; review validation sends each mechanically supported
 claim/citation pair on stdin and rejects it when the command returns
@@ -1072,7 +1081,8 @@ claim/citation pair on stdin and rejects it when the command returns
 
 After Stage 2 validates, `agentpack review --check --dry-run-post` validates the
 same inline GitHub review payload and writes it to `inline-review-payload.json`
-without calling GitHub. `agentpack review --check --post-inline-comments`
+without calling GitHub. `--dry-run-check` is an alias for the same validation
+path. `agentpack review --check --post-inline-comments`
 generates the same dry-run record internally, verifies the payload hash, then
 posts validated findings as one GitHub PR review with inline comments. Posting
 requires a PR-bound preflight, a GitHub repo slug, a PR head SHA, and finding
@@ -1122,7 +1132,8 @@ gh api -X DELETE repos/OWNER/REPO/pulls/comments/<comment_id>
 The positional argument is optional reviewer context. It shapes prioritization
 only; it must not replace code evidence.
 Fresh runs are the default. Interrupted work is resumed only when
-`--resume <run_id>` is passed explicitly.
+`--resume <run_id>` is passed explicitly. Use `--list` to see recent run ids,
+or `--resume latest` to resume the newest known run for the current branch.
 
 ---
 

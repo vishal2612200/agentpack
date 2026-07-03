@@ -141,7 +141,7 @@ def test_review_understanding_schema_rejects_bad_nested_shapes() -> None:
 
     assert result.ok is False
     assert "referenced_symbols[1].confidence must be one of" in result.error
-    assert "contracts_touched[1] must be a string" in result.error
+    assert "contracts_touched[1] must be a string or object" in result.error
     assert "local_convention_refs[1] missing required key: example_at" in result.error
     assert "open_questions[1].status must be one of: unresolved" in result.error
 
