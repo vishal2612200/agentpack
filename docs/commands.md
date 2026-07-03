@@ -70,7 +70,7 @@ Advanced command map:
 | `agentpack dev-check` | Run docs, lint, pytest, and npm wrapper checks |
 | `agentpack verify-wheel` | Install a wheel in a temp venv and run benchmark gate |
 | `agentpack release-check` | Run the local release gate |
-| `agentpack release prepare` | Run release-check, public table benchmark, and wheel verification |
+| `agentpack release prepare` | Run release-check, public table benchmark, wheel verification, and release notes |
 | `agentpack ci init` | Generate a GitHub Actions workflow for AgentPack checks |
 | `agentpack global-install` | Install opt-in global hooks for initialized repos |
 | `agentpack global-repair-hooks` | Repair stale global template hooks and current repo git hooks |
@@ -1762,10 +1762,14 @@ Run the release workflow as package-user CLI automation.
 ```bash
 agentpack release prepare
 agentpack release prepare --json
+agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
 ```
 
 It runs `release-check`, writes the public benchmark table, verifies the wheel
-in a temporary venv, and prints a release summary. It is the broadest local
+in a temporary venv, writes GitHub-ready release notes to
+`dist/github-release-notes-<tag>.md`, and prints a release summary. The notes
+include release metadata, validation evidence, the matching changelog entry,
+and the `gh release create ... --notes-file` command. It is the broadest local
 pre-publish command; `release-check` remains the non-mutating core gate.
 
 ---

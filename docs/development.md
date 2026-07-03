@@ -48,6 +48,7 @@ agentpack benchmark capture --since HEAD~1 --task "describe the task"
 agentpack finish --since main
 agentpack verify-wheel
 agentpack release prepare
+agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
 agentpack ci init
 ```
 
@@ -79,6 +80,11 @@ native-integration-only diffs. It does not mutate tracked files.
 the latest wheel into a temporary venv, then runs
 `agentpack benchmark --release-gate --no-public-table` from that installed
 command.
+
+`agentpack release prepare` adds the higher-level release pipeline on top of
+the gate: it runs `release-check`, writes the public benchmark table, verifies
+the built wheel, then emits GitHub-ready release notes at
+`dist/github-release-notes-<tag>.md` unless `--notes-path` is provided.
 
 For npm publish, configure GitHub secret `NPM_TOKEN`. The token must publish to the npm scope in `npm/package.json` (`@vishal2612200` today): use a token from that npm user, or create an npm org with that scope and grant the token owner publish access. If `npm publish` reaches the registry and then fails with `E404 Not Found - PUT ... @scope/package`, the token is authenticated but does not own or have write access to that scope. `agentpack doctor` warns locally when neither `NPM_TOKEN` nor `NODE_AUTH_TOKEN` is present, and the npm publish workflow fails early when the secret or scope access is wrong.
 

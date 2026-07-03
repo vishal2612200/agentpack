@@ -71,6 +71,10 @@ def test_verify_wheel_json_uses_existing_wheel(tmp_path: Path, monkeypatch) -> N
 def test_release_prepare_json_orchestrates(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] — 2026-05-26\n\n### Added\n- Added release notes.\n",
+        encoding="utf-8",
+    )
     calls: list[list[str]] = []
 
     class Result:
@@ -93,7 +97,18 @@ def test_release_prepare_json_orchestrates(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["passed"] is True
-    assert [stage["name"] for stage in payload["stages"]] == ["release-check", "benchmark-public-table", "verify-wheel:build"]
+    assert [stage["name"] for stage in payload["stages"]] == [
+        "release-check",
+        "benchmark-public-table",
+        "verify-wheel:build",
+        "github-release-notes",
+    ]
+    notes_path = Path(payload["release_notes"])
+    assert notes_path.name == "github-release-notes-v1.2.3.md"
+    notes_text = notes_path.read_text(encoding="utf-8")
+    assert "AgentPack v1.2.3" in notes_text
+    assert "Added release notes." in notes_text
+    assert "gh release create v1.2.3" in notes_text
     assert "--check-release-branch" in calls[0]
     assert "--check-registry" in calls[0]
     assert "--tag" in calls[0]
