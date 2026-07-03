@@ -339,6 +339,13 @@ def _runtime_infra_hint_relevant(hint: dict, task_terms: set[str]) -> bool:
 def _review_stage_gate_note(root: Path, *, review_intent: bool) -> str:
     if not review_intent:
         return ""
+    stale_reason = _active_review_stale_reason(root)
+    if stale_reason:
+        return (
+            "REVIEW PREFLIGHT STALE: "
+            f"{stale_reason}. Ignoring stale active review state; run `agentpack review --pr <number>` "
+            "or `agentpack review --allow-local-fallback` for this checkout before using AgentPack review gates.\n"
+        )
     state_path = root / ".agentpack" / "review-state.json"
     if not state_path.exists():
         return ""
@@ -356,6 +363,26 @@ def _review_stage_gate_note(root: Path, *, review_intent: bool) -> str:
     if status == "blocked_invalid_artifact":
         return "REVIEW STAGE BLOCK: active review artifact invalid. Run `agentpack review --check` for exact error.\n"
     return f"REVIEW STAGE BLOCK: active review status `{status}`. Run `agentpack review --check`.\n"
+
+
+def _active_review_stale_reason(root: Path) -> str:
+    preflight_path = root / ".agentpack" / "review-preflight.json"
+    if not preflight_path.exists():
+        return ""
+    try:
+        preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+    except Exception:
+        return "active review preflight is unreadable"
+    preflight_git = preflight.get("git") if isinstance(preflight.get("git"), dict) else {}
+    expected_branch = str(preflight_git.get("branch") or "")
+    current_branch = _git.current_branch(root) or ""
+    if expected_branch and current_branch and expected_branch != current_branch:
+        return f"active review was prepared for branch {expected_branch}, but current branch is {current_branch}"
+    paths = preflight.get("paths") if isinstance(preflight.get("paths"), dict) else {}
+    run_dir = str(paths.get("run_dir") or "")
+    if run_dir and not (root / run_dir).exists():
+        return f"active review run directory is missing: {run_dir}"
+    return ""
 
 
 def _prompt_task(prompt: str) -> str:

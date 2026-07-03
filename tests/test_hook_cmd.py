@@ -303,6 +303,37 @@ class TestRunUserPromptSubmit:
         assert "Stage 2 findings artifact missing" in note
         assert "agentpack review --check" in note
 
+    def test_review_stage_gate_ignores_stale_branch_preflight(self, repo: Path) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "-b", "main"], cwd=repo, check=True)
+        (repo / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True)
+        (repo / ".agentpack" / "review-preflight.json").write_text(
+            json.dumps(
+                {
+                    "git": {"branch": "feat/toon-validator"},
+                    "paths": {"run_dir": ".agentpack/reviews/pr-48/run"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (repo / ".agentpack" / "review-state.json").write_text(
+            json.dumps({"status": "blocked_invalid_artifact"}),
+            encoding="utf-8",
+        )
+
+        note = _review_stage_gate_note(repo, review_intent=True)
+
+        assert "REVIEW PREFLIGHT STALE" in note
+        assert "prepared for branch feat/toon-validator" in note
+        assert "current branch is main" in note
+        assert "active review artifact invalid" not in note
+
     def test_hard_cap_enforced(self, repo: Path, monkeypatch) -> None:
         monkeypatch.setattr("pathlib.Path.home", lambda: repo)
         _write_snapshot(repo, "hash1")
