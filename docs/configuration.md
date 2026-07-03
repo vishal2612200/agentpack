@@ -182,6 +182,9 @@ dashboard_output = ".agentpack/learning-dashboard.html"
 team_lessons_output = ".agentpack/team-lessons.md"
 provider_command = ""
 provider_timeout_seconds = 60
+concept_provider_command = ""
+concept_provider_timeout_seconds = 30
+concept_provider_required = false
 inject_agent_lessons = true
 max_changed_files = 20
 max_diff_chars_per_file = 1200
@@ -196,8 +199,15 @@ claim-level citation coverage: generated summaries, decisions, risks, tests,
 lessons, cards, topics, and skill evidence should cite source files with line
 anchors where available. Learning artifacts are local by default: no hosted
 service is called, diffs are bounded, and secret redaction runs before diff text
-is used. `provider_command` is opt-in and runs a local JSON-in/JSON-out command with the bounded report payload on
-stdin.
+is used. `provider_command` and `concept_provider_command` are opt-in local
+JSON-in/JSON-out commands that receive the bounded report payload on stdin.
+
+A practical You.com setup is to point `provider_command` at a small script such
+as `python scripts/youcom_research_provider.py`. That script can read the
+current learning report, call the You.com Research API with `YDC_API_KEY`, and
+return extra `summary`, `learning_topics`, `concepts`, or `next_practice` fields
+without changing the default offline flow.
+
 Feedback-aware skill memory and practice drills are stored locally in
 `skill_map_output` and `feedback_output`; shared team learning should export
 only selected lessons or taxonomy files, not personal skill history. Use
