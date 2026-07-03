@@ -1597,22 +1597,82 @@ def _findings_to_inline_comments(
 
 
 def _inline_comment_body(finding: dict[str, Any], index: int) -> str:
-    severity = str(finding.get("severity") or "finding").strip()
-    claim = str(finding.get("claim") or "").strip()
-    evidence = str(finding.get("evidence") or "").strip()
-    finding_id = str(finding.get("id") or f"finding-{index}").strip()
-    parts = [f"**AgentPack review {severity}:** {claim or 'Review finding.'}"]
+    severity = _comment_field(finding, "severity") or "finding"
+    claim = _comment_field(finding, "claim") or "Review finding."
+    evidence = _comment_field(finding, "evidence")
+    parts = [
+        f"**AgentPack review: {_display_severity(severity)}**",
+        f"**What I noticed**\n{claim}",
+    ]
     if evidence:
-        parts.append(f"Evidence: {evidence}")
-    parts.append(f"_Finding `{finding_id}` from AgentPack review._")
+        parts.append(f"**Evidence**\n{evidence}")
+    next_step = _inline_comment_next_step(finding, severity)
+    if next_step:
+        parts.append(f"**Suggested next step**\n{next_step}")
+    parts.append(_inline_comment_metadata(finding, index, severity))
     return _clip_text("\n\n".join(parts), 60_000)
+
+
+def _comment_field(finding: dict[str, Any], field: str) -> str:
+    value = finding.get(field)
+    if value is None:
+        return ""
+    text = " ".join(str(value).split()).strip()
+    return "" if text.lower() in {"null", "none", "n/a"} else text
+
+
+def _display_severity(severity: str) -> str:
+    return {
+        "blocker": "Blocker",
+        "should-fix": "Should fix",
+        "nit": "Nit",
+        "finding": "Finding",
+    }.get(severity, severity.replace("-", " ").strip().title() or "Finding")
+
+
+def _inline_comment_next_step(finding: dict[str, Any], severity: str) -> str:
+    direction = _comment_field(finding, "direction")
+    if direction:
+        return direction
+    if severity == "blocker":
+        return "Resolve this before merge, or confirm the cited invariant already makes it safe."
+    if severity == "should-fix":
+        return "Fix this path, or leave a note explaining why the current behavior is intentional."
+    if severity == "nit":
+        return "Consider this if it improves clarity without expanding the change."
+    return "Review the cited path and decide whether a code or test update is needed."
+
+
+def _inline_comment_metadata(finding: dict[str, Any], index: int, severity: str) -> str:
+    finding_id = _comment_field(finding, "id") or f"finding-{index}"
+    metadata = [f"Finding {_inline_code(finding_id)}", _inline_code(severity)]
+    for field in ("category", "confidence", "lens", "type"):
+        value = _comment_field(finding, field)
+        if value:
+            metadata.append(f"{field}: {_inline_code(value)}")
+    return "<sub>" + " | ".join(metadata) + "</sub>"
+
+
+def _inline_code(value: str) -> str:
+    safe = value.replace("`", "'")
+    return f"`{safe}`"
 
 
 def _review_body(preflight: dict[str, Any], comment_count: int) -> str:
     run_id = preflight.get("review", {}).get("run_id", "")
+    head_sha = str(preflight.get("git", {}).get("head_sha") or "").strip()
+    finding_word = "finding" if comment_count == 1 else "findings"
+    pronoun = "it" if comment_count == 1 else "them"
+    where = "it applies" if comment_count == 1 else "they apply"
+    parts = [
+        f"AgentPack found {comment_count} evidence-backed {finding_word} and left {pronoun} inline where {where}."
+    ]
+    if run_id:
+        parts.append(f"Run: `{run_id}`")
+    if head_sha:
+        parts.append(f"Head: `{head_sha[:12]}`")
     return (
-        f"AgentPack review posted {comment_count} inline finding"
-        f"{'' if comment_count == 1 else 's'} from run `{run_id}`."
+        "\n\n".join(parts)
     )
 
 

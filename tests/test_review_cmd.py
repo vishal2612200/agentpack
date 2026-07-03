@@ -528,6 +528,9 @@ def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
             "claim": "foo returns a changed value",
             "evidence": "src/foo.py:2 shows the returned value",
             "severity": "should-fix",
+            "category": "defect",
+            "confidence": "high",
+            "direction": "Return the intended value or update the caller expectation.",
         },
         {
             "id": "f2",
@@ -545,9 +548,14 @@ def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
             "line": 2,
             "side": "RIGHT",
             "body": (
-                "**AgentPack review should-fix:** foo returns a changed value\n\n"
-                "Evidence: src/foo.py:2 shows the returned value\n\n"
-                "_Finding `f1` from AgentPack review._"
+                "**AgentPack review: Should fix**\n\n"
+                "**What I noticed**\n"
+                "foo returns a changed value\n\n"
+                "**Evidence**\n"
+                "src/foo.py:2 shows the returned value\n\n"
+                "**Suggested next step**\n"
+                "Return the intended value or update the caller expectation.\n\n"
+                "<sub>Finding `f1` | `should-fix` | category: `defect` | confidence: `high`</sub>"
             ),
         }
     ]
@@ -634,15 +642,25 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
     assert pr_number == 98
     assert payload["commit_id"] == "abc123"
     assert payload["event"] == "COMMENT"
+    assert payload["body"] == (
+        f"AgentPack found 1 evidence-backed finding and left it inline where it applies.\n\n"
+        f"Run: `{preflight['review']['run_id']}`\n\n"
+        "Head: `abc123`"
+    )
     assert payload["comments"] == [
         {
             "path": "src/foo.py",
             "line": 2,
             "side": "RIGHT",
             "body": (
-                "**AgentPack review should-fix:** foo returns changed value\n\n"
-                "Evidence: src/foo.py:2 shows the returned value\n\n"
-                "_Finding `f1` from AgentPack review._"
+                "**AgentPack review: Should fix**\n\n"
+                "**What I noticed**\n"
+                "foo returns changed value\n\n"
+                "**Evidence**\n"
+                "src/foo.py:2 shows the returned value\n\n"
+                "**Suggested next step**\n"
+                "Fix this path, or leave a note explaining why the current behavior is intentional.\n\n"
+                "<sub>Finding `f1` | `should-fix`</sub>"
             ),
         }
     ]

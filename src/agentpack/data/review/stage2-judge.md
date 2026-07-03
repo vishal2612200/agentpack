@@ -96,7 +96,7 @@ Do not answer inline from this stage. Read the understanding TOON from disk firs
       "category": "defect | preference",
       "confidence": "high | medium | low",
       "depends_on": "open_question text or null",
-      "direction": "optional: what would resolve it — not necessarily code"
+      "direction": "optional: short reviewer-facing next step that would resolve it — not necessarily code"
     }
   ],
   "coverage": "which units were examined; anything you could not fully assess and why"

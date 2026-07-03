@@ -1090,13 +1090,13 @@ The dry-run payload record has this shape:
   "payload": {
     "commit_id": "<pr-head-sha>",
     "event": "COMMENT",
-    "body": "AgentPack review posted N inline finding(s) ...",
+    "body": "AgentPack found N evidence-backed finding(s) and left them inline where they apply...",
     "comments": [
       {
         "path": "src/file.py",
         "line": 42,
         "side": "RIGHT",
-        "body": "**AgentPack review ...** ..."
+        "body": "**AgentPack review: Should fix**\n\n**What I noticed**\n...\n\n**Evidence**\n...\n\n**Suggested next step**\n..."
       }
     ]
   }
