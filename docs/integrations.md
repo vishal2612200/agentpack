@@ -97,8 +97,8 @@ same-worktree, same-branch file overlap.
 - **Advisory vs enforced:** because AgentPack cannot intercept prompts or edits, native integrations are *advisory* — they strongly suggest, but the host is free to proceed without them. An integration only becomes *enforced* if the host exposes a blocking API (e.g. a `preEdit` hook that can cancel an edit when readiness fails). No entry is claimed as hard-enforced without such a blocking host API. See [`native-integrations/README.md`](https://github.com/vishal2612200/agentpack/blob/main/native-integrations/README.md#advisory-vs-enforced-examples) for advisory and enforcement examples.
 - AgentPack cannot intercept prompts inside IDEs — Cursor/Windsurf rely on rules being followed.
 - Claude wrapper (`agentpack claude`) is the most deterministic integration.
-- Prompt hooks stay idle until the current session task file contains a real task.
-- If the task changes drastically mid-session, prompt hooks can update the current session task file and point the agent at `get_context()` or `agentpack pack`; repo edits still refresh through MCP freshness checks or git hooks.
+- Prompt hooks stay idle until the current session task file contains a real task, and ordinary chat prompts still stay silent.
+- For coding or review prompts, if the task changes drastically mid-session, prompt hooks can update the current session task file and point the agent at `get_context()` or `agentpack pack`; repo edits still refresh through MCP freshness checks or git hooks.
 - AgentPack-selected files are ranked starting points, not absolute truth.
 - Plugin and IDE surfaces are distribution layers. They call AgentPack CLI/MCP behavior and do not reimplement context ranking.
 
@@ -133,7 +133,7 @@ Configures:
 - `CLAUDE.md` — tells Claude to read the context pack before each task
 - `.claude/settings.json` — two hooks:
   - `SessionStart`: clears injection sentinel so first prompt gets context
-  - `UserPromptSubmit`: runs `agentpack hook` — stays silent until the current session task file has a real task, can detect clear task switches, updates that task file, and emits a small hint. With MCP: points the agent at `get_context()` or `pack_context()`. Without MCP: emits a capped fallback (top 8 files, <=3k chars)
+  - `UserPromptSubmit`: runs `agentpack hook` — stays silent until the current session task file has a real task, ignores ordinary chat prompts, can detect clear coding/review task switches, updates that task file, and emits a small hint. With MCP: points the agent at `get_context()` or `pack_context()`. Without MCP: emits a capped fallback (top 8 files, <=3k chars)
 
 After this, context is injected automatically into every Claude Code session. No `/agentpack` command needed — it just happens.
 

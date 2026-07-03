@@ -484,6 +484,24 @@ class TestRunGitAutoRepack:
 
         assert outputs == []
 
+    def test_chat_prompt_with_active_task_stays_silent_and_fast(self, repo: Path, monkeypatch) -> None:
+        import io
+
+        _write_task(repo, "fix login flow")
+        (repo / ".agentpack" / "config.toml").write_text(
+            "[hooks]\nblocking_task_refresh = true\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": "does agentpack help with token saving?"})))
+        outputs: list[str] = []
+        monkeypatch.setattr("builtins.print", lambda x: outputs.append(x))
+
+        with patch("agentpack.commands.hook_cmd._current_root_hash", side_effect=AssertionError("should stay cheap")), \
+             patch("agentpack.commands.hook_cmd._run_blocking_pack", side_effect=AssertionError("should not pack")):
+            _run_user_prompt_submit(repo)
+
+        assert outputs == []
+
     def test_session_start_clears_no_task_reminder(self, repo: Path) -> None:
         reminder = repo / ".agentpack" / ".no_task_reminded"
         reminder.write_text("1", encoding="utf-8")

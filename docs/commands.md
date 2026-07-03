@@ -1278,7 +1278,7 @@ cli_refresh_command: agentpack guard --agent auto --repair-stale --refresh-conte
 -->
 ```
 
-Claude prompt hooks stay inactive until a real task exists in the current session task file, then emit lightweight freshness hints instead of background repacks. Non-MCP rule files and VS Code folder-open tasks use the installed command surface for refresh/readiness. If you want prompt submit to block for a fresh pack when context is stale, set `blocking_task_refresh = true` under `[hooks]` in `.agentpack/config.toml`.
+Claude prompt hooks stay inactive until a real task exists in the current session task file, and ordinary chat prompts stay silent. Coding/review prompts emit lightweight freshness hints instead of background repacks. Non-MCP rule files and VS Code folder-open tasks use the installed command surface for refresh/readiness. If you want prompt submit to block for a fresh pack when context is stale, set `blocking_task_refresh = true` under `[hooks]` in `.agentpack/config.toml`.
 
 **Smart truncation:** `start_task()` and `pack_context()` keep headers intact and trim file content blocks to fit the token budget, appending a note about how many files were omitted.
 

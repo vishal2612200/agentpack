@@ -17,7 +17,7 @@ from agentpack.core.thread_context import resolve_session_thread_option, thread_
 from agentpack.integrations.platform import cli_module_argv, detached_popen
 
 _CODING_PROMPT_RE = re.compile(
-    r"(?:fix|add|refactor|impl|implement|update|write|debug|test|build|migrate|remove|delete|rename|optimize)\b",
+    r"(?:fix|add|refactor|impl|implement|update|write|debug|test|build|migrate|remove|delete|rename|optimize|deploy|release|rollback|ship)\b",
     re.IGNORECASE,
 )
 _REVIEW_PROMPT_RE = re.compile(
@@ -634,6 +634,10 @@ def _run_user_prompt_submit(root: Path) -> None:
                     f"AgentPack idle. No active task in `{_task_label(thread_id)}`.\n"
                     f"Run `{start_cmd}` to enable prompt-time hints."
                 )
+        return
+
+    prompt_has_agentpack_work = _looks_like_coding_prompt(prompt)
+    if not prompt_has_agentpack_work:
         return
 
     task_switched = bool(
