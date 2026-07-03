@@ -34,18 +34,29 @@ def test_guard_refreshes_missing_context_pack(tmp_path, monkeypatch) -> None:
     assert (tmp_path / ".agentpack" / "context.md").exists()
 
 
-def test_guard_plain_uses_ambient_thread_env_and_refuses_global_task(tmp_path, monkeypatch) -> None:
+def test_guard_plain_uses_global_task_even_with_ambient_thread_env(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_THREAD_ID", "codex-env")
     (tmp_path / ".agentpack").mkdir()
     (tmp_path / ".agentpack" / "task.md").write_text("Fix guard env behavior\n", encoding="utf-8")
     (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
 
-    pack_result = CliRunner().invoke(app, ["pack", "--agent", "generic"])
-    guard_result = CliRunner().invoke(app, ["guard", "--agent", "generic"])
+    guard_result = CliRunner().invoke(app, ["guard", "--agent", "generic", "--refresh-context"])
 
-    assert pack_result.exit_code == 1
-    assert "No task is set for AgentPack session codex-env" in pack_result.output
+    assert guard_result.exit_code == 0, guard_result.output
+    assert "Context pack fresh" in guard_result.output
+    assert (tmp_path / ".agentpack" / "context.md").exists()
+
+
+def test_guard_thread_auto_refuses_global_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("CODEX_THREAD_ID", "codex-env")
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Fix guard env behavior\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+
+    guard_result = CliRunner().invoke(app, ["guard", "--agent", "generic", "--thread", "auto"])
+
     assert guard_result.exit_code == 1
     assert "missing task for AgentPack session codex-env" in guard_result.output
 

@@ -281,7 +281,8 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "## Execution Gates" in understanding_prompt
     assert "Do not answer inline from this stage prompt." in understanding_prompt
     assert f"Copy-fill TOON template: {preflight['paths']['understanding_template']}" in understanding_prompt
-    assert "Prefer valid JSON matching the schema" in understanding_prompt
+    assert "Prefer valid JSON matching the schema. This is the default path." in understanding_prompt
+    assert "Do not use YAML block scalars" in understanding_prompt
     assert "Start from the copy-fill TOON template" in understanding_prompt
     assert "will canonicalize safe schema-matching output to TOON" in understanding_prompt
     assert f"Output path: {preflight['paths']['understanding_output']}" in understanding_prompt
@@ -356,6 +357,30 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
     assert "Stage 2 valid" in complete.output
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
     assert state["status"] == "complete"
+
+
+def test_review_check_blocks_stale_active_preflight(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+    run_dir = repo / ".agentpack" / "reviews" / "old-branch" / "run"
+    run_dir.mkdir(parents=True)
+    preflight = {
+        "git": {"branch": "old-branch"},
+        "paths": {
+            "run_dir": ".agentpack/reviews/old-branch/run",
+            "understanding_output": ".agentpack/reviews/old-branch/run/understanding.toon",
+            "findings_output": ".agentpack/reviews/old-branch/run/findings.toon",
+        },
+    }
+    (repo / ".agentpack" / "review-preflight.json").write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = runner.invoke(app, ["review", "--check"])
+
+    assert result.exit_code == 1
+    assert "Active review preflight is stale" in result.output
+    assert "prepared for branch old-branch" in result.output
+    assert "validating artifacts from another branch or PR" in result.output
 
 
 def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatch) -> None:

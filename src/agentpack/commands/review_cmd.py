@@ -40,7 +40,7 @@ _UNDERSTANDING_TEMPLATE_PATH = Path(".agentpack/review-understanding.template.to
 _FINDINGS_TEMPLATE_PATH = Path(".agentpack/review-findings.template.toon")
 _STATE_PATH = Path(".agentpack/review-state.json")
 _REVIEW_RUNS_DIR = Path(".agentpack/reviews")
-_LLM_REVIEW_FORMAT = "TOON"
+_LLM_REVIEW_FORMAT = "JSON (canonicalized to TOON)"
 _PR_URL_RE = re.compile(r"https?://\S+/pull/(?P<number>\d+)\b", re.IGNORECASE)
 _PR_CONTEXT_RE = re.compile(
     r"(?:\b(?:pr|pull request)\s*#?\s*(?P<number>\d+)\b|\bgh\s+pr\s+(?:view|diff|checkout)\s+(?P<gh_number>\d+)\b)",
@@ -459,8 +459,8 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         + f"- Preflight JSON: `{preflight['paths']['preflight']}`\n"
         f"- Stage 1 prompt: `{preflight['paths']['understanding_prompt']}`\n"
         f"- Stage 2 prompt: `{preflight['paths']['judge_prompt']}`\n"
-        f"- Stage 1 TOON template: `{preflight['paths']['understanding_template']}`\n"
-        f"- Stage 2 TOON template: `{preflight['paths']['findings_template']}`\n"
+        f"- Stage 1 TOON fallback template: `{preflight['paths']['understanding_template']}`\n"
+        f"- Stage 2 TOON fallback template: `{preflight['paths']['findings_template']}`\n"
         f"- Stage 1 output ({_LLM_REVIEW_FORMAT}): `{preflight['paths']['understanding_output']}`\n"
         f"- Stage 2 output ({_LLM_REVIEW_FORMAT}): `{preflight['paths']['findings_output']}`\n"
         f"- Stage state JSON: `{preflight['paths']['state']}`\n\n"
@@ -472,9 +472,9 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         "5. After Stage 2, run `agentpack review --check --post-inline-comments` for PR-bound runs. "
         "For local-only fallback reviews, run `agentpack review --check`. Do not produce a final summary unless Stage 2 validates.\n\n"
         "## Workflow\n\n"
-        "1. Read the Stage 1 prompt file and template completely, then produce JSON or TOON at the declared output path. JSON is preferred when multiline fields are easier that way.\n"
+        "1. Read the Stage 1 prompt file and JSON schema completely, then produce JSON at the declared output path. Use TOON only for simple scalar fields.\n"
         "2. Run `agentpack review --check` and confirm the understanding file exists and follows the declared schema before moving on.\n"
-        "3. Read the Stage 2 prompt file and template completely, then produce JSON or TOON findings at the declared output path.\n"
+        "3. Read the Stage 2 prompt file and JSON schema completely, then produce JSON findings at the declared output path.\n"
         "4. Run `agentpack review --check --post-inline-comments` for PR-bound runs, or `agentpack review --check` for local fallback, and confirm the findings file exists and follows the declared schema before reporting back.\n"
         "5. In the final user-facing response, summarize findings and validation gaps without exposing internal stage names.\n"
     )
@@ -526,7 +526,7 @@ def _render_stage_prompt(
             else "- Review target: current branch/local fallback",
             f"- Output path: {_rel_to_root(abs_output, root)}",
             f"- Copy-fill TOON template: {template_path}",
-            "- Structured output format: JSON or TOON (JSON is preferred for multiline or nested fields; AgentPack canonicalizes valid JSON to TOON)",
+            "- Structured output format: JSON preferred. TOON is accepted only for simple scalar fields; AgentPack canonicalizes valid JSON to TOON.",
         ]
     )
     context_pack = preflight.get("context_pack") if isinstance(preflight.get("context_pack"), dict) else {}
@@ -540,7 +540,8 @@ def _render_stage_prompt(
             "## Execution Gates",
             "",
             "- Do not answer inline from this stage prompt.",
-            "- Prefer valid JSON matching the schema when multiline fields make TOON fragile.",
+            "- Prefer valid JSON matching the schema. This is the default path.",
+            "- Use TOON only if you can keep every scalar on one line. Do not use YAML block scalars (`>` or `|`) or YAML-style multiline values in TOON.",
             "- Start from the copy-fill TOON template only if TOON is reliable for this artifact.",
             "- Write the required JSON or TOON artifact to the declared output path and nothing else.",
             "- If you wrote JSON or fenced output, run `agentpack review --check`; AgentPack will canonicalize safe schema-matching output to TOON.",
@@ -974,6 +975,17 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         console.print(f"[red]Active review preflight is invalid JSON:[/] {exc}")
         raise typer.Exit(1) from exc
 
+    stale_reason = _stale_active_review_reason(root, preflight)
+    if stale_reason:
+        console.print(f"[red]Active review preflight is stale:[/] {stale_reason}")
+        _print_review_check_action(
+            what_failed=stale_reason,
+            why_it_matters="validating artifacts from another branch or PR can block the current review with unrelated failures",
+            repair_command="run `agentpack review --pr <number>` for the current PR, or `agentpack review --allow-local-fallback` for a local review",
+            safe_to_continue="no; start or resume the review that matches the current checkout",
+        )
+        raise typer.Exit(1)
+
     understanding = root / preflight["paths"]["understanding_output"]
     findings = root / preflight["paths"]["findings_output"]
     state_path = root / preflight["paths"].get("state", _STATE_PATH)
@@ -1075,6 +1087,19 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
     else:
         console.print("[green]✓[/] Stage 2 valid. Review artifacts complete; final summary is unblocked.")
     console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
+
+
+def _stale_active_review_reason(root: Path, preflight: dict[str, Any]) -> str:
+    preflight_git = preflight.get("git") if isinstance(preflight.get("git"), dict) else {}
+    expected_branch = str(preflight_git.get("branch") or "")
+    current_branch = git_core.current_branch(root) or ""
+    if expected_branch and current_branch and expected_branch != current_branch:
+        return f"active review was prepared for branch {expected_branch}, but current branch is {current_branch}"
+    paths = preflight.get("paths") if isinstance(preflight.get("paths"), dict) else {}
+    run_dir = str(paths.get("run_dir") or "")
+    if run_dir and not (root / run_dir).exists():
+        return f"active review run directory is missing: {run_dir}"
+    return ""
 
 
 def _print_review_check_action(

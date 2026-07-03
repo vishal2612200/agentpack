@@ -34,7 +34,7 @@ def register(app: typer.Typer) -> None:
         ),
         mode: str = typer.Option("balanced", "--mode", help=f"Refresh mode ({MODE_HELP})."),
         budget: int = typer.Option(0, "--budget", help="Refresh token budget (0 = config default)."),
-        thread: str = typer.Option("", "--thread", help="Use thread-scoped context state (auto by default in agent sessions; use 'global' for legacy global state)."),
+        thread: str = typer.Option("global", "--thread", help="Use thread-scoped context state ('auto' uses the current agent session; default is legacy global state)."),
     ) -> None:
         """Executable pre-edit gate for agents before they trust packed context."""
         if agent not in SUPPORTED_AGENTS:
