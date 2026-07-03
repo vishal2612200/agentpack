@@ -548,14 +548,13 @@ def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
             "line": 2,
             "side": "RIGHT",
             "body": (
-                "**AgentPack review: Should fix**\n\n"
-                "**What I noticed**\n"
+                "**Should fix**\n\n"
                 "foo returns a changed value\n\n"
-                "**Evidence**\n"
-                "src/foo.py:2 shows the returned value\n\n"
-                "**Suggested next step**\n"
-                "Return the intended value or update the caller expectation.\n\n"
-                "<sub>Finding `f1` | `should-fix` | category: `defect` | confidence: `high`</sub>"
+                "Evidence: src/foo.py:2 shows the returned value\n\n"
+                "Suggested next step: Return the intended value or update the caller expectation.\n\n"
+                "<details><summary>Review metadata</summary>\n\n"
+                "Finding `f1` | severity: `should-fix` | category: `defect` | confidence: `high`\n\n"
+                "</details>"
             ),
         }
     ]
@@ -653,14 +652,13 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
             "line": 2,
             "side": "RIGHT",
             "body": (
-                "**AgentPack review: Should fix**\n\n"
-                "**What I noticed**\n"
+                "**Should fix**\n\n"
                 "foo returns changed value\n\n"
-                "**Evidence**\n"
-                "src/foo.py:2 shows the returned value\n\n"
-                "**Suggested next step**\n"
-                "Fix this path, or leave a note explaining why the current behavior is intentional.\n\n"
-                "<sub>Finding `f1` | `should-fix`</sub>"
+                "Evidence: src/foo.py:2 shows the returned value\n\n"
+                "Suggested next step: Fix this path, or leave a note explaining why the current behavior is intentional.\n\n"
+                "<details><summary>Review metadata</summary>\n\n"
+                "Finding `f1` | severity: `should-fix`\n\n"
+                "</details>"
             ),
         }
     ]

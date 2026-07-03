@@ -1096,7 +1096,7 @@ The dry-run payload record has this shape:
         "path": "src/file.py",
         "line": 42,
         "side": "RIGHT",
-        "body": "**AgentPack review: Should fix**\n\n**What I noticed**\n...\n\n**Evidence**\n...\n\n**Suggested next step**\n..."
+        "body": "**Should fix**\n\n...\n\nEvidence: ...\n\nSuggested next step: ...\n\n<details><summary>Review metadata</summary>\n\nFinding `f1` | severity: `should-fix`\n\n</details>"
       }
     ]
   }

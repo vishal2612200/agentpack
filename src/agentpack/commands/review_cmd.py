@@ -1601,14 +1601,14 @@ def _inline_comment_body(finding: dict[str, Any], index: int) -> str:
     claim = _comment_field(finding, "claim") or "Review finding."
     evidence = _comment_field(finding, "evidence")
     parts = [
-        f"**AgentPack review: {_display_severity(severity)}**",
-        f"**What I noticed**\n{claim}",
+        f"**{_display_severity(severity)}**",
+        claim,
     ]
     if evidence:
-        parts.append(f"**Evidence**\n{evidence}")
+        parts.append(f"Evidence: {evidence}")
     next_step = _inline_comment_next_step(finding, severity)
     if next_step:
-        parts.append(f"**Suggested next step**\n{next_step}")
+        parts.append(f"Suggested next step: {next_step}")
     parts.append(_inline_comment_metadata(finding, index, severity))
     return _clip_text("\n\n".join(parts), 60_000)
 
@@ -1645,12 +1645,12 @@ def _inline_comment_next_step(finding: dict[str, Any], severity: str) -> str:
 
 def _inline_comment_metadata(finding: dict[str, Any], index: int, severity: str) -> str:
     finding_id = _comment_field(finding, "id") or f"finding-{index}"
-    metadata = [f"Finding {_inline_code(finding_id)}", _inline_code(severity)]
+    metadata = [f"Finding {_inline_code(finding_id)}", f"severity: {_inline_code(severity)}"]
     for field in ("category", "confidence", "lens", "type"):
         value = _comment_field(finding, field)
         if value:
             metadata.append(f"{field}: {_inline_code(value)}")
-    return "<sub>" + " | ".join(metadata) + "</sub>"
+    return "<details><summary>Review metadata</summary>\n\n" + " | ".join(metadata) + "\n\n</details>"
 
 
 def _inline_code(value: str) -> str:
