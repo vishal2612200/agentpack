@@ -9,7 +9,13 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ## [Unreleased]
 
 ### Added
+- No changes yet.
+
+## [0.3.37] — 2026-07-03
+
+### Added
 - Added a GitHub-ready release notes artifact step to `agentpack release prepare`, including release metadata, validation evidence, the matching changelog entry, and the publish command.
+- Included the locked Python dependency graph in the packaged Codex plugin snapshot so plugin trust scans see a lockfile in the distributable surface.
 
 ## [0.3.36] — 2026-07-03
 

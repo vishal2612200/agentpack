@@ -95,6 +95,7 @@ def test_packaged_codex_plugin_is_self_contained_for_distribution() -> None:
         ".codexignore",
         ".github/dependabot.yml",
         ".github/workflows/hol-plugin-scanner.yml",
+        "uv.lock",
     ):
         assert (bundle / rel).exists()
 
