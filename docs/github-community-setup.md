@@ -19,7 +19,7 @@ Target repository topics:
 
 ## Labels
 
-The canonical contributor labels live in [`.github/contributor-labels.json`](../.github/contributor-labels.json).
+The canonical contributor labels live in [`.github/contributor-labels.json`](https://github.com/vishal2612200/agentpack/blob/main/.github/contributor-labels.json).
 They include:
 
 - `good first issue`
@@ -34,7 +34,7 @@ They include:
 
 ## Starter Issues
 
-The starter issue queue lives in [`.github/contributor-issues.json`](../.github/contributor-issues.json).
+The starter issue queue lives in [`.github/contributor-issues.json`](https://github.com/vishal2612200/agentpack/blob/main/.github/contributor-issues.json).
 It contains 15 issues, including first-time contributor tasks and three high
 impact pin candidates.
 
@@ -88,7 +88,7 @@ GitHub Discussions are enabled. Seeded discussions:
 - Ideas: <https://github.com/vishal2612200/agentpack/discussions/37>
 - Help wanted: <https://github.com/vishal2612200/agentpack/discussions/38>
 
-Discussion form templates live in [`.github/DISCUSSION_TEMPLATE/`](../.github/DISCUSSION_TEMPLATE/).
+Discussion form templates live in [`.github/DISCUSSION_TEMPLATE/`](https://github.com/vishal2612200/agentpack/tree/main/.github/DISCUSSION_TEMPLATE).
 The public API enabled discussions and created seed discussions, but custom
 discussion category creation is still a GitHub UI task if exact category names
 are required.

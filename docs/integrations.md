@@ -94,7 +94,7 @@ same-worktree, same-branch file overlap.
 
 ### Integration limitations
 
-- **Advisory vs enforced:** because AgentPack cannot intercept prompts or edits, native integrations are *advisory* — they strongly suggest, but the host is free to proceed without them. An integration only becomes *enforced* if the host exposes a blocking API (e.g. a `preEdit` hook that can cancel an edit when readiness fails). No entry is claimed as hard-enforced without such a blocking host API. See [`native-integrations/README.md`](../native-integrations/README.md#advisory-vs-enforced-examples) for advisory and enforcement examples.
+- **Advisory vs enforced:** because AgentPack cannot intercept prompts or edits, native integrations are *advisory* — they strongly suggest, but the host is free to proceed without them. An integration only becomes *enforced* if the host exposes a blocking API (e.g. a `preEdit` hook that can cancel an edit when readiness fails). No entry is claimed as hard-enforced without such a blocking host API. See [`native-integrations/README.md`](https://github.com/vishal2612200/agentpack/blob/main/native-integrations/README.md#advisory-vs-enforced-examples) for advisory and enforcement examples.
 - AgentPack cannot intercept prompts inside IDEs — Cursor/Windsurf rely on rules being followed.
 - Claude wrapper (`agentpack claude`) is the most deterministic integration.
 - Prompt hooks stay idle until the current session task file contains a real task.

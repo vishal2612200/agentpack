@@ -126,7 +126,7 @@ agentpack benchmark e2e-report --baseline no-context --treatment agentpack --mar
 `e2e-report` compares task success, expected-file touch rate, tool calls, total
 tokens, estimated token cost, time-to-first-correct-file, and duration.
 Public E2E proof status lives in
-[`benchmarks/results/e2e-ab-status.md`](../benchmarks/results/e2e-ab-status.md).
+[`benchmarks/results/e2e-ab-status.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/e2e-ab-status.md).
 Until a dated `*-e2e-ab.md` report exists, AgentPack's public benchmark claims
 remain scoped to file selection.
 
