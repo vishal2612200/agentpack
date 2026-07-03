@@ -11,6 +11,18 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ### Added
 - No changes yet.
 
+## [0.3.36] — 2026-07-03
+
+### Documentation
+- Refreshed the README demo GIF/MP4 and packaged plugin screenshot so public assets show the full AgentPack workflow: route, skill recommendations, review preflight, learning capture, advisory memory timeline, and focused validation.
+- Added docs social preview and icon assets, then wired MkDocs logo, favicon, and social preview metadata to those checked-in assets.
+- Updated demo documentation so generated media and static distribution assets are discoverable and reproducible.
+
+### Validation
+- Added docs/plugin tests that keep route-demo, social preview, icon, GIF, MP4, and packaged Codex plugin assets aligned with the full workflow.
+- Ran `python -m agentpack.cli release-check --profile docs --json`.
+- Ran `python -m py_compile tools/render_demo_assets.py`, `git diff --check`, SVG parse checks, a generated GIF frame inspection, and `mkdocs build`.
+
 ## [0.3.35] — 2026-07-03
 
 ### Added

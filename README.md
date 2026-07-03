@@ -345,7 +345,7 @@ pipx ensurepath
 
 ## Status
 
-Alpha: `0.3.35`.
+Alpha: `0.3.36`.
 
 Works, tested, and used in real sessions. Python and JavaScript/TypeScript have strongest support. APIs may change before 1.0.
 

@@ -25,7 +25,7 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ![AgentPack route demo](https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-route-demo.svg)
 
-> **Status: alpha (v0.3.24).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
+> **Status: alpha (v0.3.36).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
 >
 > **Platform note:** macOS, Linux, and Windows are supported. Windows support targets PowerShell plus Git for Windows.
 >
@@ -33,10 +33,9 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ## Latest Update
 
-`0.3.24` adds thin plugin and IDE distribution surfaces for Codex, Cursor,
-Windsurf, Copilot, Cline, Kiro, OpenCode, and generic agent workflows. It also
-adds a faster docs/plugin release-check profile that skips build and public
-benchmark runs for docs-only releases.
+`0.3.36` refreshes AgentPack's public and packaged demo assets so they show the
+full local workflow: route the task, surface skill recommendations, preflight
+review output, record learning, inspect advisory memory, and run focused tests.
 
 ```bash
 npx @vishal2612200/agentpack learn --dashboard --team-export
