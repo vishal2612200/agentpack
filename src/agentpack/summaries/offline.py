@@ -11,10 +11,11 @@ from agentpack.analysis.role_inference import (
     infer_role_domain,
 )
 from agentpack.analysis.naming_signals import collect_public_name_candidates, summarize_naming_signals
-from agentpack.analysis.symbols import extract_python_symbols, extract_js_symbols, extract_go_symbols
+from agentpack.analysis.symbols import extract_python_symbols, extract_js_symbols, extract_go_symbols, extract_rust_symbols
 from agentpack.analysis.python_imports import extract_imports as py_imports
 from agentpack.analysis.js_ts_imports import extract_imports as js_imports
 from agentpack.analysis.go_imports import extract_imports as go_imports
+from agentpack.analysis.rust_imports import extract_imports as rust_imports
 
 
 def summarize(path: str, abs_path: Path, language: str | None, file_hash: str) -> FileSummary:
@@ -24,6 +25,8 @@ def summarize(path: str, abs_path: Path, language: str | None, file_hash: str) -
         return _js_summary(path, abs_path, language, file_hash)
     if language == "go":
         return _go_summary(path, abs_path, file_hash)
+    if language == "rust":
+        return _rust_summary(path, abs_path, file_hash)
     return _generic_summary(path, abs_path, language, file_hash)
 
 
@@ -189,6 +192,69 @@ def _go_summary(path: str, abs_path: Path, file_hash: str) -> FileSummary:
         schema_version=SUMMARY_SCHEMA_VERSION,
         summary=_render_summary(
             language="Go",
+            domain=role_info.domain,
+            role=role,
+            entrypoints=intel.entrypoints,
+            defines=intel.defines,
+            calls=intel.calls,
+            imports=imports,
+            external_systems=effects.external_systems,
+            reads_env=effects.reads_env,
+            side_effects=effects.side_effects,
+            ranking_keywords=role_info.ranking_keywords,
+            failure_hints=failure_hints,
+        ),
+        imports=imports[:20],
+        symbols=symbols,
+        domain=role_info.domain,
+        role=role,
+        entrypoints=intel.entrypoints,
+        defines=intel.defines,
+        calls=intel.calls,
+        reads_env=effects.reads_env,
+        reads_files=effects.reads_files,
+        writes_files=effects.writes_files,
+        external_systems=effects.external_systems,
+        side_effects=effects.side_effects,
+        failure_hints=failure_hints,
+        ranking_keywords=role_info.ranking_keywords,
+        related_hints=role_info.reasons,
+        public_api=public_api,
+        naming_signals=[],
+        naming_keywords=[],
+        error_paths=failure_hints,
+        test_hints=test_hints,
+    )
+
+
+def _rust_summary(path: str, abs_path: Path, file_hash: str) -> FileSummary:
+    text = _read_sample(abs_path)
+    imports = rust_imports(abs_path, text=text)
+    symbols = extract_rust_symbols(abs_path)
+    intel = extract_code_intelligence(path=path, language="rust", text=text, symbols=symbols)
+    effects = extract_side_effects(path=path, language="rust", text=text, imports=imports)
+    role_info = infer_role_domain(
+        path=path,
+        language="rust",
+        symbols=symbols,
+        imports=imports,
+        text=text,
+        entrypoints=intel.entrypoints,
+        external_systems=effects.external_systems,
+    )
+    role = role_info.role or _infer_responsibility(path, intel.defines)
+    failure_hints = extract_failure_hints(text)
+    public_api = _dedupe([*_infer_public_api(path, intel.defines, text), *intel.entrypoints])[:12]
+    test_hints = _infer_test_hints(path, role, intel.defines)
+
+    return FileSummary(
+        path=path,
+        hash=file_hash,
+        language="rust",
+        provider="offline",
+        schema_version=SUMMARY_SCHEMA_VERSION,
+        summary=_render_summary(
+            language="Rust",
             domain=role_info.domain,
             role=role,
             entrypoints=intel.entrypoints,

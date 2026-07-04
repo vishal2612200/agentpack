@@ -10,6 +10,7 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ### Added
 - Broadened the scoped `mypy` gate beyond the initial three-file set to cover the entire `src/agentpack/analysis/` package (import extraction, dependency graph, ranking, monorepo, and task classification), with behavior-preserving type fixes in `analysis/ranking.py` and `analysis/task_classifier.py` and a `tomllib`/`tomli` import override for the optional TOML backends.
+- Added a Rust symbol extraction slice: `extract_rust_symbols` pulls free functions (including `async`/`const fn`), `impl`/`trait` methods qualified by their owning type, and `struct`/`enum`/`trait` as class-like constructs, wired through `extract_symbols` and the offline summary path (`_rust_summary`). Documented the supported slice and its regex-based limits in `docs/limitations.md`.
 
 ## [0.3.38] — 2026-07-04
 
