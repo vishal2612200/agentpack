@@ -75,7 +75,15 @@ files = [
   "src/agentpack/core/e2e_benchmark.py",
   "src/agentpack/core/modes.py",
   "src/agentpack/router/models.py",
+  "src/agentpack/analysis/",
 ]
+
+# tomllib is stdlib only on Python 3.11+; on 3.10 the code falls back to the
+# third-party ``tomli`` shim. Neither is resolvable at the configured
+# python_version, so treat the optional TOML backends as untyped imports.
+[[tool.mypy.overrides]]
+module = ["tomllib", "tomli"]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 source = [

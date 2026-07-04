@@ -29,8 +29,8 @@ def classify_task(task: str) -> TaskClassification:
     text = task.lower()
     words = set(re.findall(r"[a-z0-9][a-z0-9_-]*", text))
     scores: dict[str, tuple[int, list[str]]] = {}
-    for kind, signals in _TASK_PATTERNS:
-        hits = [signal for signal in signals if signal in words or signal in text]
+    for kind, pattern_signals in _TASK_PATTERNS:
+        hits = [signal for signal in pattern_signals if signal in words or signal in text]
         if hits:
             scores[kind] = (len(hits), hits[:5])
 

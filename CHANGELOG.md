@@ -9,7 +9,7 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ## [Unreleased]
 
 ### Added
-- No changes yet.
+- Broadened the scoped `mypy` gate beyond the initial three-file set to cover the entire `src/agentpack/analysis/` package (import extraction, dependency graph, ranking, monorepo, and task classification), with behavior-preserving type fixes in `analysis/ranking.py` and `analysis/task_classifier.py` and a `tomllib`/`tomli` import override for the optional TOML backends.
 
 ## [0.3.38] — 2026-07-04
 
