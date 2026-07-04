@@ -626,3 +626,24 @@ def test_pack_planner_uses_github_pr_files_as_changed_context(tmp_path, monkeypa
     selected = {item.path: item for item in plan.selected}
     assert "backend/customerio_events.py" in selected
     assert "GitHub PR file" in selected["backend/customerio_events.py"].reasons
+
+
+def test_perf_json_returns_stable_top_level_keys(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["perf", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"summary", "history"}
+    assert set(data["summary"]) >= {
+        "events",
+        "raw_tokens",
+        "packed_tokens",
+        "estimated_saved_tokens",
+        "retrievals",
+        "output_compressions",
+    }
+    assert isinstance(data["history"], list)

@@ -9,6 +9,20 @@ from agentpack.core.config import LoopConfig
 from agentpack.core.loop_protocol import initialize_loop
 
 
+def test_next_json_emits_stable_top_level_keys(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("[context]\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["next", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"recommendations", "ok"}
+    assert isinstance(data["recommendations"], list)
+    assert isinstance(data["ok"], bool)
+
+
 def test_next_recommends_loop_runner_when_missing(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".agentpack").mkdir()
