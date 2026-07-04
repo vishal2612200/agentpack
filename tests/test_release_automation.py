@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 
 from typer.testing import CliRunner
@@ -113,3 +114,38 @@ def test_release_prepare_json_orchestrates(monkeypatch, tmp_path: Path) -> None:
     assert "--check-registry" in calls[0]
     assert "--tag" in calls[0]
     assert "v1.2.3" in calls[0]
+
+
+def test_release_check_json_emits_stable_top_level_keys(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.0.1"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.0.1] — 2026-01-01\n\n### Added\n- init.\n", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    monkeypatch.setattr("agentpack.commands.release_check.subprocess.run", lambda *a, **kw: Result())
+
+    result = CliRunner().invoke(app, ["release-check", "--skip-benchmark", "--skip-build", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"passed", "profile", "stages"}
+    assert isinstance(data["passed"], bool)
+    assert isinstance(data["stages"], list)
+    assert all({"name", "status"} <= set(stage) for stage in data["stages"])
+
+
+def test_ci_init_json_emits_stable_top_level_keys(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["ci", "init", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"path", "written", "overwritten"}
+    assert data["written"] is True
+    assert data["overwritten"] is False
+    assert data["path"].endswith("agentpack.yml")
