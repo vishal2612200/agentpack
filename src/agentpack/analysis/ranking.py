@@ -475,7 +475,7 @@ def _load_metric_rows(root: Path | None, window: int = 40) -> list[dict[str, Any
 
 def _task_signal_stats(root: Path | None, *, window: int = 40) -> dict[str, dict[str, dict[str, int]]]:
     rows = _load_metric_rows(root, window=window)
-    stats = {
+    stats: dict[str, dict[str, dict[str, int]]] = {
         "terms": {"good": {}, "bad": {}},
         "phrases": {"good": {}, "bad": {}},
     }
