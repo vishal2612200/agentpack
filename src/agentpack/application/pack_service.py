@@ -21,7 +21,13 @@ from agentpack.core.snapshot import build_snapshot, save_snapshot, load_snapshot
 from agentpack.core.diff import diff_snapshots
 from agentpack.core import git
 from agentpack.core.command_surface import refresh_commands
-from agentpack.core.context_pack import enrich_call_site_scores, select_files, save_pack_metadata, load_pack_metadata
+from agentpack.core.context_pack import (
+    compact_selected_file_payloads,
+    enrich_call_site_scores,
+    select_files,
+    save_pack_metadata,
+    load_pack_metadata,
+)
 from agentpack.core.citations import (
     citation_manifest_relpath,
     collect_pack_citations,
@@ -662,6 +668,14 @@ class PackPlanner:
                 omitted_relevant_files=omitted_relevant_files,
             )
             rank_result.scored = expanded_scored
+        selected = compact_selected_file_payloads(
+            selected,
+            files=packable,
+            summaries=summaries,
+            scored=rank_result.scored,
+            task=request.task,
+            changed_paths=changes.all_changed,
+        )
         phase_times["select"] = time.perf_counter() - t0
 
         return PackPlan(

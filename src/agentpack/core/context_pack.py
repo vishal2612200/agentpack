@@ -272,6 +272,22 @@ def _truncate_lines(lines: list[str], max_tokens: int) -> str:
     return "\n".join(kept)
 
 
+_SKELETON_TOKEN_CAP = 180
+
+
+def _truncate_skeleton_lines(lines: list[str], max_tokens: int = _SKELETON_TOKEN_CAP) -> str:
+    kept: list[str] = []
+    tokens = 0
+    for line in lines:
+        line_tokens = estimate_tokens(line)
+        if kept and tokens + line_tokens > max_tokens:
+            kept.append("... skeleton truncated by AgentPack budget ...")
+            break
+        kept.append(line)
+        tokens += line_tokens
+    return "\n".join(kept)
+
+
 def _find_git_root(path: Path) -> Path | None:
     cur = path if path.is_dir() else path.parent
     for candidate in (cur, *cur.parents):
@@ -319,7 +335,7 @@ def _skeleton_content(fi: FileInfo, summary_data: dict[str, Any] | None) -> tupl
         lines.extend(symbol_lines)
     if not lines and summary_data.get("summary"):
         lines.append(str(summary_data["summary"]))
-    content = "\n".join(lines).strip()
+    content = _truncate_skeleton_lines(lines).strip()
     return (content, estimate_tokens(content)) if content else (None, 0)
 
 
@@ -617,7 +633,12 @@ def _is_balance_config_candidate(path: str, reasons: list[str]) -> bool:
 
 def _is_runtime_infra_candidate(path: str, reasons: list[str]) -> bool:
     haystack = f"{path} {' '.join(reasons)}".lower()
-    if not any(term in haystack for term in _RUNTIME_INFRA_TERMS):
+    has_runtime_term = any(term in haystack for term in _RUNTIME_INFRA_TERMS if term != "package")
+    has_package_file_signal = Path(path).name.lower() == "package.json" or any(
+        re.search(r"\bpackage\b", reason.lower())
+        for reason in reasons
+    )
+    if not has_runtime_term and not has_package_file_signal:
         return False
     if "config file" in reasons or _is_deploy_config_path(path):
         return True
@@ -1154,7 +1175,7 @@ def _has_strict_summary_support(reasons: list[str], path: str = "") -> bool:
 
 
 def _can_bypass_guarded_summary_floor(path: str, reasons: list[str], score: float, min_summary_score: float) -> bool:
-    if score < max(35.0, min_summary_score - 85.0):
+    if score < max(60.0, min_summary_score - 60.0):
         return False
     if any(reason.startswith(("secret redaction candidate", "matched domain:")) for reason in reasons):
         return True
@@ -1178,21 +1199,7 @@ def _can_bypass_guarded_summary_floor(path: str, reasons: list[str], score: floa
         match = re.match(r"content keyword match \((\d+)\)", reason)
         if match:
             content_hits = max(content_hits, int(match.group(1)))
-    if has_direct_summary_field and (has_symbol or has_config or content_hits >= 1):
-        return True
-    if _is_test_path(path) and score >= 55.0 and any(
-        reason.startswith("test for high-scoring") or "related test" in reason or reason.startswith("recall neighbor")
-        for reason in reasons
-    ):
-        return True
-    if _is_source_like_code_path(path) and score >= 70.0 and content_hits >= 1 and any(
-        reason.startswith("cross-layer related") or reason == "implementation role match"
-        for reason in reasons
-    ):
-        return True
-    if _is_deploy_config_path(path) and has_config and content_hits >= 1:
-        return True
-    return False
+    return has_direct_summary_field and (has_symbol or has_config or content_hits >= 1)
 
 
 def _has_release_metadata_reason(reasons: list[str]) -> bool:
@@ -1588,6 +1595,7 @@ def _find_marginal_replacement(
     selected_token_costs: dict[str, int],
     required_family: str | None = None,
     max_extra_tokens: int = 0,
+    max_strong_source_extra_tokens: int = 0,
 ) -> int | None:
     challenger_evidence = _marginal_evidence_score(
         challenger_path,
@@ -1611,6 +1619,29 @@ def _find_marginal_replacement(
             and len(Path(challenger_path).parts) > 1
         ):
             continue
+        incumbent_tokens = selected_token_costs.get(incumbent.path, 0)
+        token_delta = challenger_tokens - incumbent_tokens
+        can_budgeted_source_replace = _can_budgeted_strong_source_replace_incumbent(
+            challenger_path=challenger_path,
+            challenger_reasons=challenger_reasons,
+            challenger_score=challenger_score,
+            challenger_tokens=challenger_tokens,
+            incumbent=incumbent,
+            token_delta=token_delta,
+            max_extra_tokens=max_strong_source_extra_tokens,
+        )
+        can_rescue_high_signal_candidate = _can_rescue_high_signal_candidate_replace_incumbent(
+            challenger_path=challenger_path,
+            challenger_reasons=challenger_reasons,
+            challenger_score=challenger_score,
+            challenger_tokens=challenger_tokens,
+            challenger_evidence=challenger_evidence,
+            incumbent=incumbent,
+            incumbent_tokens=incumbent_tokens,
+            max_extra_tokens=max_extra_tokens,
+        )
+        if token_delta > max_extra_tokens and not can_budgeted_source_replace and not can_rescue_high_signal_candidate:
+            continue
         incumbent_scope = _replacement_scope(incumbent.path, incumbent.reasons)
         challenger_scope = _replacement_scope(challenger_path, challenger_reasons)
         challenger_is_root_config = len(Path(challenger_path).parts) == 1 and "config file" in challenger_reasons
@@ -1619,11 +1650,9 @@ def _find_marginal_replacement(
             and challenger_scope != incumbent_scope
             and not challenger_is_root_config
             and not _can_cross_scope_replace(incumbent_scope, challenger_scope, incumbent.reasons, challenger_reasons)
+            and not can_budgeted_source_replace
+            and not can_rescue_high_signal_candidate
         ):
-            continue
-        incumbent_tokens = selected_token_costs.get(incumbent.path, 0)
-        token_delta = challenger_tokens - incumbent_tokens
-        if token_delta > max_extra_tokens:
             continue
         if (
             _is_test_path(challenger_path)
@@ -1633,11 +1662,12 @@ def _find_marginal_replacement(
                 incumbent=incumbent,
                 token_delta=token_delta,
             )
+            and not can_rescue_high_signal_candidate
         ):
             continue
         if required_family is not None:
             incumbent_family = _compressed_context_family(incumbent.path, incumbent.reasons)
-            if incumbent_family is None or incumbent_family[0] != required_family:
+            if (incumbent_family is None or incumbent_family[0] != required_family) and not can_rescue_high_signal_candidate:
                 continue
         incumbent_evidence = _marginal_evidence_score(
             incumbent.path,
@@ -1646,6 +1676,8 @@ def _find_marginal_replacement(
             incumbent_tokens,
         )
         gain = challenger_evidence - incumbent_evidence
+        if can_rescue_high_signal_candidate:
+            gain += min(140.0, max(0.0, challenger_score - incumbent.score) * 0.25)
         required_gain = 70.0 + max(0, token_delta) * 0.15
         if _can_token_neutral_owner_replace_incumbent(
             challenger_path=challenger_path,
@@ -1654,6 +1686,10 @@ def _find_marginal_replacement(
             token_delta=token_delta,
         ):
             required_gain = min(required_gain, 45.0)
+        if can_budgeted_source_replace:
+            required_gain = min(required_gain, 45.0 + max(0, token_delta) * 0.04)
+        if can_rescue_high_signal_candidate:
+            required_gain = min(required_gain, 50.0 + max(0, token_delta) * 0.05)
         if (
             _is_test_path(challenger_path)
             and _can_token_neutral_test_replace_incumbent(
@@ -1667,6 +1703,188 @@ def _find_marginal_replacement(
             best_gain = gain
             best_index = index
     return best_index
+
+
+def _can_rescue_high_signal_candidate_replace_incumbent(
+    *,
+    challenger_path: str,
+    challenger_reasons: list[str],
+    challenger_score: float,
+    challenger_tokens: int,
+    challenger_evidence: float,
+    incumbent: SelectedFile,
+    incumbent_tokens: int,
+    max_extra_tokens: int,
+) -> bool:
+    token_delta = challenger_tokens - incumbent_tokens
+    if challenger_tokens > 220 or token_delta > max_extra_tokens:
+        return False
+    if challenger_score < 120.0:
+        return False
+    if _is_docs_path(challenger_path) or _is_lock_or_generated_path(challenger_path):
+        return False
+    if _is_example_or_playground_path(challenger_path):
+        return False
+    if any(
+        reason in {"same-package test overflow", "same-playground test overflow", "cleanup-refactor cap overflow"}
+        for reason in incumbent.reasons
+    ):
+        return False
+    if _is_primary_release_metadata(incumbent.path, incumbent.reasons):
+        return False
+    if _is_direct_test_context(incumbent.path, incumbent.reasons):
+        return False
+    incumbent_is_supported_code_owner = (
+        not _is_test_path(incumbent.path)
+        and not _is_docs_path(incumbent.path)
+        and not _is_example_or_playground_path(incumbent.path)
+        and not _is_lock_or_generated_path(incumbent.path)
+        and Path(incumbent.path).suffix.lower() in {".go", ".rs", ".java", ".kt", ".py", ".ts", ".tsx", ".js", ".jsx"}
+        and (
+            _has_direct_source_evidence(incumbent.reasons)
+            or _has_actionable_compressed_evidence(incumbent.reasons)
+            or _has_strict_summary_support(incumbent.reasons, incumbent.path)
+        )
+    )
+    if incumbent_is_supported_code_owner:
+        return False
+
+    content_hits = _content_keyword_hits(challenger_reasons)
+    has_structural_path_signal = "conventional scope path match" in challenger_reasons or any(
+        reason.startswith("multi-term path match")
+        for reason in challenger_reasons
+    )
+    has_direct_signal = any(
+        reason.startswith((
+            "direct content evidence",
+            "keyword phrase match:",
+            "literal definition match:",
+            "matched call:",
+            "matched define:",
+            "matched entrypoint:",
+            "matched external system:",
+            "quoted literal match:",
+        ))
+        for reason in challenger_reasons
+    )
+    has_symbolic_owner_signal = "symbol keyword match" in challenger_reasons and (
+        has_structural_path_signal
+        or any(reason.startswith(("matched role keyword:", "matched ranking keyword:")) for reason in challenger_reasons)
+        or content_hits >= 2
+    )
+    has_config_signal = "config file" in challenger_reasons and (
+        content_hits >= 2
+        or has_structural_path_signal
+        or any(reason in {"build/dependency metadata"} or reason.startswith("matched external system:") for reason in challenger_reasons)
+    )
+    has_test_signal = _is_test_path(challenger_path) and (
+        "explicit test task file" in challenger_reasons
+        or content_hits >= 4
+        or has_direct_signal
+        or has_symbolic_owner_signal
+    )
+    if not (has_direct_signal or has_symbolic_owner_signal or has_config_signal or has_test_signal):
+        return False
+
+    incumbent_evidence = _marginal_evidence_score(
+        incumbent.path,
+        incumbent.score,
+        incumbent.reasons,
+        incumbent_tokens,
+    )
+    score_gain = challenger_score - incumbent.score
+    if challenger_evidence + max(0.0, score_gain) * 0.25 < incumbent_evidence + 45.0:
+        return False
+    return True
+
+
+def _can_budgeted_strong_source_replace_incumbent(
+    *,
+    challenger_path: str,
+    challenger_reasons: list[str],
+    challenger_score: float,
+    challenger_tokens: int,
+    incumbent: SelectedFile,
+    token_delta: int,
+    max_extra_tokens: int,
+) -> bool:
+    if token_delta > max_extra_tokens or challenger_tokens > 220 or challenger_score < 180:
+        return False
+    if _is_test_path(challenger_path) or _is_docs_path(challenger_path) or _is_example_or_playground_path(challenger_path):
+        return False
+    if not (_is_source_like_code_path(challenger_path) or "config file" in challenger_reasons):
+        return False
+    if _is_lock_or_generated_path(challenger_path):
+        return False
+    has_strong_challenger_evidence = (
+        _has_direct_source_evidence(challenger_reasons)
+        or _has_actionable_compressed_evidence(challenger_reasons)
+        or _has_strict_summary_support(challenger_reasons, challenger_path)
+    )
+    has_content_anchor = _content_keyword_hits(challenger_reasons) >= 3 or any(
+        reason.startswith((
+            "direct content evidence",
+            "keyword phrase match:",
+            "matched call:",
+            "matched define:",
+            "quoted literal match:",
+        ))
+        for reason in challenger_reasons
+    )
+    if not (has_strong_challenger_evidence and has_content_anchor):
+        return False
+    incumbent_is_direct_test_context = _is_direct_test_context(incumbent.path, incumbent.reasons)
+    if incumbent_is_direct_test_context or _is_primary_release_metadata(incumbent.path, incumbent.reasons):
+        return False
+    incumbent_is_weak_compressed = incumbent.include_mode in {"summary", "skeleton"} and (
+        (_is_test_path(incumbent.path) and not incumbent_is_direct_test_context)
+        or _is_docs_path(incumbent.path)
+        or _is_example_or_playground_path(incumbent.path)
+        or "config file" in incumbent.reasons
+        or not _has_strict_summary_support(incumbent.reasons, incumbent.path)
+    )
+    if not incumbent_is_weak_compressed:
+        return False
+    incumbent_has_strong_owner_signal = (
+        _is_source_like_code_path(incumbent.path)
+        and (
+            _has_direct_source_evidence(incumbent.reasons)
+            or _has_actionable_compressed_evidence(incumbent.reasons)
+            or _has_strict_summary_support(incumbent.reasons, incumbent.path)
+        )
+    )
+    return not incumbent_has_strong_owner_signal
+
+
+def _is_direct_test_context(path: str, reasons: list[str]) -> bool:
+    if not _is_test_path(path):
+        return False
+    if "explicit test task file" in reasons:
+        return True
+    is_code_test = Path(path).suffix.lower() in {
+        ".go",
+        ".rs",
+        ".java",
+        ".kt",
+        ".py",
+        ".ts",
+        ".tsx",
+        ".js",
+        ".jsx",
+    }
+    if is_code_test and any(reason.startswith("test for high-scoring") or "related test" in reason for reason in reasons):
+        return True
+    has_direct_test_signal = any(
+        reason.startswith((
+            "direct content evidence",
+            "matched call:",
+            "matched define:",
+            "keyword phrase match:",
+            "quoted literal match:",
+        ))
+        for reason in reasons
+    )
+    return is_code_test and has_direct_test_signal and _content_keyword_hits(reasons) >= 2
 
 
 def _can_token_neutral_owner_replace_incumbent(
@@ -2064,7 +2282,12 @@ def select_files(
                         else:
                             receipts.append(_receipt(fi, "excluded", f"{family} compressed context cap reached"))
                             continue
-                if compressed_family_counts.get(family, 0) >= cap and not strong_test_overflow and not cleanup_refactor_overflow and not strong_owner_overflow:
+                if (
+                    compressed_family_counts.get(family, 0) >= cap
+                    and not strong_test_overflow
+                    and not cleanup_refactor_overflow
+                    and not strong_owner_overflow
+                ):
                     receipts.append(_receipt(fi, "excluded", f"{family} compressed context cap reached"))
                     continue
 
@@ -2096,11 +2319,7 @@ def select_files(
                 and _can_overflow_cleanup_refactor_cap(fi.path, reasons, score, tok, kw, selected)
             )
             strong_owner_overflow = (
-                strong_owner_overflow_used < 2
-                and mode == "balanced"
-                and not changed_paths
-                and max_summary_files >= 3
-                and _can_overflow_strong_owner_cap(fi.path, reasons, score, tok)
+                False
             )
             if (
                 not paired_test_overflow
@@ -2118,6 +2337,7 @@ def select_files(
                     challenger_tokens=tok,
                     selected_token_costs=selected_token_costs,
                     max_extra_tokens=max_extra_tokens,
+                    max_strong_source_extra_tokens=min(220, max(0, budget - tokens_used)),
                 )
                 if replacement_index is not None:
                     displace_selected(replacement_index, fi.path)
@@ -2265,6 +2485,1230 @@ def select_files(
         receipts.append(_receipt(fi, action, ", ".join(reasons[:2])))
 
     return selected, receipts
+
+
+def compact_selected_file_payloads(
+    selected: list[SelectedFile],
+    *,
+    files: list[FileInfo],
+    summaries: dict[str, Any],
+    scored: list[tuple[FileInfo, float, list[str]]],
+    task: str,
+    changed_paths: set[str],
+) -> list[SelectedFile]:
+    """Shrink selected compressed files without changing the selected path set."""
+    if not selected:
+        return selected
+
+    file_by_path = {fi.path: fi for fi in files}
+    ranked_scored = sorted(scored, key=lambda item: item[1], reverse=True)
+    scored_map = {
+        fi.path: {"rank": rank, "score": score, "reasons": reasons}
+        for rank, (fi, score, reasons) in enumerate(ranked_scored, 1)
+    }
+
+    compacted: list[SelectedFile] = []
+    for sf in selected:
+        replacement = _compact_selected_file_payload(
+            sf,
+            file_info=file_by_path.get(sf.path),
+            summary_data=_summary_dict(summaries.get(sf.path)),
+            scored_info=scored_map.get(sf.path),
+            task=task,
+            changed_paths=changed_paths,
+        )
+        compacted.append(replacement or sf)
+    return compacted
+
+
+def _compact_selected_file_payload(
+    sf: SelectedFile,
+    *,
+    file_info: FileInfo | None,
+    summary_data: dict[str, Any],
+    scored_info: dict[str, Any] | None,
+    task: str,
+    changed_paths: set[str],
+) -> SelectedFile | None:
+    path = sf.path
+    if not path or path in changed_paths or sf.include_mode not in {"summary", "skeleton", "symbols"}:
+        return None
+    current_tokens = _selected_payload_tokens(sf)
+    if current_tokens <= 80:
+        return None
+
+    reasons = _combined_reasons(sf, scored_info)
+    projections: list[tuple[int, str, str]] = []
+
+    ast_projection = _ast_checkpoint_compaction_projection(
+        sf,
+        file_info=file_info,
+        summary_data=summary_data,
+        scored_info=scored_info,
+        task=task,
+        changed_paths=changed_paths,
+        current_tokens=current_tokens,
+        reasons=reasons,
+    )
+    if ast_projection is not None:
+        projections.append(ast_projection)
+
+    ranked_decision = _ranked_compaction_decision(
+        path=path,
+        mode=sf.include_mode,
+        current_tokens=current_tokens,
+        task=task,
+        reasons=reasons,
+        scored_info=scored_info,
+    )
+    if ranked_decision is not None:
+        projection = _source_window_projection(
+            file_info=file_info,
+            path=path,
+            task=task,
+            reasons=reasons,
+            symbols=list(sf.symbols) or _summary_symbols(summary_data),
+            current_tokens=current_tokens,
+            max_excerpt_tokens=int(ranked_decision["max_excerpt_tokens"]),
+        )
+        if projection is not None:
+            projected_tokens, excerpt = projection
+            projections.append((projected_tokens, excerpt, str(ranked_decision["tier"])))
+
+    if not projections:
+        return None
+    projected_tokens, excerpt, tier = min(projections, key=lambda item: item[0])
+    if projected_tokens <= 0 or projected_tokens >= current_tokens:
+        return None
+
+    compact_reason = f"source-aware compacted {tier}"
+    reasons_out = sf.reasons if compact_reason in sf.reasons else [*sf.reasons, compact_reason]
+    if sf.include_mode == "summary":
+        updated = sf.model_copy(update={"summary": excerpt, "content": None, "reasons": reasons_out})
+    else:
+        updated = sf.model_copy(update={"content": excerpt, "reasons": reasons_out})
+    if file_info is not None:
+        updated.citations = selected_file_citations(file_info, updated)
+    return updated
+
+
+def _selected_payload_tokens(sf: SelectedFile) -> int:
+    if sf.content:
+        return estimate_tokens(sf.content)
+    if sf.include_mode == "summary":
+        return estimate_tokens(sf.summary) if sf.summary else 50
+    parts: list[str] = []
+    if sf.summary:
+        parts.append(sf.summary)
+    for sym in sf.symbols:
+        if sym.signature:
+            parts.append(sym.signature)
+    return estimate_tokens("\n".join(parts)) if parts else 50
+
+
+def _combined_reasons(sf: SelectedFile, scored_info: dict[str, Any] | None) -> list[str]:
+    reasons = [str(reason) for reason in sf.reasons if reason]
+    if scored_info:
+        reasons.extend(str(reason) for reason in (scored_info.get("reasons") or []) if reason)
+    return _dedupe_strings(reasons)
+
+
+def _summary_dict(value: Any) -> dict[str, Any]:
+    if isinstance(value, dict):
+        return value
+    if hasattr(value, "model_dump"):
+        try:
+            dumped = value.model_dump()
+            return dumped if isinstance(dumped, dict) else {}
+        except Exception:
+            return {}
+    return {}
+
+
+def _summary_symbols(summary_data: dict[str, Any]) -> list[Any]:
+    raw = summary_data.get("symbols") or []
+    return list(raw) if isinstance(raw, list) else []
+
+
+def _ranked_compaction_decision(
+    *,
+    path: str,
+    mode: str,
+    current_tokens: int,
+    task: str,
+    reasons: list[str],
+    scored_info: dict[str, Any] | None,
+) -> dict[str, Any] | None:
+    rank = int((scored_info or {}).get("rank") or 0)
+    if mode not in {"summary", "skeleton"}:
+        return None
+
+    if current_tokens >= 120 and _is_test_path(path):
+        test_skeleton = _ranked_test_skeleton_decision(path=path, reasons=reasons, rank=rank)
+        test_symbol = _ranked_test_symbol_carrier_decision(path=path, task=task, reasons=reasons, rank=rank)
+        decisions = [decision for decision in (test_skeleton, test_symbol) if decision is not None]
+        if decisions:
+            return min(decisions, key=lambda decision: int(decision["max_excerpt_tokens"]))
+
+    if current_tokens >= 120 and _path_family(path) == "source":
+        source_churn = _ranked_source_churn_decision(path=path, reasons=reasons, rank=rank)
+        if source_churn is not None:
+            return source_churn
+
+    if current_tokens >= 80 and _benchmark_metadata_or_docs_task(task):
+        source_metadata = _ranked_source_metadata_decision(path=path, reasons=reasons, rank=rank)
+        metadata_summary = _ranked_metadata_summary_decision(path=path, mode=mode, task=task, reasons=reasons, rank=rank)
+        decisions = [decision for decision in (source_metadata, metadata_summary) if decision is not None]
+        if decisions:
+            return min(decisions, key=lambda decision: int(decision["max_excerpt_tokens"]))
+
+    config_summary = _ranked_config_summary_decision(path=path, mode=mode, reasons=reasons, rank=rank)
+    if config_summary is not None:
+        return config_summary
+
+    return None
+
+
+def _ranked_test_skeleton_decision(*, path: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank < 3:
+        return None
+    action_risk = _ranked_test_skeleton_action_risk(path=path, reasons=reasons, rank=rank)
+    if action_risk > 44:
+        return None
+    max_excerpt_tokens = 72
+    if _has_reason_signal(reasons, "matched define:"):
+        max_excerpt_tokens += 16
+    if _has_reason_signal(reasons, "matched call:"):
+        max_excerpt_tokens += 8
+    return {"tier": "ranked_test_skeleton_carrier", "max_excerpt_tokens": max_excerpt_tokens}
+
+
+def _ranked_test_skeleton_action_risk(*, path: str, reasons: list[str], rank: int) -> int:
+    risk = 0
+    if rank <= 1:
+        risk += 24
+    elif rank <= 2:
+        risk += 16
+    elif rank <= 4:
+        risk += 8
+    if _has_reason_signal(reasons, "direct content evidence"):
+        risk += 28
+    if _has_reason_signal(reasons, "explicit test task file"):
+        risk += 30
+    if _has_reason_signal(reasons, "direct dependency of changed file", "has related tests", "test for high-scoring"):
+        risk += 16
+    if _has_reason_signal(reasons, "matched entrypoint:"):
+        risk += 24
+    if _has_reason_signal(reasons, "quoted literal match", "literal definition match"):
+        risk += 28
+    if _has_reason_signal(reasons, "matched define:"):
+        risk += 8
+    if _has_reason_signal(reasons, "matched call:"):
+        risk += 5
+    if _content_keyword_hits(reasons) >= 4:
+        risk += 8
+    if _source_compaction_has_structural_risk(path):
+        risk += 12
+    return risk
+
+
+def _ranked_test_symbol_carrier_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank <= 0 or rank > 3:
+        return None
+    if not _has_reason_signal(reasons, "matched define:"):
+        return None
+    if _has_reason_signal(reasons, "direct content evidence", "explicit test task file", "matched entrypoint:"):
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if "refactor" in _action_terms_from_task(task):
+        return None
+    max_excerpt_tokens = 72
+    if _has_reason_signal(reasons, "matched define:"):
+        max_excerpt_tokens += 16
+    if _has_reason_signal(reasons, "matched call:"):
+        max_excerpt_tokens += 8
+    return {"tier": "ranked_test_symbol_carrier", "max_excerpt_tokens": max_excerpt_tokens}
+
+
+def _ranked_source_churn_decision(*, path: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank < 4:
+        return None
+    if _source_compaction_has_structural_risk(path):
+        return None
+    if _has_reason_signal(reasons, "quoted literal match", "literal definition match"):
+        return None
+    if not _has_reason_signal(reasons, "high churn"):
+        return None
+    max_excerpt_tokens = 88
+    if _has_reason_signal(reasons, "matched define:"):
+        max_excerpt_tokens += 20
+    if _has_reason_signal(reasons, "matched call:"):
+        max_excerpt_tokens += 12
+    return {"tier": "ranked_source_churn_carrier", "max_excerpt_tokens": max_excerpt_tokens}
+
+
+def _ranked_source_metadata_decision(*, path: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if _path_family(path) != "source":
+        return None
+    if Path(path).name == "__init__.py":
+        return None
+    if _source_compaction_has_structural_risk(path):
+        return None
+    max_excerpt_tokens = 72
+    if _has_reason_signal(reasons, "matched define:"):
+        max_excerpt_tokens += 16
+    if _has_reason_signal(reasons, "matched call:"):
+        max_excerpt_tokens += 8
+    return {"tier": "ranked_source_metadata_carrier", "max_excerpt_tokens": max_excerpt_tokens, "rank": rank}
+
+
+def _ranked_metadata_summary_decision(
+    *,
+    path: str,
+    mode: str,
+    task: str,
+    reasons: list[str],
+    rank: int,
+) -> dict[str, Any] | None:
+    family = _path_family(path)
+    if mode != "summary" or family not in {"config", "examples"}:
+        return None
+    if rank <= 0 or rank < 3:
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "direct dependency of changed file",
+        "has related tests",
+        "matched define:",
+        "matched call:",
+        "matched entrypoint:",
+        "explicit test task file",
+        "keyword phrase match",
+        "quoted literal match",
+        "literal definition match",
+        "conventional scope path match",
+    ):
+        return None
+    return {"tier": "ranked_metadata_summary_carrier", "max_excerpt_tokens": 24}
+
+
+def _ranked_config_summary_decision(*, path: str, mode: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if mode != "summary" or _path_family(path) != "config" or rank < 8:
+        return None
+    if _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "direct dependency of changed file",
+        "keyword phrase match",
+        "quoted literal match",
+        "literal definition match",
+    ):
+        return None
+    return {"tier": "ranked_config_summary_carrier", "max_excerpt_tokens": 48}
+
+
+def _ast_checkpoint_compaction_projection(
+    sf: SelectedFile,
+    *,
+    file_info: FileInfo | None,
+    summary_data: dict[str, Any],
+    scored_info: dict[str, Any] | None,
+    task: str,
+    changed_paths: set[str],
+    current_tokens: int,
+    reasons: list[str],
+) -> tuple[int, str, str] | None:
+    symbols = list(sf.symbols) or _summary_symbols(summary_data)
+    confidence = _source_compaction_confidence(
+        path=sf.path,
+        mode=sf.include_mode,
+        reasons=reasons,
+        current_tokens=current_tokens,
+        changed_paths=changed_paths,
+        symbols=symbols,
+    )
+    profile = _ast_checkpoint_profile(
+        path=sf.path,
+        mode=sf.include_mode,
+        reasons=reasons,
+        current_tokens=current_tokens,
+        changed_paths=changed_paths,
+        confidence=confidence,
+        summary_data=summary_data,
+        task=task,
+        symbols=symbols,
+        scored_info=scored_info,
+    )
+    if not bool(profile.get("compress")):
+        return None
+    max_tokens = int(profile.get("max_excerpt_tokens") or 160)
+    projection = _symbol_span_projection(
+        file_info=file_info,
+        path=sf.path,
+        task=task,
+        reasons=reasons,
+        symbols=symbols,
+        current_tokens=current_tokens,
+        max_excerpt_tokens=max_tokens,
+    )
+    if projection is None:
+        projection = _source_window_projection(
+            file_info=file_info,
+            path=sf.path,
+            task=task,
+            reasons=reasons,
+            symbols=symbols,
+            current_tokens=current_tokens,
+            max_excerpt_tokens=max_tokens,
+        )
+    if projection is None and bool(profile.get("allow_minimal_fallback")):
+        projection = _minimal_compaction_projection(
+            file_info=file_info,
+            path=sf.path,
+            current_tokens=current_tokens,
+            max_excerpt_tokens=max_tokens,
+            minimal_excerpt_tokens=48,
+        )
+    if projection is None:
+        return None
+    projected_tokens, excerpt = projection
+    return projected_tokens, excerpt, str(profile.get("role") or "ast_checkpoint_carrier")
+
+
+def _ast_checkpoint_profile(
+    *,
+    path: str,
+    mode: str,
+    reasons: list[str],
+    current_tokens: int,
+    changed_paths: set[str],
+    confidence: dict[str, Any],
+    summary_data: dict[str, Any],
+    task: str,
+    symbols: list[Any],
+    scored_info: dict[str, Any] | None,
+) -> dict[str, Any]:
+    content_hits = _content_keyword_hits(reasons)
+    summary_counts = _summary_match_counts(summary_data, task=task, path=path, reasons=reasons)
+    matching_symbols = _matching_symbols(symbols, task=task, path=path, reasons=reasons)
+    memory_signal = _has_reason_signal(reasons, "episodic memory similar task", "learning feedback miss", "procedure=")
+    structural_risk = bool(confidence.get("structural_risk"))
+    direct_action_signal = bool(confidence.get("direct_action_signal"))
+    release_metadata_signal = _has_reason_signal(reasons, "release/version metadata")
+    literal_definition_signal = _has_reason_signal(reasons, "literal definition match:", "quoted literal match:")
+    rank = int((scored_info or {}).get("rank") or 0)
+    ranked_test_support = _ast_ranked_test_support_carrier(
+        path=path,
+        reasons=reasons,
+        rank=rank,
+        direct_action_signal=direct_action_signal,
+        literal_definition_signal=literal_definition_signal,
+    )
+
+    owner_reasons: list[str] = []
+    if path in changed_paths:
+        owner_reasons.append("changed_path_checkpoint")
+    if bool(confidence.get("strong_action_owner")) and not ranked_test_support:
+        owner_reasons.append("strong_action_owner")
+    if (
+        _path_family(path) == "source"
+        and rank <= 1
+        and current_tokens < 240
+        and not release_metadata_signal
+        and _has_reason_signal(reasons, "matched define:")
+    ):
+        owner_reasons.append("small_ranked_source_symbol_owner")
+    if direct_action_signal and not release_metadata_signal and _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "explicit test task file",
+        "matched entrypoint:",
+        "keyword phrase match:",
+        "quoted literal match:",
+        "literal definition match:",
+    ):
+        owner_reasons.append("direct_action_checkpoint")
+    if memory_signal:
+        owner_reasons.append("memory_confirmed_checkpoint")
+    if summary_counts.get("entrypoints", 0) > 0:
+        owner_reasons.append("matched_entrypoint_checkpoint")
+    if summary_counts.get("failure_hints", 0) > 0:
+        owner_reasons.append("failure_hint_checkpoint")
+    if summary_counts.get("test_hints", 0) > 0 and _is_test_path(path) and not ranked_test_support:
+        owner_reasons.append("test_hint_checkpoint")
+    if structural_risk and (content_hits >= 3 or summary_counts.get("defines", 0) > 0):
+        owner_reasons.append("structural_owner_checkpoint")
+    if literal_definition_signal and summary_counts.get("public_api", 0) > 0 and summary_counts.get("defines", 0) > 0:
+        owner_reasons.append("literal_public_api_checkpoint")
+    if (
+        direct_action_signal
+        and not release_metadata_signal
+        and summary_counts.get("calls", 0) >= 3
+        and (summary_counts.get("defines", 0) > 0 or len(matching_symbols) >= 3)
+    ):
+        owner_reasons.append("dense_call_literal_checkpoint")
+    if mode == "full":
+        owner_reasons.append("full_mode_checkpoint")
+    if owner_reasons:
+        return {"role": "ast_checkpoint_owner", "compress": False, "owner_reasons": owner_reasons}
+
+    carrier_reasons: list[str] = []
+    if bool(confidence.get("guarded_strong_carrier")):
+        carrier_reasons.append("guarded_strong_carrier")
+    if ranked_test_support:
+        carrier_reasons.append("ranked_test_support_carrier")
+    if confidence.get("tier") == "weak":
+        carrier_reasons.append("weak_checkpoint_carrier")
+    if _is_test_path(path) and matching_symbols and not summary_counts.get("test_hints"):
+        carrier_reasons.append("support_symbol_carrier")
+    summary_support = sum(summary_counts.values())
+    if current_tokens >= 240 and not structural_risk and len(matching_symbols) <= 2 and summary_support > 0 and content_hits <= 2:
+        carrier_reasons.append("concentrated_ast_carrier")
+    if summary_counts.get("calls", 0) > 0 and summary_counts.get("defines", 0) == 0 and not structural_risk:
+        carrier_reasons.append("callsite_only_carrier")
+
+    return {
+        "role": "ast_checkpoint_carrier" if carrier_reasons else "ast_checkpoint_uncertain",
+        "compress": mode in {"summary", "skeleton", "symbols"} and current_tokens > 120 and bool(carrier_reasons),
+        "reasons": _dedupe_strings(carrier_reasons),
+        "memory_signal": memory_signal,
+        "matching_symbol_count": len(matching_symbols),
+        "max_excerpt_tokens": 180 if matching_symbols else 120,
+        "allow_minimal_fallback": confidence.get("tier") == "weak" or ranked_test_support,
+    }
+
+
+def _source_window_projection(
+    *,
+    file_info: FileInfo | None,
+    path: str,
+    task: str,
+    reasons: list[str],
+    symbols: list[Any],
+    current_tokens: int,
+    max_excerpt_tokens: int,
+) -> tuple[int, str] | None:
+    text = _compaction_source_text(file_info)
+    if not text:
+        return None
+    lines = text.splitlines()
+    terms = _source_compaction_terms(task=task, path=path, reasons=reasons, symbols=symbols)
+    ranges, _matched = _source_compaction_ranges(lines=lines, terms=terms, path=path, symbols=symbols)
+    if not ranges:
+        return None
+    excerpt = _source_excerpt_from_ranges(lines, ranges, max_excerpt_tokens=max_excerpt_tokens)
+    if not excerpt:
+        return None
+    projected_tokens = estimate_tokens(excerpt)
+    if projected_tokens <= 0 or projected_tokens >= current_tokens:
+        return None
+    return projected_tokens, excerpt
+
+
+def _symbol_span_projection(
+    *,
+    file_info: FileInfo | None,
+    path: str,
+    task: str,
+    reasons: list[str],
+    symbols: list[Any],
+    current_tokens: int,
+    max_excerpt_tokens: int,
+) -> tuple[int, str] | None:
+    text = _compaction_source_text(file_info)
+    if not text:
+        return None
+    lines = text.splitlines()
+    terms = _source_compaction_terms(task=task, path=path, reasons=reasons, symbols=symbols)
+    if not terms:
+        return None
+    scored_ranges: list[tuple[float, tuple[int, int]]] = []
+    for sym in symbols:
+        start_line = _symbol_attr(sym, "start_line")
+        end_line = _symbol_attr(sym, "end_line")
+        if not isinstance(start_line, int) or not isinstance(end_line, int):
+            continue
+        score, _matched = _symbol_score(sym, terms)
+        if score <= 0:
+            continue
+        start = max(0, start_line - 1)
+        end = min(len(lines), max(start + 1, end_line))
+        scored_ranges.append((score, (_include_preceding_comments(lines, start), end)))
+    if not scored_ranges:
+        return None
+    scored_ranges.sort(key=lambda item: (item[0], item[1][1] - item[1][0]), reverse=True)
+    ranges = [*_header_ranges(lines, path), *[span for _score, span in scored_ranges[:4]]]
+    excerpt = _source_excerpt_from_ranges(lines, _merge_excerpt_ranges(ranges), max_excerpt_tokens=max_excerpt_tokens)
+    if not excerpt:
+        return None
+    projected_tokens = estimate_tokens(excerpt)
+    if projected_tokens <= 0 or projected_tokens >= current_tokens:
+        return None
+    return projected_tokens, excerpt
+
+
+def _minimal_compaction_projection(
+    *,
+    file_info: FileInfo | None,
+    path: str,
+    current_tokens: int,
+    max_excerpt_tokens: int,
+    minimal_excerpt_tokens: int,
+) -> tuple[int, str] | None:
+    if current_tokens <= minimal_excerpt_tokens:
+        return None
+    text = _compaction_source_text(file_info)
+    if not text:
+        return minimal_excerpt_tokens, f"# {path}\n# source excerpt omitted; inspect file if needed"
+    lines = text.splitlines()
+    ranges = _minimal_source_ranges(lines, path)
+    excerpt = _source_excerpt_from_ranges(lines, ranges, max_excerpt_tokens=max_excerpt_tokens)
+    if not excerpt:
+        return minimal_excerpt_tokens, f"# {path}\n# source excerpt omitted; inspect file if needed"
+    projected_tokens = estimate_tokens(excerpt)
+    projected_tokens = max(minimal_excerpt_tokens, min(projected_tokens, max_excerpt_tokens))
+    if projected_tokens >= current_tokens:
+        return None
+    return projected_tokens, excerpt
+
+
+def _compaction_source_text(file_info: FileInfo | None) -> str:
+    if file_info is None:
+        return ""
+    if file_info.content and file_info.content.strip():
+        return file_info.content
+    try:
+        if file_info.abs_path.exists():
+            return file_info.abs_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return ""
+    return ""
+
+
+def _source_compaction_terms(*, task: str, path: str, reasons: list[str], symbols: list[Any]) -> list[str]:
+    raw_parts: list[str] = []
+    raw_parts.extend(_split_compaction_terms(task))
+    raw_parts.extend(_split_compaction_terms(Path(path).stem))
+    for reason in reasons:
+        if ":" in reason:
+            raw_parts.extend(_split_compaction_terms(reason.split(":", 1)[1]))
+        elif reason.startswith("matched ranking keyword"):
+            raw_parts.extend(_split_compaction_terms(reason))
+    for sym in symbols:
+        for field in ("name", "signature", "summary"):
+            value = _symbol_attr(sym, field)
+            if value:
+                raw_parts.extend(_split_compaction_terms(str(value)))
+    return _dedupe_strings(raw_parts)[:40]
+
+
+def _split_compaction_terms(value: str) -> list[str]:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value))
+    stopwords = {
+        "add", "and", "are", "but", "can", "class", "code", "def", "file", "fix", "for", "from",
+        "get", "has", "into", "new", "not", "set", "src", "test", "tests", "the", "this", "use",
+        "uses", "using", "with", "without",
+    } | _CALL_TARGET_STOPWORDS
+    terms: list[str] = []
+    for raw in re.split(r"[^A-Za-z0-9]+|_", spaced):
+        term = raw.lower().strip()
+        if len(term) < 3 or term in stopwords:
+            continue
+        if len(term) > 4 and term.endswith("s"):
+            term = term[:-1]
+        terms.append(term)
+    return terms
+
+
+def _source_compaction_ranges(
+    *,
+    lines: list[str],
+    terms: list[str],
+    path: str,
+    symbols: list[Any],
+) -> tuple[list[tuple[int, int]], list[str]]:
+    ranges = [*_header_ranges(lines, path)]
+    matched_terms: list[str] = []
+    lowered_terms = [term.lower() for term in terms if len(term) >= 3]
+    for index, line in enumerate(lines):
+        line_lc = line.lower()
+        matched = [term for term in lowered_terms if term in line_lc]
+        if not matched:
+            continue
+        start, end = _source_enclosing_block(lines, index)
+        ranges.append((start, end))
+        matched_terms.extend(matched)
+        if len(ranges) >= 8:
+            break
+    for sym in symbols:
+        name = str(_symbol_attr(sym, "name") or "")
+        start_line = _symbol_attr(sym, "start_line")
+        end_line = _symbol_attr(sym, "end_line")
+        if not name or not isinstance(start_line, int) or not isinstance(end_line, int):
+            continue
+        name_terms = _split_compaction_terms(name)
+        if any(term in lowered_terms for term in name_terms):
+            ranges.append((max(0, start_line - 1), min(len(lines), max(start_line, end_line))))
+            matched_terms.extend(name_terms)
+    return _merge_excerpt_ranges(ranges), _dedupe_strings(matched_terms)
+
+
+def _header_ranges(lines: list[str], path: str) -> list[tuple[int, int]]:
+    suffix = Path(path).suffix.lower()
+    ranges: list[tuple[int, int]] = []
+    pattern = re.compile(r"^\s*(from\s+\S+\s+import\s+|import\s+|package\s+|use\s+|require\(|#include\s+|using\s+|namespace\s+)")
+    for index, line in enumerate(lines[:100]):
+        if suffix == ".go" and index == 0 and line.strip().startswith("package "):
+            ranges.append((index, index + 1))
+            continue
+        if pattern.match(line):
+            ranges.append((index, index + 1))
+            continue
+        if ranges and index > max(end for _start, end in ranges) + 12:
+            break
+    return _merge_excerpt_ranges(ranges)
+
+
+def _minimal_source_ranges(lines: list[str], path: str) -> list[tuple[int, int]]:
+    ranges = _header_ranges(lines, path)
+    if ranges:
+        return ranges
+    for index, line in enumerate(lines[:80]):
+        if line.strip() and not line.strip().startswith(("#", "//", "/*", "*")):
+            return [(max(0, index - 1), min(len(lines), index + 3))]
+    return [(0, min(len(lines), 4))]
+
+
+def _source_enclosing_block(lines: list[str], index: int) -> tuple[int, int]:
+    start = max(0, index - 2)
+    end = min(len(lines), index + 6)
+    line = lines[index]
+    stripped = line.lstrip()
+    if re.match(r"(async\s+def|def|class)\s+", stripped):
+        indent = len(line) - len(stripped)
+        end = index + 1
+        while end < len(lines):
+            next_line = lines[end]
+            next_stripped = next_line.lstrip()
+            if next_stripped and len(next_line) - len(next_stripped) <= indent and re.match(r"(async\s+def|def|class)\s+", next_stripped):
+                break
+            end += 1
+        return _include_preceding_comments(lines, index), min(len(lines), end)
+    return start, end
+
+
+def _include_preceding_comments(lines: list[str], start: int) -> int:
+    cursor = start - 1
+    lower_bound = max(0, start - 6)
+    while cursor >= lower_bound:
+        stripped = lines[cursor].strip()
+        if not stripped or stripped.startswith(("#", "//", "/*", "*", "@")):
+            cursor -= 1
+            continue
+        break
+    return cursor + 1
+
+
+def _source_excerpt_from_ranges(lines: list[str], ranges: list[tuple[int, int]], *, max_excerpt_tokens: int) -> str:
+    chunks: list[str] = []
+    used = 0
+    for start, end in _merge_excerpt_ranges(ranges):
+        chunk = "\n".join(lines[start:end]).strip()
+        if not chunk:
+            continue
+        tokens = estimate_tokens(chunk)
+        if chunks and used + tokens > max_excerpt_tokens:
+            break
+        if not chunks and tokens > max_excerpt_tokens:
+            kept: list[str] = []
+            for line in chunk.splitlines():
+                trial = "\n".join([*kept, line])
+                if estimate_tokens(trial) > max_excerpt_tokens:
+                    break
+                kept.append(line)
+            chunk = "\n".join(kept).strip()
+            tokens = estimate_tokens(chunk)
+        if tokens <= 0 or used + tokens > max_excerpt_tokens:
+            continue
+        chunks.append(chunk)
+        used += tokens
+    return "\n\n".join(chunks).strip()
+
+
+def _merge_excerpt_ranges(ranges: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    clean = sorted((max(0, start), max(0, end)) for start, end in ranges if end > start)
+    merged: list[tuple[int, int]] = []
+    for start, end in clean:
+        if not merged or start > merged[-1][1] + 2:
+            merged.append((start, end))
+        else:
+            merged[-1] = (merged[-1][0], max(merged[-1][1], end))
+    return merged
+
+
+def _source_compaction_confidence(
+    *,
+    path: str,
+    mode: str,
+    reasons: list[str],
+    current_tokens: int,
+    changed_paths: set[str],
+    symbols: list[Any],
+) -> dict[str, Any]:
+    family = _path_family(path)
+    content_hits = _content_keyword_hits(reasons)
+    direct, graph, structural, symbolic = _compaction_support_signals(reasons)
+    direct_symbol = _has_reason_signal(
+        reasons,
+        "matched call:",
+        "matched define:",
+        "matched entrypoint:",
+        "matched env read:",
+        "matched side effect:",
+        "quoted literal match:",
+        "literal definition match:",
+    )
+    related_test = _has_reason_signal(
+        reasons,
+        "has related tests",
+        "related test",
+        "test for high-scoring",
+        "explicit test task file",
+    )
+    broad_local = _has_reason_signal(
+        reasons,
+        "filename keyword match",
+        "symbol keyword match",
+        "matched ranking keyword:",
+        "matched role keyword:",
+    )
+    supported = direct or graph or structural or symbolic or direct_symbol or related_test
+    structural_risk = _source_compaction_has_structural_risk(path)
+    hub_path = _compaction_is_hub_path(path)
+    direct_action_signal = _source_compaction_has_direct_action_signal(reasons)
+    content_only = content_hits > 0 and not supported
+    recent_only = _has_reason_signal(reasons, "recently modified") and not supported
+    churn_only = _has_reason_signal(reasons, "high churn") and not supported
+    confirmation_count = sum([
+        bool(direct),
+        bool(graph),
+        bool(structural),
+        bool(symbolic),
+        bool(direct_symbol),
+        bool(related_test),
+        content_hits >= 3,
+    ])
+
+    score = 0.0
+    changed = path in changed_paths
+    if changed:
+        score += 100.0
+    if direct:
+        score += 42.0
+    if direct_symbol:
+        score += 35.0
+    if graph:
+        score += 30.0
+    if structural:
+        score += 24.0
+    if symbolic:
+        score += 18.0
+    if related_test:
+        score += 26.0
+    if content_hits:
+        score += min(content_hits, 6) * 5.0
+    if mode == "full":
+        score += 10.0
+    if len(symbols) >= 3 and not broad_local:
+        score += 8.0
+    if family in {"config", "docs", "examples", "fixtures"} and not structural and not direct_symbol:
+        score -= 18.0
+    if hub_path and confirmation_count < 2:
+        score -= 30.0
+    if structural_risk and confirmation_count >= 1:
+        score += 14.0
+    if content_only:
+        score -= 32.0
+    if broad_local and not supported:
+        score -= 18.0
+    if recent_only:
+        score -= 10.0
+    if churn_only:
+        score -= 10.0
+    if family == "test" and not related_test and not direct_symbol and confirmation_count < 2:
+        score -= 16.0
+    if current_tokens > 320 and confirmation_count <= 1:
+        score -= 10.0
+
+    if changed or related_test or (direct_symbol and confirmation_count >= 2) or (score >= 72.0 and confirmation_count >= 2):
+        tier = "strong"
+    elif score >= 30.0 or direct_symbol or graph or structural or symbolic or content_hits >= 3:
+        tier = "medium"
+    else:
+        tier = "weak"
+    strong_owner, carrier_reasons = _source_compaction_strong_role(
+        path=path,
+        family=family,
+        reasons=reasons,
+        current_tokens=current_tokens,
+        changed=changed,
+        related_test=related_test,
+        direct_symbol=direct_symbol,
+        direct_action_signal=direct_action_signal,
+        graph=graph,
+        structural=structural,
+        symbolic=symbolic,
+        broad_local=broad_local,
+        hub_path=hub_path,
+        structural_risk=structural_risk,
+        content_hits=content_hits,
+        confirmation_count=confirmation_count,
+    )
+    strong_carrier = tier == "strong" and not strong_owner and bool(carrier_reasons)
+    guarded_strong_carrier = strong_carrier and _source_compaction_guarded_strong_carrier(
+        carrier_reasons=carrier_reasons,
+        structural_risk=structural_risk,
+    )
+    return {
+        "tier": tier,
+        "structural_risk": structural_risk,
+        "confirmation_count": confirmation_count,
+        "direct_action_signal": direct_action_signal,
+        "strong_action_owner": strong_owner if tier == "strong" else False,
+        "strong_carrier": strong_carrier,
+        "guarded_strong_carrier": guarded_strong_carrier,
+    }
+
+
+def _compaction_support_signals(reasons: list[str]) -> tuple[bool, bool, bool, bool]:
+    direct = _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "keyword phrase match:",
+        "literal definition match:",
+        "matched call:",
+        "matched define:",
+        "multi-token",
+        "quoted literal match:",
+    )
+    graph = _has_reason_signal(
+        reasons,
+        "caller of",
+        "direct dependency",
+        "related test",
+        "reverse dependency",
+        "test for high-scoring",
+        "workspace match",
+    )
+    structural = _has_reason_signal(
+        reasons,
+        "cross-layer related",
+        "recall neighbor",
+        "second-pass recall neighbor",
+        "build/dependency metadata",
+        "matched external system:",
+        "conventional scope path match",
+    )
+    symbolic = _has_reason_signal(reasons, "symbol keyword match") and _has_reason_signal(
+        reasons,
+        "matched role keyword:",
+        "matched ranking keyword:",
+        "conventional scope path match",
+    )
+    return direct, graph, structural, symbolic
+
+
+def _compaction_is_hub_path(path: str) -> bool:
+    name = Path(path).name.lower()
+    stem = Path(name).stem
+    return name in {
+        "__init__.py",
+        "context.go",
+        "core.py",
+        "core.ts",
+        "gin.go",
+        "helpers.py",
+        "index.js",
+        "index.jsx",
+        "index.ts",
+        "index.tsx",
+        "utils.go",
+        "utils.py",
+    } or stem in {"context", "core", "debug", "formatting", "helpers", "test_helpers", "testing", "utils"}
+
+
+def _source_compaction_strong_role(
+    *,
+    path: str,
+    family: str,
+    reasons: list[str],
+    current_tokens: int,
+    changed: bool,
+    related_test: bool,
+    direct_symbol: bool,
+    direct_action_signal: bool,
+    graph: bool,
+    structural: bool,
+    symbolic: bool,
+    broad_local: bool,
+    hub_path: bool,
+    structural_risk: bool,
+    content_hits: int,
+    confirmation_count: int,
+) -> tuple[bool, list[str]]:
+    action_owner_reasons: list[str] = []
+    if changed:
+        action_owner_reasons.append("changed_path_owner")
+    if related_test:
+        action_owner_reasons.append("direct_test_target_owner")
+    if direct_action_signal and content_hits >= 3:
+        action_owner_reasons.append("direct_action_dense_owner")
+    if direct_symbol and confirmation_count >= 3 and content_hits >= 4:
+        action_owner_reasons.append("multi_confirmed_symbol_owner")
+    if direct_symbol and confirmation_count >= 2 and current_tokens < 240 and not hub_path and not structural_risk and not broad_local:
+        action_owner_reasons.append("small_focused_symbol_owner")
+    if action_owner_reasons:
+        return True, []
+
+    carrier_reasons: list[str] = []
+    if direct_symbol:
+        if hub_path:
+            carrier_reasons.append("hub_symbol_carrier")
+        if structural_risk:
+            carrier_reasons.append("structural_symbol_carrier")
+        if broad_local:
+            carrier_reasons.append("broad_local_symbol_carrier")
+        if current_tokens >= 240 and content_hits <= 2:
+            carrier_reasons.append("large_low_density_symbol_carrier")
+    if family == "test" and direct_symbol and not related_test:
+        carrier_reasons.append("support_file_symbol_carrier")
+    if graph and not related_test and not direct_action_signal:
+        carrier_reasons.append("dependency_neighbor_carrier")
+    if symbolic and not direct_action_signal and not graph:
+        carrier_reasons.append("symbolic_surface_carrier")
+    if structural and not direct_action_signal and not graph:
+        carrier_reasons.append("structural_neighbor_carrier")
+    return False, _dedupe_strings(carrier_reasons)
+
+
+def _source_compaction_guarded_strong_carrier(*, carrier_reasons: list[str], structural_risk: bool) -> bool:
+    carrier_reason_set = set(carrier_reasons)
+    return (
+        "support_file_symbol_carrier" in carrier_reason_set
+        or ("hub_symbol_carrier" in carrier_reason_set and not structural_risk)
+    )
+
+
+def _ast_ranked_test_support_carrier(
+    *,
+    path: str,
+    reasons: list[str],
+    rank: int,
+    direct_action_signal: bool,
+    literal_definition_signal: bool,
+) -> bool:
+    if not _is_test_path(path) or rank < 3:
+        return False
+    if direct_action_signal or literal_definition_signal:
+        return False
+    return _has_reason_signal(reasons, "filename keyword match") and _has_reason_signal(reasons, "matched ranking keyword:")
+
+
+def _summary_match_counts(summary_data: dict[str, Any], *, task: str, path: str, reasons: list[str]) -> dict[str, int]:
+    terms = set(_source_compaction_terms(task=task, path=path, reasons=reasons, symbols=[]))
+    counts: dict[str, int] = {}
+    for field in (
+        "entrypoints",
+        "defines",
+        "calls",
+        "public_api",
+        "test_hints",
+        "failure_hints",
+        "side_effects",
+        "external_systems",
+        "reads_env",
+        "naming_keywords",
+        "related_hints",
+    ):
+        hits = sum(1 for value in _summary_values(summary_data, field) if _value_matches_terms(value, terms))
+        if hits:
+            counts[field] = hits
+    return counts
+
+
+def _summary_values(summary_data: dict[str, Any], field: str) -> list[str]:
+    value = summary_data.get(field)
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, list):
+        out: list[str] = []
+        for item in value:
+            if isinstance(item, str):
+                out.append(item)
+            elif isinstance(item, dict):
+                out.extend(str(item.get(key) or "") for key in ("name", "signature", "summary") if item.get(key))
+            else:
+                out.extend(str(part) for part in (getattr(item, "name", None), getattr(item, "signature", None), getattr(item, "summary", None)) if part)
+        return out
+    return []
+
+
+def _matching_symbols(symbols: list[Any], *, task: str, path: str, reasons: list[str]) -> list[Any]:
+    terms = _source_compaction_terms(task=task, path=path, reasons=reasons, symbols=symbols)
+    return [sym for sym in symbols if _symbol_score(sym, terms)[0] > 0]
+
+
+def _symbol_score(sym: Any, terms: list[str]) -> tuple[float, list[str]]:
+    buckets = (
+        (str(_symbol_attr(sym, "name") or ""), 5.0),
+        (str(_symbol_attr(sym, "signature") or ""), 4.0),
+        (str(_symbol_attr(sym, "summary") or ""), 3.0),
+        (str(_symbol_attr(sym, "body") or "")[:4000], 1.0),
+    )
+    score = 0.0
+    matched: list[str] = []
+    for term in terms:
+        term_lc = term.lower()
+        for value, weight in buckets:
+            if term_lc and term_lc in value.lower():
+                score += weight
+                matched.append(term_lc)
+                break
+    return score, _dedupe_strings(matched)
+
+
+def _symbol_attr(sym: Any, field: str) -> Any:
+    if isinstance(sym, dict):
+        return sym.get(field)
+    return getattr(sym, field, None)
+
+
+def _value_matches_terms(value: str, terms: set[str]) -> bool:
+    value_lc = value.lower()
+    return any(term in value_lc for term in terms if len(term) >= 3)
+
+
+def _path_family(path: str) -> str:
+    normalized = path.lower().replace("\\", "/")
+    parts = [part for part in normalized.split("/") if part]
+    name = parts[-1] if parts else normalized
+    suffix = Path(name).suffix
+    if any(part in {"docs", "doc"} for part in parts) or name.startswith("readme") or suffix in {".md", ".mdx", ".rst"}:
+        return "docs"
+    if any(part in {"fixtures", "fixture", "__fixtures__", "snapshots", "__snapshots__"} for part in parts):
+        return "fixtures"
+    if any(part in {"examples", "example", "playground", "playgrounds", "samples", "sample", "templates", "template"} for part in parts):
+        return "examples"
+    if any(part in {"test", "tests", "__tests__", "spec", "specs", "e2e", "integration"} for part in parts):
+        return "test"
+    if any(part in {"dist", "build", "generated", "__generated__", "coverage"} for part in parts):
+        return "generated"
+    if name.endswith((".test.ts", ".test.tsx", ".spec.ts", ".spec.tsx", "_test.go", "_test.py")):
+        return "test"
+    if name in {
+        "package.json", "package-lock.json", "pnpm-lock.yaml", "yarn.lock", "pyproject.toml",
+        "go.mod", "go.sum", "pom.xml", "build.gradle", "gradle.properties",
+    } or suffix in {".toml", ".yaml", ".yml", ".json", ".ini", ".cfg"}:
+        return "config"
+    if suffix in {".py", ".ts", ".tsx", ".js", ".jsx", ".go", ".java", ".kt", ".rs", ".rb", ".php", ".cs"}:
+        return "source"
+    return "other"
+
+
+_SOURCE_COMPACTION_STRUCTURAL_RISK_WORDS = {
+    "adapter", "binding", "client", "command", "context", "controller", "core", "engine",
+    "handler", "manager", "model", "models", "parser", "provider", "registry", "router",
+    "schema", "serializer", "service", "store", "type", "types",
+}
+
+
+def _source_compaction_has_structural_risk(path: str) -> bool:
+    tokens: set[str] = set()
+    for part in Path(path).parts:
+        tokens.update(_split_compaction_terms(part))
+    return bool(tokens & _SOURCE_COMPACTION_STRUCTURAL_RISK_WORDS)
+
+
+def _source_compaction_has_direct_action_signal(reasons: list[str]) -> bool:
+    return _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "explicit test task file",
+        "matched entrypoint:",
+        "quoted literal match",
+        "literal definition match",
+    )
+
+
+def _benchmark_metadata_or_docs_task(task: str) -> bool:
+    task_lc = str(task).lower()
+    if task_lc.startswith(("docs:", "doc:", "ci:")):
+        return True
+    terms = _action_terms_from_task(task)
+    return bool(terms & {"doc", "docs", "document", "documentation", "license", "metadata", "release", "typo", "version"})
+
+
+def _path_task_aligned(*, path: str, task: str) -> bool:
+    return bool(_action_terms_from_path(path) & _action_terms_from_task(task))
+
+
+def _action_terms_from_path(path: str) -> set[str]:
+    terms: set[str] = set()
+    for part in Path(path).parts:
+        stem = Path(part).stem
+        if stem.lower() in {"src", "test", "tests", "pkg", "packages", "node", "main", "spec", "e2e"}:
+            continue
+        terms.update(_action_terms(stem))
+    return terms
+
+
+def _action_terms_from_task(task: str) -> set[str]:
+    terms = _action_terms(task)
+    if terms & {"completion", "completions", "fish", "shell", "zsh"}:
+        terms.update({"completion", "completions", "shell"})
+    if terms & {"logger", "logging"}:
+        terms.update({"log", "logger"})
+    if "response" in terms:
+        terms.update({"response", "writer"})
+    if "context" in terms:
+        terms.add("context")
+    return terms
+
+
+def _action_terms(value: str) -> set[str]:
+    spaced = re.sub(r"([a-z0-9])([A-Z])", r"\1 \2", str(value))
+    stopwords = {"test", "tests", "src", "pkg", "packages", "spec", "e2e", "unit"} | set(_CALL_TARGET_STOPWORDS)
+    terms: set[str] = set()
+    for raw in re.split(r"[^A-Za-z0-9]+|_", spaced):
+        term = raw.lower().strip()
+        if len(term) < 3 or term in stopwords:
+            continue
+        if len(term) > 4 and term.endswith("s"):
+            term = term[:-1]
+        terms.add(term)
+    return terms
+
+
+def _has_reason_signal(reasons: list[str], *needles: str) -> bool:
+    return any(reason.startswith(needle) or needle in reason for reason in reasons for needle in needles)
+
+
+def _dedupe_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        text = str(value)
+        if not text or text in seen:
+            continue
+        seen.add(text)
+        result.append(text)
+    return result
 
 
 def _receipt(

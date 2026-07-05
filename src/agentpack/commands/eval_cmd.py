@@ -134,7 +134,9 @@ def register(app: typer.Typer) -> None:
 
         if memory_ab:
             comparison = _run_memory_ab(root, eval_cases, run_checks=memory_ab_checks, replay=replay)
-            if prove_targets and comparison["regressed"]:
+            failure = _memory_ab_prove_target_failure(comparison) if prove_targets else ""
+            if failure:
+                console.print(f"[red]Memory A/B target failed:[/] {failure}")
                 raise typer.Exit(2)
             return
 
@@ -284,9 +286,13 @@ def _pass_label(value) -> str:
 def _run_memory_ab(root: Path, eval_cases, *, run_checks: bool = False, replay: bool = False) -> dict:
     rows = []
     regressed = 0
+    memory_signal_selected_total = 0
+    memory_signal_compacted_total = 0
     for case in eval_cases:
-        baseline = _plan_with_memory(root, case, "off")
-        memory = _plan_with_memory(root, case, "auto")
+        baseline_details = _plan_with_memory_details(root, case, "off")
+        memory_details = _plan_with_memory_details(root, case, "auto")
+        baseline = baseline_details["paths"]
+        memory = memory_details["paths"]
         baseline_passed = None
         memory_passed = None
         if run_checks:
@@ -300,13 +306,23 @@ def _run_memory_ab(root: Path, eval_cases, *, run_checks: bool = False, replay: 
         base_noise = len(base_selected - required) if required else len(base_selected)
         memory_noise = len(memory_selected - required) if required else len(memory_selected)
         status = "same"
+        row_regressed = False
         if memory_hits > base_hits:
             status = "improved"
         elif memory_hits < base_hits or memory_noise > base_noise + 5:
             status = "regressed"
-            regressed += 1
+            row_regressed = True
         if baseline_passed is True and memory_passed is False:
             status = "regressed"
+            row_regressed = True
+        memory_signal_selected = int(memory_details["memory_signal_selected_files"])
+        memory_signal_compacted = int(memory_details["memory_signal_compacted_files"])
+        memory_signal_selected_total += memory_signal_selected
+        memory_signal_compacted_total += memory_signal_compacted
+        if memory_signal_compacted > 0:
+            status = "regressed"
+            row_regressed = True
+        if row_regressed:
             regressed += 1
         rows.append({
             "case": case.id,
@@ -315,6 +331,8 @@ def _run_memory_ab(root: Path, eval_cases, *, run_checks: bool = False, replay: 
             "memory_hits": memory_hits,
             "baseline_noise": base_noise,
             "memory_noise": memory_noise,
+            "memory_signal_selected_files": memory_signal_selected,
+            "memory_signal_compacted_files": memory_signal_compacted,
             "baseline_passed": baseline_passed,
             "memory_passed": memory_passed,
             "status": status,
@@ -327,6 +345,8 @@ def _run_memory_ab(root: Path, eval_cases, *, run_checks: bool = False, replay: 
     tbl.add_column("mem hits", justify="right")
     tbl.add_column("base noise", justify="right")
     tbl.add_column("mem noise", justify="right")
+    tbl.add_column("mem signal", justify="right")
+    tbl.add_column("mem compacted", justify="right")
     if run_checks:
         tbl.add_column("base pass", justify="center")
         tbl.add_column("mem pass", justify="center")
@@ -341,16 +361,36 @@ def _run_memory_ab(root: Path, eval_cases, *, run_checks: bool = False, replay: 
             str(row["memory_hits"]),
             str(row["baseline_noise"]),
             str(row["memory_noise"]),
+            str(row["memory_signal_selected_files"]),
+            str(row["memory_signal_compacted_files"]),
         ]
         if run_checks:
             cells.extend([_pass_label(row["baseline_passed"]), _pass_label(row["memory_passed"])])
         cells.append(f"{style}{row['status']}{end}")
         tbl.add_row(*cells)
     console.print(tbl)
-    return {"rows": rows, "regressed": regressed}
+    return {
+        "rows": rows,
+        "regressed": regressed,
+        "memory_signal_selected_files": memory_signal_selected_total,
+        "memory_signal_compacted_files": memory_signal_compacted_total,
+        "memory_signals_tested": memory_signal_selected_total > 0,
+    }
+
+
+def _memory_ab_prove_target_failure(comparison: dict) -> str:
+    if int(comparison.get("regressed") or 0) > 0:
+        return "memory feedback regressed selection, checks, or memory-confirmed compaction"
+    if not bool(comparison.get("memory_signals_tested")):
+        return "no memory-confirmed selected files; seed episodic or ranking memory before using --prove-targets"
+    return ""
 
 
 def _plan_with_memory(root: Path, case, memory_feedback: str) -> list[str]:
+    return list(_plan_with_memory_details(root, case, memory_feedback)["paths"])
+
+
+def _plan_with_memory_details(root: Path, case, memory_feedback: str) -> dict[str, object]:
     previous = os.environ.get("AGENTPACK_MEMORY_FEEDBACK")
     os.environ["AGENTPACK_MEMORY_FEEDBACK"] = memory_feedback
     try:
@@ -364,12 +404,34 @@ def _plan_with_memory(root: Path, case, memory_feedback: str) -> list[str]:
             refresh=False,
             task_source="eval_memory_ab",
         ))
-        return [item.path for item in plan.selected]
+        memory_signal_selected = 0
+        memory_signal_compacted = 0
+        for item in plan.selected:
+            reasons = [str(reason) for reason in item.reasons]
+            has_memory_signal = _memory_signal_reason(reasons)
+            if has_memory_signal:
+                memory_signal_selected += 1
+                if any(reason.startswith("source-aware compacted") for reason in reasons):
+                    memory_signal_compacted += 1
+        return {
+            "paths": [item.path for item in plan.selected],
+            "memory_signal_selected_files": memory_signal_selected,
+            "memory_signal_compacted_files": memory_signal_compacted,
+        }
     finally:
         if previous is None:
             os.environ.pop("AGENTPACK_MEMORY_FEEDBACK", None)
         else:
             os.environ["AGENTPACK_MEMORY_FEEDBACK"] = previous
+
+
+def _memory_signal_reason(reasons: list[str]) -> bool:
+    return any(
+        "episodic memory similar task" in reason
+        or "learning feedback miss" in reason
+        or "procedure=" in reason
+        for reason in reasons
+    )
 
 
 def _run_case_with_memory(root: Path, case, memory_feedback: str, *, replay: bool) -> bool:

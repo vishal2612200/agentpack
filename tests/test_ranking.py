@@ -1105,6 +1105,54 @@ def test_changed_noise_file_is_labeled_workspace_context_only():
     assert "modified workspace context only" in scored[0][2]
 
 
+def test_broad_root_go_symbol_carrier_is_dampened():
+    hub = _fi("gin.go", language="go")
+    hub.content = "func updateRouteTree() {}\nfunc unrelated() {}\n"
+
+    scored = score_files(
+        [hub],
+        changed_paths=set(),
+        staged_paths=set(),
+        recently_modified=[],
+        dep_graph={},
+        keywords=build_keyword_plan("ci update go version support"),
+        summaries={
+            hub.path: {
+                "symbols": [{"name": "updateRouteTree"}],
+                "defines": ["updateRouteTree"],
+                "ranking_keywords": ["version"],
+            },
+        },
+    )
+
+    assert "broad Go symbol carrier dampening" in scored[0][2]
+    assert scored[0][1] < 120
+
+
+def test_go_action_owner_path_signal_is_not_dampened():
+    owner = _fi("binding/bson.go", language="go")
+    owner.content = "func EncodeBSON() {}\n"
+
+    scored = score_files(
+        [owner],
+        changed_paths=set(),
+        staged_paths=set(),
+        recently_modified=[],
+        dep_graph={},
+        keywords=build_keyword_plan("upgrade bson mongo driver"),
+        summaries={
+            owner.path: {
+                "symbols": [{"name": "EncodeBSON"}],
+                "defines": ["EncodeBSON"],
+                "external_systems": ["MongoDB/Mongoose"],
+            },
+        },
+    )
+
+    assert "broad Go symbol carrier dampening" not in scored[0][2]
+    assert scored[0][1] >= 120
+
+
 def test_generated_agent_artifacts_are_quiet_without_direct_need():
     artifact = _fi(".agentpack/context.md", language="markdown")
     source = _fi("src/auth/session.py")

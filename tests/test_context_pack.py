@@ -14,7 +14,15 @@ from agentpack.core.citations import (
     validate_claim_support,
     write_citation_manifest,
 )
-from agentpack.core.context_pack import enrich_call_site_scores, save_pack_metadata, select_files, _selection_priority
+from agentpack.core.context_pack import (
+    compact_selected_file_payloads,
+    _find_marginal_replacement,
+    _selection_priority,
+    _skeleton_content,
+    enrich_call_site_scores,
+    save_pack_metadata,
+    select_files,
+)
 from agentpack.core.models import Citation, ContextPack, FileInfo, OmittedRelevantFile, Receipt, SelectedFile
 from agentpack.core.pack_handoff import build_pack_handoff
 from agentpack.core.scanner import file_hash
@@ -31,6 +39,272 @@ def _fi(path: str, tokens: int = 100, hash_val: str = "h1") -> FileInfo:
         hash=hash_val,
         language="python",
     )
+
+
+def test_compact_selected_file_payloads_shrinks_symbol_carrier_without_changing_path(tmp_path):
+    source = tmp_path / "tests" / "test_basic.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def test_default_true_sentinel():",
+            "    assert True",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="tests/test_basic.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="tests/test_basic.py",
+            language="python",
+            score=300.0,
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "matched define: test_default_true_sentinel"],
+            content=source.read_text(encoding="utf-8"),
+            summary="test helpers",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[(fi, 300.0, ["symbol keyword match", "matched define: test_default_true_sentinel"])],
+        task='Use `default=True` as a sentinel for non-boolean flags',
+        changed_paths=set(),
+    )
+
+    assert [sf.path for sf in compacted] == ["tests/test_basic.py"]
+    assert _sf_tokens(compacted[0]) < _sf_tokens(selected[0])
+    assert "test_default_true_sentinel" in (compacted[0].content or "")
+    assert "source-aware compacted" in " ".join(compacted[0].reasons)
+
+
+def test_compact_selected_file_payloads_protects_direct_owner_evidence(tmp_path):
+    source = tmp_path / "tests" / "test_commands.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def test_no_such_command_suggestion():",
+            "    assert True",
+            "",
+            *[f"def unrelated_command_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="tests/test_commands.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="tests/test_commands.py",
+            language="python",
+            score=350.0,
+            include_mode="skeleton",
+            reasons=[
+                "direct content evidence +170",
+                "matched entrypoint: CLI command: no-such-command",
+                "matched define: test_no_such_command_suggestion",
+            ],
+            content=source.read_text(encoding="utf-8"),
+            summary="command tests",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (
+                fi,
+                350.0,
+                [
+                    "direct content evidence +170",
+                    "matched entrypoint: CLI command: no-such-command",
+                    "matched define: test_no_such_command_suggestion",
+                ],
+            )
+        ],
+        task="Add NoSuchCommand exception with suggestions for misspelled commands",
+        changed_paths=set(),
+    )
+
+    assert compacted[0] == selected[0]
+
+
+def test_compact_selected_file_payloads_protects_memory_confirmed_owner(tmp_path):
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="src/service.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="src/service.py",
+            language="python",
+            score=210.0,
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "episodic memory similar task; overlap=target; source hash still current; confidence=0.70 boost +12",
+                "content keyword match (1)",
+            ],
+            content=source.read_text(encoding="utf-8"),
+            summary="target handler",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={
+            "src/service.py": {
+                "defines": ["target_handler"],
+                "symbols": [{
+                    "name": "target_handler",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "signature": "def target_handler(request)",
+                    "summary": "Handle target requests",
+                    "body": "def target_handler(request): return request.user",
+                }],
+            }
+        },
+        scored=[(fi, 210.0, selected[0].reasons)],
+        task="fix target handler",
+        changed_paths=set(),
+    )
+
+    assert compacted[0] == selected[0]
+
+
+def test_compact_selected_file_payloads_shrinks_low_rank_config_summary(tmp_path):
+    source = tmp_path / "docker-compose.yml"
+    source.write_text(
+        "\n".join([
+            "services:",
+            "  db:",
+            "    image: postgres:16",
+            "  mysql:",
+            "    image: mysql:8",
+            *[f"  unused_{index}: value" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="docker-compose.yml",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=500,
+        hash=file_hash(source),
+        language="yaml",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="docker-compose.yml",
+            language="yaml",
+            score=140.0,
+            include_mode="summary",
+            reasons=["matched external system: PostgreSQL/Django ORM", "matched ranking keyword: postgre", "config file"],
+            summary="\n".join(f"summary line {index}" for index in range(120)),
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            *[(_fi(f"src/owner_{index}.py"), 300.0 - index, ["direct content evidence +170"]) for index in range(7)],
+            (fi, 140.0, selected[0].reasons),
+        ],
+        task="Register native resource hints for nested db/{h2,mysql,postgres}/ scripts",
+        changed_paths=set(),
+    )
+
+    assert compacted[0].path == selected[0].path
+    assert compacted[0].include_mode == "summary"
+    assert _sf_tokens(compacted[0]) < _sf_tokens(selected[0])
+    assert "postgres" in (compacted[0].summary or "")
+    assert "source-aware compacted ranked_config_summary_carrier" in compacted[0].reasons
+
+
+def test_compact_selected_file_payloads_protects_direct_config_summary(tmp_path):
+    source = tmp_path / "docker-compose.yml"
+    source.write_text("services:\n  db:\n    image: postgres:16\n", encoding="utf-8")
+    fi = FileInfo(
+        path="docker-compose.yml",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=120,
+        hash=file_hash(source),
+        language="yaml",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="docker-compose.yml",
+            language="yaml",
+            score=240.0,
+            include_mode="summary",
+            reasons=["direct content evidence +170", "config file"],
+            summary="postgres service config",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[(fi, 240.0, selected[0].reasons)],
+        task="Update PostgreSQL docker compose service",
+        changed_paths=set(),
+    )
+
+    assert compacted[0] == selected[0]
 
 
 def test_selects_changed_file_as_full(tmp_path):
@@ -348,6 +622,29 @@ def test_high_score_unchanged_file_uses_skeleton_mode():
     assert "src.db" in selected[0].content
 
 
+def test_skeleton_content_is_token_capped_for_large_symbol_maps():
+    fi = _fi("gin.go", tokens=4000)
+    summary = {
+        "imports": [f"pkg/{index}" for index in range(30)],
+        "symbols": [
+            {
+                "name": f"Handler{index}",
+                "kind": "function",
+                "start_line": index,
+                "end_line": index + 4,
+                "signature": f"func Handler{index}(context *Context, request Request, response Response) error",
+            }
+            for index in range(80)
+        ],
+    }
+
+    content, tokens = _skeleton_content(fi, summary)
+
+    assert content is not None
+    assert tokens <= 220
+    assert "skeleton truncated by AgentPack budget" in content
+
+
 def test_budget_respected():
     files = [_fi(f"file{i}.py", tokens=1000) for i in range(20)]
     scored = [(fi, 80.0 - i, [f"reason {i}"]) for i, fi in enumerate(files)]
@@ -394,7 +691,7 @@ def test_budget_exhausted_files_can_be_collected_as_omitted_relevant():
     assert omitted[0].suggested_mode == "summary"
 
 
-def test_strong_owner_can_overflow_compressed_context_cap():
+def test_strong_owner_replacement_does_not_overflow_compressed_context_cap():
     files = [
         _fi("api/views/user_list.py", tokens=55),
         _fi("api/serializers/user.py", tokens=55),
@@ -428,9 +725,9 @@ def test_strong_owner_can_overflow_compressed_context_cap():
         max_summary_files=3,
     )
 
+    assert len(selected) == 3
     assert "api/pagination.py" in [item.path for item in selected]
-    assert any(item.path == "api/pagination.py" and "strong-owner cap overflow" in item.reasons for item in selected)
-    assert not any(receipt.path == "api/pagination.py" and "cap reached" in receipt.reason for receipt in receipts)
+    assert all("strong-owner cap overflow" not in item.reasons for item in selected)
 
 
 def test_strong_test_can_overflow_compressed_context_cap_at_fixture_score():
@@ -471,7 +768,7 @@ def test_strong_test_can_overflow_compressed_context_cap_at_fixture_score():
     assert any("strong-test cap overflow" in item.reasons for item in selected if item.path == "tests/test_pagination.py")
 
 
-def test_paired_test_and_deploy_config_can_bypass_no_live_summary_floor():
+def test_paired_test_and_deploy_config_do_not_bypass_no_live_summary_floor():
     test_file = _fi("tests/test_users.py", tokens=60)
     dockerfile = _fi("Dockerfile", tokens=40)
     files = [test_file, dockerfile]
@@ -491,8 +788,8 @@ def test_paired_test_and_deploy_config_can_bypass_no_live_summary_floor():
         max_summary_files=3,
     )
 
-    assert [item.path for item in selected] == ["tests/test_users.py", "Dockerfile"]
-    assert not any(receipt.reason == "summary score below floor" for receipt in receipts)
+    assert selected == []
+    assert any(receipt.reason == "summary score below floor" for receipt in receipts)
 
 
 def test_citation_manifest_records_selected_files(tmp_path):
@@ -724,6 +1021,33 @@ def test_runtime_infra_config_gets_priority_over_unrelated_changed_file():
         "copilot/api/manifest.yml",
         "deploy/waf/cloudformation.yml",
     ]
+
+
+def test_packages_directory_config_is_not_runtime_infra_priority():
+    template_config = _fi("packages/create-vite/template-react/vite.config.js", tokens=40)
+    deploy_manifest = _fi("copilot/api/manifest.yml", tokens=100)
+
+    template_priority = _selection_priority(
+        (
+            template_config,
+            275.0,
+            ["config file", "filename keyword match", "workspace match packages/create-vite"],
+        ),
+        set(),
+        4000,
+    )
+    deploy_priority = _selection_priority(
+        (
+            deploy_manifest,
+            90.0,
+            ["config file", "content keyword match (2)", "keyword phrase match: copilot waf"],
+        ),
+        set(),
+        4000,
+    )
+
+    assert template_priority[0] == 0
+    assert deploy_priority[0] == 1
 
 
 def test_deploy_runbook_signals_get_priority_over_review_noise():
@@ -1739,6 +2063,115 @@ def test_specific_source_scope_can_replace_generic_parent_source():
 
     assert [sf.path for sf in selected] == [strong_child.path]
     assert any(r.path == weak_parent.path and r.reason == f"marginal slot replaced by {strong_child.path}" for r in receipts)
+
+
+def test_high_signal_rescue_can_replace_weak_cross_family_context():
+    weak_config = SelectedFile(
+        path=".github/workflows/tests.yaml",
+        language="yaml",
+        score=160.0,
+        include_mode="summary",
+        reasons=["content keyword match (1)", "config file", "recently modified"],
+    )
+
+    replacement_index = _find_marginal_replacement(
+        [weak_config],
+        challenger_path="binding/bson.go",
+        challenger_score=520.0,
+        challenger_reasons=[
+            "filename keyword match",
+            "conventional scope path match",
+            "multi-term path match +70",
+            "symbol keyword match",
+        ],
+        challenger_tokens=100,
+        selected_token_costs={weak_config.path: 80},
+        required_family="source",
+        max_extra_tokens=120,
+    )
+
+    assert replacement_index == 0
+
+
+def test_budgeted_strong_source_can_replace_weak_cross_package_template_slot():
+    weak_template = _fi("packages/create-vite/template-react/vite.config.js", tokens=80)
+    strong_source = _fi("packages/vite/src/node/server/openBrowser.ts", tokens=640)
+
+    selected, receipts = select_files(
+        files=[weak_template, strong_source],
+        scored=[
+            (
+                weak_template,
+                500.0,
+                ["filename keyword match", "multi-term path match +175", "matched call: react", "content keyword match (1)"],
+            ),
+            (
+                strong_source,
+                360.0,
+                [
+                    "content keyword match (3)",
+                    "quoted literal match: create react app",
+                    "keyword phrase match: create react app",
+                    "direct content evidence +170",
+                ],
+            ),
+        ],
+        changed_paths=set(),
+        summaries={
+            weak_template.path: {"summary": "React template config.", "symbols": []},
+            strong_source.path: {"summary": "Open browser logic for create-react-app migration links.", "symbols": []},
+        },
+        mode="balanced",
+        budget=1000,
+        max_file_tokens=4000,
+        max_summary_files=1,
+    )
+
+    assert [sf.path for sf in selected] == [strong_source.path]
+    assert any(r.path == weak_template.path and r.reason == f"marginal slot replaced by {strong_source.path}" for r in receipts)
+
+
+def test_budgeted_strong_source_can_replace_weak_test_artifact_slot():
+    weak_test_artifact = _fi("packages/vite/src/node/__tests__/package.json", tokens=120)
+    strong_source = _fi("packages/vite/src/node/server/openBrowser.ts", tokens=640)
+
+    selected, receipts = select_files(
+        files=[weak_test_artifact, strong_source],
+        scored=[
+            (
+                weak_test_artifact,
+                500.0,
+                [
+                    "content keyword match (1)",
+                    "config file",
+                    "high churn (1 commits)",
+                    "test for high-scoring packages/vite/src/node/utils.ts",
+                ],
+            ),
+            (
+                strong_source,
+                360.0,
+                [
+                    "content keyword match (3)",
+                    "quoted literal match: create react app",
+                    "keyword phrase match: create react app",
+                    "direct content evidence +170",
+                ],
+            ),
+        ],
+        changed_paths=set(),
+        summaries={
+            weak_test_artifact.path: {"summary": "Test fixture package metadata.", "symbols": []},
+            strong_source.path: {"summary": "Open browser logic for create-react-app migration links.", "symbols": []},
+        },
+        mode="balanced",
+        budget=1000,
+        max_file_tokens=4000,
+        max_summary_files=1,
+    )
+
+    assert [sf.path for sf in selected] == [strong_source.path]
+    assert any(r.path == weak_test_artifact.path and r.reason == f"marginal slot replaced by {strong_source.path}" for r in receipts)
 
 
 def test_token_neutral_strong_test_can_replace_weaker_same_scope_test():

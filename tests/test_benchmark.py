@@ -36,6 +36,7 @@ from agentpack.commands.benchmark import (
     _filter_public_repo_specs,
     _ensure_public_repo_clone,
     _run_public_repo_suite,
+    _write_public_repo_lock,
     _public_changed_files,
     _public_commit_changed_files,
     _sample_public_history_cases,
@@ -66,6 +67,22 @@ from agentpack.commands.benchmark import (
     _same_scope_replacement_opportunities,
     _plausibly_useful_selected_noise,
     _label_audit_summary,
+    _benchmark_ablation_report,
+    _benchmark_fixed_selected_excerpt_projection,
+    _fixed_selected_excerpt_projection,
+    _label_free_tiered_excerpt_projection,
+    _ast_checkpoint_memory_excerpt_projection,
+    _ranked_test_skeleton_excerpt_projection,
+    _ranked_test_symbol_carrier_excerpt_projection,
+    _ranked_source_churn_excerpt_projection,
+    _ranked_source_metadata_excerpt_projection,
+    _ranked_metadata_summary_excerpt_projection,
+    _mav_span_excerpt_projection,
+    _neutral_mav_span_excerpt_projection,
+    _oracle_non_expected_excerpt_ceiling,
+    _source_excerpt_confidence_tier,
+    _benchmark_mav_score,
+    _ast_memory_signal_counts,
     _benchmark_intent_profile,
     _owner_file_recall,
     _expected_family_recall,
@@ -510,6 +527,2395 @@ def test_label_audit_summary_estimates_plausible_unlabeled_tokens() -> None:
     }
 
 
+def test_ast_memory_signal_counts_sum_checkpoint_diagnostics() -> None:
+    results = [
+        _make_result(
+            ["src/service.py"],
+            ["src/service.py"],
+            selection_diagnostics={
+                "ast_checkpoint_memory_excerpt_projection": {
+                    "memory_signal_selected_files": 2,
+                    "memory_signal_projected_files": 1,
+                }
+            },
+        ),
+        _make_result(
+            ["src/other.py"],
+            [],
+            selection_diagnostics={
+                "ast_checkpoint_memory_excerpt_projection": {
+                    "memory_signal_selected_files": 0,
+                    "memory_signal_projected_files": 0,
+                }
+            },
+        ),
+    ]
+
+    assert _ast_memory_signal_counts(results) == (2, 1)
+
+
+def test_fixed_selected_excerpt_projection_preserves_selected_file_set(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "import os",
+            "",
+            "def target_handler(request):",
+            "    value = request.get('target')",
+            "    return value.upper()",
+            "",
+            "def unrelated_helper():",
+            *[f"    value_{index} = {index}" for index in range(80)],
+            "    return value_0",
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=["matched define: target_handler", "content keyword match (2)"],
+            symbols=[],
+        )
+    ]
+
+    projection = _fixed_selected_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 420},
+        selected_modes={"src/service.py": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={
+            "src/service.py": SimpleNamespace(path="src/service.py", content=source.read_text(encoding="utf-8")),
+        },
+        task="fix target handler",
+        changed_paths=set(),
+    )
+
+    assert projection["selected_file_count_before"] == 1
+    assert projection["selected_file_count_after"] == 1
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["projected_selected_tokens"] < projection["baseline_selected_tokens"]
+    assert projection["projected_files"][0]["path"] == "src/service.py"
+
+    guarded_projection = _fixed_selected_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 420},
+        selected_modes={"src/service.py": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={
+            "src/service.py": SimpleNamespace(path="src/service.py", content=source.read_text(encoding="utf-8")),
+        },
+        task="fix target handler",
+        changed_paths=set(),
+        guarded=True,
+    )
+
+    assert guarded_projection["removed_tokens"] == 0
+    assert guarded_projection["projected_file_count"] == 0
+
+
+def test_benchmark_fixed_selected_excerpt_projection_aggregates_records() -> None:
+    records = [
+        {
+            "selection_diagnostics": {
+                "fixed_selected_excerpt_projection": {
+                    "selected_file_set_unchanged": True,
+                    "baseline_selected_tokens": 500,
+                    "projected_selected_tokens": 300,
+                    "baseline_expected_tokens": 200,
+                    "projected_expected_tokens": 180,
+                    "removed_tokens": 200,
+                    "expected_token_loss": 20,
+                    "strict_noise_removed": 180,
+                    "projected_file_count": 2,
+                    "token_precision_delta": 0.2,
+                    "projected_files": [{"path": "src/a.py"}],
+                }
+            },
+            "task": "case a",
+        },
+        {
+            "selection_diagnostics": {
+                "fixed_selected_excerpt_projection": {
+                    "selected_file_set_unchanged": True,
+                    "baseline_selected_tokens": 100,
+                    "projected_selected_tokens": 90,
+                    "baseline_expected_tokens": 100,
+                    "projected_expected_tokens": 90,
+                    "removed_tokens": 10,
+                    "expected_token_loss": 10,
+                    "strict_noise_removed": 0,
+                    "projected_file_count": 1,
+                    "token_precision_delta": 0.0,
+                    "projected_files": [{"path": "src/b.py"}],
+                }
+            },
+            "task": "case b",
+        },
+    ]
+
+    report = _benchmark_fixed_selected_excerpt_projection(records)
+
+    assert report["cases"] == 2
+    assert report["selected_file_set_violations"] == 0
+    assert report["removed_tokens"] == 210
+    assert report["expected_token_loss"] == 30
+    assert report["strict_noise_removed"] == 180
+    assert report["projected_files"] == 3
+    assert report["projected_aggregate_token_precision"] == pytest.approx(270 / 390)
+
+
+def test_oracle_non_expected_excerpt_ceiling_freezes_expected_files(tmp_path: Path) -> None:
+    expected = tmp_path / "src" / "expected.py"
+    noise = tmp_path / "src" / "noise.py"
+    expected.parent.mkdir()
+    expected.write_text(
+        "\n".join([
+            "import os",
+            "",
+            "def expected_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def expected_helper_{index}(): return {index}" for index in range(50)],
+        ]),
+        encoding="utf-8",
+    )
+    noise.write_text(
+        "\n".join([
+            "import pathlib",
+            "import subprocess",
+            "",
+            "def broad_helper():",
+            "    return pathlib.Path.cwd()",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(70)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/expected.py",
+            include_mode="skeleton",
+            reasons=["matched define: expected_handler"],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="src/noise.py",
+            include_mode="skeleton",
+            reasons=["content keyword match (1)", "filename keyword match"],
+            symbols=[],
+        ),
+    ]
+
+    projection = _oracle_non_expected_excerpt_ceiling(
+        selected=selected,
+        selected_tokens={"src/expected.py": 500, "src/noise.py": 300},
+        selected_modes={"src/expected.py": "skeleton", "src/noise.py": "skeleton"},
+        expected_set={"src/expected.py"},
+        file_by_path={
+            "src/expected.py": SimpleNamespace(path="src/expected.py", content=expected.read_text(encoding="utf-8")),
+            "src/noise.py": SimpleNamespace(path="src/noise.py", content=noise.read_text(encoding="utf-8")),
+        },
+        task="fix expected handler",
+        changed_paths=set(),
+    )
+
+    assert projection["oracle_uses_expected_labels"] is True
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["baseline_expected_tokens"] == 500
+    assert projection["projected_expected_tokens"] == 500
+    assert projection["expected_token_loss"] == 0
+    assert projection["projected_selected_tokens"] < projection["baseline_selected_tokens"]
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["projected_files"][0]["path"] == "src/noise.py"
+
+
+def test_oracle_non_expected_excerpt_ceiling_aggregates_records() -> None:
+    records = [
+        {
+            "selection_diagnostics": {
+                "oracle_non_expected_excerpt_ceiling": {
+                    "selected_file_set_unchanged": True,
+                    "baseline_selected_tokens": 800,
+                    "projected_selected_tokens": 560,
+                    "baseline_expected_tokens": 500,
+                    "projected_expected_tokens": 500,
+                    "removed_tokens": 240,
+                    "expected_token_loss": 0,
+                    "strict_noise_removed": 240,
+                    "projected_file_count": 1,
+                    "token_precision_delta": 0.2679,
+                    "projected_files": [{"path": "src/noise.py"}],
+                }
+            },
+            "task": "oracle case",
+        }
+    ]
+
+    report = _benchmark_fixed_selected_excerpt_projection(
+        records,
+        diagnostic_key="oracle_non_expected_excerpt_ceiling",
+        policy="oracle_non_expected_excerpt_ceiling_v1",
+    )
+
+    assert report["policy"] == "oracle_non_expected_excerpt_ceiling_v1"
+    assert report["cases"] == 1
+    assert report["selected_file_set_violations"] == 0
+    assert report["removed_tokens"] == 240
+    assert report["expected_token_loss"] == 0
+    assert report["strict_noise_removed"] == 240
+    assert report["projected_aggregate_token_precision"] == pytest.approx(500 / 560)
+
+
+def test_source_excerpt_confidence_tier_classifies_strong_and_weak_files() -> None:
+    strong = _source_excerpt_confidence_tier(
+        path="src/service.py",
+        mode="skeleton",
+        reasons=[
+            "matched define: target_handler",
+            "direct content evidence +170",
+            "content keyword match (3)",
+        ],
+        current_tokens=400,
+        changed_paths=set(),
+        symbols=[],
+    )
+    weak = _source_excerpt_confidence_tier(
+        path="src/utils.py",
+        mode="skeleton",
+        reasons=["content keyword match (1)", "filename keyword match", "recently modified"],
+        current_tokens=400,
+        changed_paths=set(),
+        symbols=[],
+    )
+
+    assert strong["tier"] == "strong"
+    assert strong["role_tier"] == "strong_action_owner"
+    assert weak["tier"] == "weak"
+    assert strong["score"] > weak["score"]
+
+
+def test_source_excerpt_confidence_tier_splits_strong_carrier_from_action_owner() -> None:
+    owner = _source_excerpt_confidence_tier(
+        path="src/service.py",
+        mode="skeleton",
+        reasons=[
+            "matched define: target_handler",
+            "direct content evidence +170",
+            "content keyword match (3)",
+        ],
+        current_tokens=500,
+        changed_paths=set(),
+        symbols=[],
+    )
+    carrier = _source_excerpt_confidence_tier(
+        path="gin.go",
+        mode="skeleton",
+        reasons=[
+            "matched define: Engine",
+            "direct dependency of changed file",
+            "content keyword match (1)",
+        ],
+        current_tokens=700,
+        changed_paths=set(),
+        symbols=[],
+    )
+
+    assert owner["tier"] == "strong"
+    assert owner["role_tier"] == "strong_action_owner"
+    assert owner["strong_carrier"] is False
+    assert carrier["tier"] == "strong"
+    assert carrier["role_tier"] == "strong_carrier"
+    assert carrier["strong_action_owner"] is False
+    assert carrier["guarded_strong_carrier"] is True
+    assert "hub_symbol_carrier" in carrier["carrier_reasons"]
+    assert "large_low_density_symbol_carrier" in carrier["carrier_reasons"]
+
+
+def test_label_free_tiered_excerpt_projection_protects_strong_and_shrinks_weak(tmp_path: Path) -> None:
+    expected = tmp_path / "src" / "service.py"
+    weak = tmp_path / "src" / "utils.py"
+    expected.parent.mkdir()
+    expected.write_text(
+        "\n".join([
+            "import os",
+            "",
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def expected_helper_{index}(): return {index}" for index in range(50)],
+        ]),
+        encoding="utf-8",
+    )
+    weak.write_text(
+        "\n".join([
+            "import pathlib",
+            "",
+            "def broad_helper():",
+            "    return pathlib.Path.cwd()",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(70)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "direct content evidence +170",
+                "content keyword match (3)",
+            ],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="src/utils.py",
+            include_mode="skeleton",
+            reasons=["content keyword match (1)", "filename keyword match", "recently modified"],
+            symbols=[],
+        ),
+    ]
+
+    projection = _label_free_tiered_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 500, "src/utils.py": 300},
+        selected_modes={"src/service.py": "skeleton", "src/utils.py": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={
+            "src/service.py": SimpleNamespace(path="src/service.py", content=expected.read_text(encoding="utf-8")),
+            "src/utils.py": SimpleNamespace(path="src/utils.py", content=weak.read_text(encoding="utf-8")),
+        },
+        task="fix target handler",
+        changed_paths=set(),
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["tier_counts"] == {"strong_action_owner": 1, "weak": 1}
+    assert projection["projected_tier_counts"] == {"weak": 1}
+    assert projection["baseline_expected_tokens"] == 500
+    assert projection["projected_expected_tokens"] == 500
+    assert projection["expected_token_loss"] == 0
+    assert projection["removed_tokens_by_tier"]["weak"] == projection["removed_tokens"]
+    assert projection["projected_files"][0]["path"] == "src/utils.py"
+
+
+def test_risk_aware_tiered_excerpt_projection_protects_structural_medium_file(tmp_path: Path) -> None:
+    source = tmp_path / "context.go"
+    source.write_text(
+        "\n".join([
+            "package render",
+            "",
+            "func renderContextAbort() error {",
+            "    return nil",
+            "}",
+            "",
+            *[f"func unrelated{index}() int {{ return {index} }}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="context.go",
+            include_mode="skeleton",
+            reasons=[
+                "content keyword match (2)",
+                "direct dependency of changed file",
+            ],
+            symbols=[],
+        )
+    ]
+    common_kwargs = {
+        "selected": selected,
+        "selected_tokens": {"context.go": 500},
+        "selected_modes": {"context.go": "skeleton"},
+        "expected_set": {"context.go"},
+        "file_by_path": {"context.go": SimpleNamespace(path="context.go", content=source.read_text(encoding="utf-8"))},
+        "task": "fix render context abort",
+        "changed_paths": set(),
+    }
+
+    rejected_policy = _label_free_tiered_excerpt_projection(**common_kwargs)
+    risk_aware = _label_free_tiered_excerpt_projection(
+        **common_kwargs,
+        policy="risk_aware_tiered_source_excerpt_v1",
+    )
+
+    assert rejected_policy["projected_file_count"] == 1
+    assert rejected_policy["expected_token_loss"] > 0
+    assert risk_aware["tier_counts"] == {"medium": 1}
+    assert risk_aware["projected_file_count"] == 0
+    assert risk_aware["expected_token_loss"] == 0
+
+
+def test_risk_aware_tiered_excerpt_projection_protects_strong_files(tmp_path: Path) -> None:
+    source = tmp_path / "docs.md"
+    source.write_text(
+        "\n".join([
+            "# Render docs",
+            "",
+            "The render context handles failures.",
+            "",
+            *[f"unrelated line {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="docs.md",
+            include_mode="summary",
+            reasons=[
+                "matched define: render_context",
+                "content keyword match (3)",
+                "direct content evidence +170",
+                "config file",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _label_free_tiered_excerpt_projection(
+        selected=selected,
+        selected_tokens={"docs.md": 500},
+        selected_modes={"docs.md": "summary"},
+        expected_set=set(),
+        file_by_path={"docs.md": SimpleNamespace(path="docs.md", content=source.read_text(encoding="utf-8"))},
+        task="fix render context",
+        changed_paths=set(),
+        policy="risk_aware_tiered_source_excerpt_v1",
+    )
+
+    assert projection["tier_counts"] == {"strong_action_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["removed_tokens"] == 0
+
+
+def test_strong_carrier_excerpt_projection_shrinks_carrier_not_owner(tmp_path: Path) -> None:
+    owner = tmp_path / "src" / "service.py"
+    carrier = tmp_path / "gin.go"
+    owner.parent.mkdir()
+    owner.write_text(
+        "\n".join([
+            "import os",
+            "",
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def expected_helper_{index}(): return {index}" for index in range(70)],
+        ]),
+        encoding="utf-8",
+    )
+    carrier.write_text(
+        "\n".join([
+            "package gin",
+            "",
+            "type Engine struct {",
+            "    RouterGroup RouterGroup",
+            "}",
+            "",
+            "func NewEngine() *Engine {",
+            "    return &Engine{}",
+            "}",
+            "",
+            *[f"func unrelated{index}() int {{ return {index} }}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "direct content evidence +170",
+                "content keyword match (3)",
+            ],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="gin.go",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: Engine",
+                "direct dependency of changed file",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _label_free_tiered_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 500, "gin.go": 700},
+        selected_modes={"src/service.py": "skeleton", "gin.go": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={
+            "src/service.py": SimpleNamespace(path="src/service.py", content=owner.read_text(encoding="utf-8")),
+            "gin.go": SimpleNamespace(path="gin.go", content=carrier.read_text(encoding="utf-8")),
+        },
+        task="fix engine routing",
+        changed_paths=set(),
+        policy="strong_carrier_source_excerpt_v1",
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["tier_counts"] == {"strong_carrier": 1, "strong_action_owner": 1}
+    assert projection["projected_tier_counts"] == {"strong_carrier": 1}
+    assert projection["expected_token_loss"] == 0
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["projected_files"][0]["path"] == "gin.go"
+    assert projection["projected_files"][0]["base_tier"] == "strong"
+    assert projection["projected_files"][0]["strong_carrier"] is True
+
+
+def test_guarded_strong_carrier_projection_protects_structural_hub(tmp_path: Path) -> None:
+    source = tmp_path / "context.go"
+    source.write_text(
+        "\n".join([
+            "package gin",
+            "",
+            "type Context struct {",
+            "    handlers []HandlerFunc",
+            "}",
+            "",
+            "func (c *Context) Abort() {",
+            "    c.index = abortIndex",
+            "}",
+            "",
+            *[f"func unrelated{index}() int {{ return {index} }}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="context.go",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: Context",
+                "matched role keyword: context",
+                "content keyword match (2)",
+            ],
+            symbols=[],
+        )
+    ]
+    common_kwargs = {
+        "selected": selected,
+        "selected_tokens": {"context.go": 700},
+        "selected_modes": {"context.go": "skeleton"},
+        "expected_set": {"context.go"},
+        "file_by_path": {"context.go": SimpleNamespace(path="context.go", content=source.read_text(encoding="utf-8"))},
+        "task": "fix context abort",
+        "changed_paths": set(),
+    }
+
+    raw = _label_free_tiered_excerpt_projection(
+        **common_kwargs,
+        policy="strong_carrier_source_excerpt_v1",
+    )
+    guarded = _label_free_tiered_excerpt_projection(
+        **common_kwargs,
+        policy="guarded_strong_carrier_source_excerpt_v1",
+    )
+
+    assert raw["tier_counts"] == {"strong_carrier": 1}
+    assert raw["projected_file_count"] == 1
+    assert raw["expected_token_loss"] > 0
+    assert guarded["tier_counts"] == {"strong_carrier": 1}
+    assert guarded["projected_file_count"] == 0
+    assert guarded["expected_token_loss"] == 0
+
+
+def test_ast_checkpoint_memory_excerpt_projection_uses_summary_symbol_spans(tmp_path: Path) -> None:
+    owner = tmp_path / "src" / "service.py"
+    carrier = tmp_path / "gin.go"
+    owner.parent.mkdir()
+    owner.write_text(
+        "\n".join([
+            "import os",
+            "",
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def expected_helper_{index}(): return {index}" for index in range(70)],
+        ]),
+        encoding="utf-8",
+    )
+    carrier.write_text(
+        "\n".join([
+            "package gin",
+            "",
+            "// Engine routes HTTP requests.",
+            "type Engine struct {",
+            "    RouterGroup RouterGroup",
+            "}",
+            "",
+            "func NewEngine() *Engine {",
+            "    return &Engine{}",
+            "}",
+            "",
+            *[f"func unrelated{index}() int {{ return {index} }}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "direct content evidence +170",
+                "content keyword match (3)",
+            ],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="gin.go",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: Engine",
+                "direct dependency of changed file",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 500, "gin.go": 900},
+        selected_modes={"src/service.py": "skeleton", "gin.go": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={
+            "src/service.py": SimpleNamespace(path="src/service.py", content=owner.read_text(encoding="utf-8")),
+            "gin.go": SimpleNamespace(path="gin.go", content=carrier.read_text(encoding="utf-8")),
+        },
+        summaries={
+            "src/service.py": {
+                "entrypoints": ["target_handler"],
+                "defines": ["target_handler"],
+            },
+            "gin.go": {
+                "defines": ["Engine"],
+                "calls": ["NewEngine"],
+                "symbols": [{
+                    "name": "Engine",
+                    "kind": "type",
+                    "start_line": 4,
+                    "end_line": 6,
+                    "signature": "type Engine struct",
+                    "summary": "Engine routing support",
+                    "body": "type Engine struct { RouterGroup RouterGroup }",
+                }],
+            },
+        },
+        task="fix engine routing",
+        changed_paths=set(),
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["memory_signals_tested"] is False
+    assert projection["memory_signal_selected_files"] == 0
+    assert projection["tier_counts"] == {"ast_checkpoint_owner": 1, "ast_checkpoint_carrier": 1}
+    assert projection["projected_tier_counts"] == {"ast_checkpoint_carrier": 1}
+    assert projection["baseline_expected_tokens"] == 500
+    assert projection["projected_expected_tokens"] == 500
+    assert projection["expected_token_loss"] == 0
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["projected_files"][0]["path"] == "gin.go"
+    assert projection["projected_files"][0]["reason"] == "ast_checkpoint_symbol_spans"
+    assert "guarded_strong_carrier" in projection["projected_files"][0]["checkpoint_reasons"]
+    assert projection["projected_files"][0]["memory_signal"] is False
+
+
+def test_ast_checkpoint_memory_excerpt_projection_protects_structural_owner(tmp_path: Path) -> None:
+    source = tmp_path / "context.go"
+    source.write_text(
+        "\n".join([
+            "package gin",
+            "",
+            "type Context struct {",
+            "    handlers []HandlerFunc",
+            "}",
+            "",
+            "func (c *Context) Abort() {",
+            "    c.index = abortIndex",
+            "}",
+            "",
+            *[f"func unrelated{index}() int {{ return {index} }}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="context.go",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: Context",
+                "matched role keyword: context",
+                "content keyword match (2)",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"context.go": 700},
+        selected_modes={"context.go": "skeleton"},
+        expected_set={"context.go"},
+        file_by_path={"context.go": SimpleNamespace(path="context.go", content=source.read_text(encoding="utf-8"))},
+        summaries={
+            "context.go": {
+                "defines": ["Context", "Abort"],
+                "symbols": [{
+                    "name": "Context",
+                    "kind": "type",
+                    "start_line": 3,
+                    "end_line": 5,
+                    "signature": "type Context struct",
+                    "summary": "Request context state",
+                    "body": "type Context struct { handlers []HandlerFunc }",
+                }],
+            },
+        },
+        task="fix context abort",
+        changed_paths=set(),
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["tier_counts"] == {"ast_checkpoint_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["removed_tokens"] == 0
+
+
+def test_ast_checkpoint_memory_excerpt_projection_protects_literal_public_api_owner(tmp_path: Path) -> None:
+    source = tmp_path / "packages" / "vite" / "src" / "node" / "index.ts"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "\n".join([
+            "export function parseAst(code: string) {",
+            "  return parse(code)",
+            "}",
+            "",
+            "export async function parseAstAsync(code: string) {",
+            "  return parseAst(code)",
+            "}",
+            "",
+            *[f"export const unrelated{index} = {index}" for index in range(90)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="packages/vite/src/node/index.ts",
+            include_mode="skeleton",
+            reasons=[
+                "symbol keyword match",
+                "literal definition match: parse ast async",
+                "matched define: parseAst",
+                "quoted literal match: parse ast async",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"packages/vite/src/node/index.ts": 700},
+        selected_modes={"packages/vite/src/node/index.ts": "skeleton"},
+        expected_set={"packages/vite/src/node/index.ts"},
+        file_by_path={
+            "packages/vite/src/node/index.ts": SimpleNamespace(
+                path="packages/vite/src/node/index.ts",
+                content=source.read_text(encoding="utf-8"),
+            )
+        },
+        summaries={
+            "packages/vite/src/node/index.ts": {
+                "defines": ["parseAst", "parseAstAsync"],
+                "public_api": ["parseAst", "parseAstAsync"],
+                "symbols": [{
+                    "name": "parseAst",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "signature": "export function parseAst(code: string)",
+                    "summary": "Parse AST public API",
+                    "body": "export function parseAst(code: string) { return parse(code) }",
+                }, {
+                    "name": "parseAstAsync",
+                    "kind": "function",
+                    "start_line": 5,
+                    "end_line": 7,
+                    "signature": "export async function parseAstAsync(code: string)",
+                    "summary": "Parse AST async public API",
+                    "body": "export async function parseAstAsync(code: string) { return parseAst(code) }",
+                }],
+            },
+        },
+        task="correct parseAst parseAstAsync deprecation hints",
+        changed_paths=set(),
+    )
+
+    assert projection["tier_counts"] == {"ast_checkpoint_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["removed_tokens"] == 0
+
+
+def test_ast_checkpoint_memory_excerpt_projection_keeps_release_metadata_carrier_compressible(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "markupsafe" / "__init__.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "\n".join([
+            "from importlib.metadata import version",
+            "",
+            "class Markup(str):",
+            "    def __html__(self):",
+            "        return self",
+            "",
+            "def _has_version():",
+            "    return version('markupsafe')",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(90)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/markupsafe/__init__.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched call: importlib.metadata.version",
+                "content keyword match (2)",
+                "direct content evidence +120",
+                "release/version metadata",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/markupsafe/__init__.py": 700},
+        selected_modes={"src/markupsafe/__init__.py": "skeleton"},
+        expected_set=set(),
+        file_by_path={
+            "src/markupsafe/__init__.py": SimpleNamespace(
+                path="src/markupsafe/__init__.py",
+                content=source.read_text(encoding="utf-8"),
+            )
+        },
+        summaries={
+            "src/markupsafe/__init__.py": {
+                "calls": ["importlib.metadata.version", "version"],
+                "defines": ["Markup"],
+                "symbols": [{
+                    "name": "Markup",
+                    "kind": "class",
+                    "start_line": 3,
+                    "end_line": 5,
+                    "signature": "class Markup(str)",
+                    "summary": "HTML markup string",
+                    "body": "class Markup(str): def __html__(self): return self",
+                }],
+            },
+        },
+        task="start version 3.1.0",
+        changed_paths=set(),
+    )
+
+    assert projection["tier_counts"] == {"ast_checkpoint_carrier": 1}
+    assert projection["projected_tier_counts"] == {"ast_checkpoint_carrier": 1}
+    assert projection["projected_file_count"] == 1
+    assert projection["expected_token_loss"] == 0
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+
+
+def test_ast_checkpoint_memory_excerpt_projection_compresses_ranked_test_support(tmp_path: Path) -> None:
+    source = tmp_path / "tests" / "test_options.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "class CustomOption:",
+            "    def get_help_record(self):",
+            "        return 'help'",
+            "",
+            *[f"def unrelated_option_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_options.py",
+            include_mode="skeleton",
+            reasons=[
+                "filename keyword match",
+                "matched ranking keyword: help",
+                "matched define: CustomOption.get_help_record",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_options.py": 700},
+        selected_modes={"tests/test_options.py": "skeleton"},
+        expected_set=set(),
+        file_by_path={
+            "tests/test_options.py": SimpleNamespace(
+                path="tests/test_options.py",
+                content=source.read_text(encoding="utf-8"),
+            )
+        },
+        summaries={
+            "tests/test_options.py": {
+                "defines": ["CustomOption.get_help_record"],
+                "test_hints": ["help"],
+                "symbols": [{
+                    "name": "CustomOption.get_help_record",
+                    "kind": "method",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "signature": "def get_help_record(self)",
+                    "summary": "Help record test support",
+                    "body": "def get_help_record(self): return 'help'",
+                }],
+            },
+        },
+        task="Add missing space between option help text and deprecation label",
+        changed_paths=set(),
+        scored_map={"tests/test_options.py": {"rank": 4}},
+    )
+
+    assert projection["tier_counts"] == {"ast_checkpoint_carrier": 1}
+    assert projection["projected_tier_counts"] == {"ast_checkpoint_carrier": 1}
+    assert projection["projected_files"][0]["rank"] == 4
+    assert "ranked_test_support_carrier" in projection["projected_files"][0]["checkpoint_reasons"]
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ast_checkpoint_memory_excerpt_projection_uses_scored_reasons_for_ranked_support(tmp_path: Path) -> None:
+    source = tmp_path / "tests" / "test_options.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "class CustomOption:",
+            "    def get_help_record(self):",
+            "        return 'help'",
+            "",
+            *[f"def unrelated_option_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_options.py",
+            include_mode="skeleton",
+            reasons=[
+                "symbol keyword match",
+                "matched define: CustomOption.get_help_record",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_options.py": 700},
+        selected_modes={"tests/test_options.py": "skeleton"},
+        expected_set=set(),
+        file_by_path={
+            "tests/test_options.py": SimpleNamespace(
+                path="tests/test_options.py",
+                content=source.read_text(encoding="utf-8"),
+            )
+        },
+        summaries={
+            "tests/test_options.py": {
+                "defines": ["CustomOption.get_help_record"],
+                "test_hints": ["help"],
+                "symbols": [{
+                    "name": "CustomOption.get_help_record",
+                    "kind": "method",
+                    "start_line": 1,
+                    "end_line": 3,
+                    "signature": "def get_help_record(self)",
+                    "summary": "Help record test support",
+                    "body": "def get_help_record(self): return 'help'",
+                }],
+            },
+        },
+        task="Add missing space between option help text and deprecation label",
+        changed_paths=set(),
+        scored_map={
+            "tests/test_options.py": {
+                "rank": 4,
+                "score": 250.0,
+                "reasons": [
+                    "filename keyword match",
+                    "matched ranking keyword: help",
+                ],
+            }
+        },
+    )
+
+    assert projection["tier_counts"] == {"ast_checkpoint_carrier": 1}
+    assert projection["projected_file_count"] == 1
+    assert projection["projected_files"][0]["rank"] == 4
+    assert "ranked_test_support_carrier" in projection["projected_files"][0]["checkpoint_reasons"]
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ranked_test_skeleton_excerpt_projection_compresses_low_action_support(tmp_path: Path) -> None:
+    carrier = tmp_path / "tests" / "test_options.py"
+    owner = tmp_path / "tests" / "test_shell_completion.py"
+    carrier.parent.mkdir()
+    carrier.write_text(
+        "\n".join([
+            "class CustomOption:",
+            "    def get_help_record(self):",
+            "        return 'help'",
+            "",
+            *[f"def unrelated_option_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    owner.write_text(
+        "\n".join([
+            "def test_completion_item_data():",
+            "    assert 'multiline help'",
+            "",
+            *[f"def unrelated_completion_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_options.py",
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "matched define: CustomOption.get_help_record"],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="tests/test_shell_completion.py",
+            include_mode="skeleton",
+            reasons=[
+                "filename keyword match",
+                "matched ranking keyword: help",
+                "quoted literal match: multiline help",
+                "explicit test task file",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_test_skeleton_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_options.py": 700, "tests/test_shell_completion.py": 700},
+        selected_modes={"tests/test_options.py": "skeleton", "tests/test_shell_completion.py": "skeleton"},
+        expected_set={"tests/test_shell_completion.py"},
+        file_by_path={
+            "tests/test_options.py": SimpleNamespace(
+                path="tests/test_options.py",
+                content=carrier.read_text(encoding="utf-8"),
+            ),
+            "tests/test_shell_completion.py": SimpleNamespace(
+                path="tests/test_shell_completion.py",
+                content=owner.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Add missing space between option help text and deprecation label",
+        changed_paths=set(),
+        scored_map={
+            "tests/test_options.py": {
+                "rank": 4,
+                "score": 250.0,
+                "reasons": ["filename keyword match", "matched ranking keyword: help"],
+            },
+            "tests/test_shell_completion.py": {
+                "rank": 4,
+                "score": 260.0,
+                "reasons": ["explicit test task file", "quoted literal match: multiline help"],
+            },
+        },
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["candidate_file_count"] == 2
+    assert projection["eligible_file_count"] == 1
+    assert projection["projected_tier_counts"] == {"ranked_test_skeleton_carrier": 1}
+    assert projection["projected_files"][0]["path"] == "tests/test_options.py"
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ranked_test_symbol_carrier_excerpt_projection_compresses_symbol_only_test(tmp_path: Path) -> None:
+    source = tmp_path / "tests" / "test_options.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "class EnumSentinel:",
+            "    pass",
+            "",
+            "def test_boolean_switch():",
+            "    assert EnumSentinel",
+            "",
+            *[f"def unrelated_option_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_options.py",
+            include_mode="skeleton",
+            reasons=[
+                "symbol keyword match",
+                "matched ranking keyword: sentinel",
+                "matched define: EnumSentinel",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_test_symbol_carrier_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_options.py": 700},
+        selected_modes={"tests/test_options.py": "skeleton"},
+        expected_set=set(),
+        file_by_path={
+            "tests/test_options.py": SimpleNamespace(
+                path="tests/test_options.py",
+                content=source.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Use default=True as a sentinel for non-boolean flags",
+        changed_paths=set(),
+        scored_map={
+            "tests/test_options.py": {
+                "rank": 2,
+                "score": 250.0,
+                "reasons": ["matched define: EnumSentinel"],
+            },
+        },
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["candidate_file_count"] == 1
+    assert projection["eligible_file_count"] == 1
+    assert projection["projected_tier_counts"] == {"ranked_test_symbol_carrier": 1}
+    assert projection["projected_files"][0]["path"] == "tests/test_options.py"
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ranked_test_symbol_carrier_excerpt_projection_protects_action_owner_tests(tmp_path: Path) -> None:
+    direct = tmp_path / "tests" / "test_shell_completion.py"
+    entrypoint = tmp_path / "tests" / "test_testing.py"
+    direct.parent.mkdir()
+    direct.write_text(
+        "\n".join([
+            "def test_completion_item_data():",
+            "    assert 'multiline help'",
+            "",
+            *[f"def unrelated_completion_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    entrypoint.write_text(
+        "\n".join([
+            "def test_python_input():",
+            "    input('hidden')",
+            "",
+            *[f"def unrelated_testing_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_shell_completion.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: test_completion_item_data",
+                "direct content evidence +120",
+            ],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="tests/test_testing.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched entrypoint: CLI command: test-python-input",
+                "matched define: test_python_input",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_test_symbol_carrier_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_shell_completion.py": 700, "tests/test_testing.py": 700},
+        selected_modes={"tests/test_shell_completion.py": "skeleton", "tests/test_testing.py": "skeleton"},
+        expected_set={"tests/test_shell_completion.py", "tests/test_testing.py"},
+        file_by_path={
+            "tests/test_shell_completion.py": SimpleNamespace(
+                path="tests/test_shell_completion.py",
+                content=direct.read_text(encoding="utf-8"),
+            ),
+            "tests/test_testing.py": SimpleNamespace(
+                path="tests/test_testing.py",
+                content=entrypoint.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Ensure fish completion handles multiline help strings correctly",
+        changed_paths=set(),
+        scored_map={
+            "tests/test_shell_completion.py": {"rank": 1, "score": 260.0, "reasons": []},
+            "tests/test_testing.py": {"rank": 2, "score": 240.0, "reasons": []},
+        },
+    )
+
+    assert projection["candidate_file_count"] == 2
+    assert projection["eligible_file_count"] == 0
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["projection_miss_reasons"] == {"protected_action_owner_signal": 2}
+
+
+def test_ranked_test_symbol_carrier_excerpt_projection_protects_path_aligned_test(tmp_path: Path) -> None:
+    source = tmp_path / "tests" / "test_shell_completion.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def test_completion_item_data():",
+            "    assert 'help'",
+            "",
+            *[f"def unrelated_completion_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_shell_completion.py",
+            include_mode="skeleton",
+            reasons=[
+                "symbol keyword match",
+                "matched ranking keyword: completion",
+                "matched define: test_completion_item_data",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_test_symbol_carrier_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_shell_completion.py": 700},
+        selected_modes={"tests/test_shell_completion.py": "skeleton"},
+        expected_set={"tests/test_shell_completion.py"},
+        file_by_path={
+            "tests/test_shell_completion.py": SimpleNamespace(
+                path="tests/test_shell_completion.py",
+                content=source.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Fix shell completion help output",
+        changed_paths=set(),
+        scored_map={
+            "tests/test_shell_completion.py": {
+                "rank": 1,
+                "score": 260.0,
+                "reasons": ["matched define: test_completion_item_data"],
+            },
+        },
+    )
+
+    assert projection["candidate_file_count"] == 1
+    assert projection["eligible_file_count"] == 0
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["projection_miss_reasons"] == {"protected_path_task_alignment": 1}
+
+
+def test_ranked_test_symbol_carrier_excerpt_projection_protects_refactor_test_owner(tmp_path: Path) -> None:
+    source = tmp_path / "context_test.go"
+    source.write_text(
+        "\n".join([
+            "func TestContextGetInt(t *testing.T) {",
+            "    for i := range 10 {",
+            "        _ = i",
+            "    }",
+            "}",
+            "",
+            *[f"func TestUnrelated{index}(t *testing.T) {{}}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="context_test.go",
+            include_mode="skeleton",
+            reasons=[
+                "symbol keyword match",
+                "matched define: TestContextGetInt",
+                "content keyword match (3)",
+                "recently modified",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_test_symbol_carrier_excerpt_projection(
+        selected=selected,
+        selected_tokens={"context_test.go": 700},
+        selected_modes={"context_test.go": "skeleton"},
+        expected_set={"context_test.go"},
+        file_by_path={
+            "context_test.go": SimpleNamespace(
+                path="context_test.go",
+                content=source.read_text(encoding="utf-8"),
+            ),
+        },
+        task="refactor: for loop can be modernized using range over int",
+        changed_paths=set(),
+        scored_map={
+            "context_test.go": {
+                "rank": 2,
+                "score": 260.0,
+                "reasons": ["matched define: TestContextGetInt"],
+            },
+        },
+    )
+
+    assert projection["candidate_file_count"] == 1
+    assert projection["eligible_file_count"] == 0
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["projection_miss_reasons"] == {"protected_refactor_test_owner": 1}
+
+
+def test_ranked_source_churn_excerpt_projection_compresses_nonstructural_carrier(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "formatting.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def normalize_option_label(value):",
+            "    cleaned = value.strip()",
+            "    return cleaned.replace('_', '-')",
+            "",
+            *[f"def unrelated_formatter_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/formatting.py",
+            include_mode="skeleton",
+            reasons=["matched define: normalize_option_label"],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_source_churn_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/formatting.py": 700},
+        selected_modes={"src/formatting.py": "skeleton"},
+        expected_set=set(),
+        file_by_path={
+            "src/formatting.py": SimpleNamespace(
+                path="src/formatting.py",
+                content=source.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Adjust option label formatting",
+        changed_paths=set(),
+        scored_map={
+            "src/formatting.py": {
+                "rank": 4,
+                "score": 240.0,
+                "reasons": ["recently modified high churn"],
+            },
+        },
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["candidate_file_count"] == 1
+    assert projection["eligible_file_count"] == 1
+    assert projection["projected_tier_counts"] == {"ranked_source_churn_carrier": 1}
+    assert projection["projected_files"][0]["path"] == "src/formatting.py"
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ranked_source_churn_excerpt_projection_protects_structural_and_literal_sources(tmp_path: Path) -> None:
+    structural = tmp_path / "src" / "core.py"
+    literal = tmp_path / "src" / "formatting.py"
+    structural.parent.mkdir()
+    structural.write_text(
+        "\n".join([
+            "def configure_context(value):",
+            "    return value",
+            "",
+            *[f"def unrelated_core_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    literal.write_text(
+        "\n".join([
+            "def normalize_option_label(value):",
+            "    return 'missing-space'",
+            "",
+            *[f"def unrelated_formatter_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/core.py",
+            include_mode="skeleton",
+            reasons=["matched define: configure_context", "recently modified high churn"],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="src/formatting.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: normalize_option_label",
+                "literal definition match: missing-space",
+                "recently modified high churn",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_source_churn_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/core.py": 700, "src/formatting.py": 700},
+        selected_modes={"src/core.py": "skeleton", "src/formatting.py": "skeleton"},
+        expected_set={"src/core.py", "src/formatting.py"},
+        file_by_path={
+            "src/core.py": SimpleNamespace(
+                path="src/core.py",
+                content=structural.read_text(encoding="utf-8"),
+            ),
+            "src/formatting.py": SimpleNamespace(
+                path="src/formatting.py",
+                content=literal.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Fix missing-space option label formatting",
+        changed_paths=set(),
+        scored_map={
+            "src/core.py": {"rank": 4, "score": 260.0, "reasons": ["recently modified high churn"]},
+            "src/formatting.py": {"rank": 4, "score": 250.0, "reasons": ["recently modified high churn"]},
+        },
+    )
+
+    assert projection["candidate_file_count"] == 2
+    assert projection["eligible_file_count"] == 0
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["projection_miss_reasons"] == {
+        "protected_structural_risk": 1,
+        "protected_literal_evidence": 1,
+    }
+
+
+def test_ranked_source_metadata_excerpt_projection_compresses_metadata_carrier(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "click" / "shell_completion.py"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "\n".join([
+            "def _check_version(value):",
+            "    return value",
+            "",
+            *[f"def unrelated_completion_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/click/shell_completion.py",
+            include_mode="skeleton",
+            reasons=[
+                "symbol keyword match",
+                "matched ranking keyword: version",
+                "matched define: _check_version",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_source_metadata_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/click/shell_completion.py": 700},
+        selected_modes={"src/click/shell_completion.py": "skeleton"},
+        expected_set=set(),
+        file_by_path={
+            "src/click/shell_completion.py": SimpleNamespace(
+                path="src/click/shell_completion.py",
+                content=source.read_text(encoding="utf-8"),
+            ),
+        },
+        task="start version 8.5.0",
+        changed_paths=set(),
+        scored_map={
+            "src/click/shell_completion.py": {
+                "rank": 2,
+                "score": 240.0,
+                "reasons": ["matched define: _check_version"],
+            },
+        },
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["candidate_file_count"] == 1
+    assert projection["eligible_file_count"] == 1
+    assert projection["projected_tier_counts"] == {"ranked_source_metadata_carrier": 1}
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ranked_source_metadata_excerpt_projection_protects_package_init_and_structural_sources(tmp_path: Path) -> None:
+    package_init = tmp_path / "src" / "itsdangerous" / "__init__.py"
+    structural = tmp_path / "src" / "click" / "core.py"
+    package_init.parent.mkdir(parents=True)
+    structural.parent.mkdir(parents=True, exist_ok=True)
+    package_init.write_text(
+        "\n".join([
+            "__version__ = '2.1.0'",
+            "",
+            *[f"def unrelated_init_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    structural.write_text(
+        "\n".join([
+            "def get_default_map(value):",
+            "    return value",
+            "",
+            *[f"def unrelated_core_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/itsdangerous/__init__.py",
+            include_mode="skeleton",
+            reasons=["release/version metadata", "recently modified"],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="src/click/core.py",
+            include_mode="skeleton",
+            reasons=["matched define: get_default_map", "release/version metadata"],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_source_metadata_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/itsdangerous/__init__.py": 700, "src/click/core.py": 700},
+        selected_modes={"src/itsdangerous/__init__.py": "skeleton", "src/click/core.py": "skeleton"},
+        expected_set={"src/itsdangerous/__init__.py", "src/click/core.py"},
+        file_by_path={
+            "src/itsdangerous/__init__.py": SimpleNamespace(
+                path="src/itsdangerous/__init__.py",
+                content=package_init.read_text(encoding="utf-8"),
+            ),
+            "src/click/core.py": SimpleNamespace(
+                path="src/click/core.py",
+                content=structural.read_text(encoding="utf-8"),
+            ),
+        },
+        task="start version 2.1.0",
+        changed_paths=set(),
+        scored_map={
+            "src/itsdangerous/__init__.py": {"rank": 1, "score": 260.0, "reasons": []},
+            "src/click/core.py": {"rank": 2, "score": 240.0, "reasons": []},
+        },
+    )
+
+    assert projection["candidate_file_count"] == 2
+    assert projection["eligible_file_count"] == 0
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["projection_miss_reasons"] == {
+        "protected_package_init_metadata_owner": 1,
+        "protected_structural_risk": 1,
+    }
+
+
+def test_ranked_metadata_summary_excerpt_projection_compresses_ancillary_summary(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "main" / "java" / "org" / "example" / "OwnerController.java"
+    source.parent.mkdir(parents=True)
+    source.write_text(
+        "\n".join([
+            "package org.example;",
+            "",
+            "class OwnerController {",
+            "    void listOwners() {}",
+            "}",
+            "",
+            *[f"class UnrelatedVersionCarrier{index} {{}}" for index in range(80)],
+        ]),
+        encoding="utf-8",
+    )
+    path = "src/main/java/org/example/OwnerController.java"
+    selected = [
+        SimpleNamespace(
+            path=path,
+            include_mode="summary",
+            reasons=[
+                "content keyword match (1)",
+                "implementation role match",
+                "high churn (9 commits)",
+                "cross-layer related implementation",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_metadata_summary_excerpt_projection(
+        selected=selected,
+        selected_tokens={path: 300},
+        selected_modes={path: "summary"},
+        expected_set=set(),
+        file_by_path={
+            path: SimpleNamespace(
+                path=path,
+                content=source.read_text(encoding="utf-8"),
+            ),
+        },
+        task="Update to current versions",
+        changed_paths=set(),
+        scored_map={path: {"rank": 3, "score": 250.0, "reasons": []}},
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["candidate_file_count"] == 1
+    assert projection["eligible_file_count"] == 1
+    assert projection["projected_tier_counts"] == {"ranked_metadata_summary_carrier": 1}
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["expected_token_loss"] == 0
+
+
+def test_ranked_metadata_summary_excerpt_projection_protects_confirmed_summaries(tmp_path: Path) -> None:
+    config_path = ".github/workflows/publish.yaml"
+    owner_path = "src/main/java/org/example/OwnerRepository.java"
+    selected = [
+        SimpleNamespace(
+            path=config_path,
+            include_mode="summary",
+            reasons=["content keyword match (1)", "recently modified"],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path=owner_path,
+            include_mode="summary",
+            reasons=["direct content evidence +170", "content keyword match (3)"],
+            symbols=[],
+        ),
+    ]
+
+    projection = _ranked_metadata_summary_excerpt_projection(
+        selected=selected,
+        selected_tokens={config_path: 180, owner_path: 180},
+        selected_modes={config_path: "summary", owner_path: "summary"},
+        expected_set={config_path, owner_path},
+        file_by_path={},
+        task="Update to current versions",
+        changed_paths=set(),
+        scored_map={
+            config_path: {"rank": 1, "score": 300.0, "reasons": []},
+            owner_path: {"rank": 3, "score": 260.0, "reasons": []},
+        },
+    )
+
+    assert projection["candidate_file_count"] == 2
+    assert projection["eligible_file_count"] == 0
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["projection_miss_reasons"] == {
+        "protected_owner_rank": 1,
+        "protected_confirmed_action_signal": 1,
+    }
+
+
+def test_ast_checkpoint_memory_excerpt_projection_protects_literal_test_owner_with_rank(tmp_path: Path) -> None:
+    source = tmp_path / "tests" / "test_shell_completion.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def test_completion_item_data():",
+            "    assert 'multiline help'",
+            "",
+            *[f"def unrelated_completion_test_{index}(): return {index}" for index in range(100)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="tests/test_shell_completion.py",
+            include_mode="skeleton",
+            reasons=[
+                "filename keyword match",
+                "matched ranking keyword: help",
+                "matched define: test_completion_item_data",
+                "quoted literal match: multiline help",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"tests/test_shell_completion.py": 700},
+        selected_modes={"tests/test_shell_completion.py": "skeleton"},
+        expected_set={"tests/test_shell_completion.py"},
+        file_by_path={
+            "tests/test_shell_completion.py": SimpleNamespace(
+                path="tests/test_shell_completion.py",
+                content=source.read_text(encoding="utf-8"),
+            )
+        },
+        summaries={
+            "tests/test_shell_completion.py": {
+                "defines": ["test_completion_item_data"],
+                "test_hints": ["multiline help"],
+                "symbols": [{
+                    "name": "test_completion_item_data",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "signature": "def test_completion_item_data()",
+                    "summary": "Tests multiline help completion item data",
+                    "body": "def test_completion_item_data(): assert 'multiline help'",
+                }],
+            },
+        },
+        task="Ensure fish completion handles multiline help strings correctly",
+        changed_paths=set(),
+        scored_map={"tests/test_shell_completion.py": {"rank": 4}},
+    )
+
+    assert projection["tier_counts"] == {"ast_checkpoint_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+    assert projection["removed_tokens"] == 0
+
+
+def test_ast_checkpoint_memory_excerpt_projection_reports_memory_signal(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(80)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "learning feedback miss boost +24",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _ast_checkpoint_memory_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 700},
+        selected_modes={"src/service.py": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={"src/service.py": SimpleNamespace(path="src/service.py", content=source.read_text(encoding="utf-8"))},
+        summaries={
+            "src/service.py": {
+                "defines": ["target_handler"],
+                "symbols": [{
+                    "name": "target_handler",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "signature": "def target_handler(request)",
+                    "summary": "Handle target requests",
+                    "body": "def target_handler(request): return request.user",
+                }],
+            },
+        },
+        task="fix target handler",
+        changed_paths=set(),
+    )
+
+    assert projection["memory_signals_tested"] is True
+    assert projection["memory_signal_selected_files"] == 1
+    assert projection["memory_signal_projected_files"] == 0
+    assert projection["tier_counts"] == {"ast_checkpoint_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+
+
+def test_mav_span_excerpt_projection_compresses_high_density_carrier(tmp_path: Path) -> None:
+    owner = tmp_path / "src" / "service.py"
+    carrier = tmp_path / "gin.go"
+    owner.parent.mkdir()
+    owner.write_text(
+        "\n".join([
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def expected_helper_{index}(): return {index}" for index in range(70)],
+        ]),
+        encoding="utf-8",
+    )
+    carrier.write_text(
+        "\n".join([
+            "package gin",
+            "",
+            "// Engine routes HTTP requests.",
+            "type Engine struct {",
+            "    RouterGroup RouterGroup",
+            "}",
+            "",
+            "func NewEngine() *Engine {",
+            "    return &Engine{}",
+            "}",
+            "",
+            *[f"func unrelated{index}() int {{ return {index} }}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "direct content evidence +170",
+                "content keyword match (3)",
+            ],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="gin.go",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: Engine",
+                "direct dependency of changed file",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        ),
+    ]
+
+    projection = _mav_span_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 500, "gin.go": 900},
+        selected_modes={"src/service.py": "skeleton", "gin.go": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={
+            "src/service.py": SimpleNamespace(path="src/service.py", content=owner.read_text(encoding="utf-8")),
+            "gin.go": SimpleNamespace(path="gin.go", content=carrier.read_text(encoding="utf-8")),
+        },
+        summaries={
+            "src/service.py": {
+                "entrypoints": ["target_handler"],
+                "defines": ["target_handler"],
+            },
+            "gin.go": {
+                "defines": ["Engine"],
+                "calls": ["NewEngine"],
+                "symbols": [{
+                    "name": "Engine",
+                    "kind": "type",
+                    "start_line": 4,
+                    "end_line": 6,
+                    "signature": "type Engine struct",
+                    "summary": "Engine routing support",
+                    "body": "type Engine struct { RouterGroup RouterGroup }",
+                }],
+            },
+        },
+        task="fix engine routing",
+        changed_paths=set(),
+    )
+
+    assert projection["selected_file_set_unchanged"] is True
+    assert projection["tier_counts"] == {"mav_action_owner": 1, "mav_evidence_carrier": 1}
+    assert projection["projected_tier_counts"] == {"mav_evidence_carrier": 1}
+    assert projection["expected_token_loss"] == 0
+    assert projection["strict_noise_removed"] == projection["removed_tokens"]
+    assert projection["projected_files"][0]["path"] == "gin.go"
+    assert projection["projected_files"][0]["reason"] == "mav_per_token_spans"
+    assert projection["projected_files"][0]["mav_density"] > 0
+
+
+def test_mav_span_excerpt_projection_protects_memory_confirmed_owner(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(80)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "episodic memory similar task; overlap=target; confidence=0.70 boost +12",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _mav_span_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 700},
+        selected_modes={"src/service.py": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={"src/service.py": SimpleNamespace(path="src/service.py", content=source.read_text(encoding="utf-8"))},
+        summaries={
+            "src/service.py": {
+                "defines": ["target_handler"],
+                "symbols": [{
+                    "name": "target_handler",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "signature": "def target_handler(request)",
+                    "summary": "Handle target requests",
+                    "body": "def target_handler(request): return request.user",
+                }],
+            },
+        },
+        task="fix target handler",
+        changed_paths=set(),
+    )
+
+    assert projection["memory_signals_tested"] is True
+    assert projection["memory_signal_selected_files"] == 1
+    assert projection["memory_signal_projected_files"] == 0
+    assert projection["tier_counts"] == {"mav_action_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+
+
+def test_neutral_mav_span_optimizer_compresses_structural_evidence_carrier(tmp_path: Path) -> None:
+    owner = tmp_path / "src" / "router.py"
+    carrier = tmp_path / "src" / "context.py"
+    owner.parent.mkdir()
+    owner.write_text(
+        "\n".join([
+            "def route_request(request):",
+            "    return request.context",
+            "",
+            *[f"def expected_helper_{index}(): return {index}" for index in range(70)],
+        ]),
+        encoding="utf-8",
+    )
+    carrier.write_text(
+        "\n".join([
+            "class RequestContext:",
+            "    def route_context(self):",
+            "        return self.request",
+            "",
+            *[f"def unrelated_context_helper_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/router.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: route_request",
+                "direct content evidence +170",
+                "content keyword match (3)",
+            ],
+            symbols=[],
+        ),
+        SimpleNamespace(
+            path="src/context.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: RequestContext",
+                "direct dependency of changed file",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        ),
+    ]
+    summaries = {
+        "src/router.py": {
+            "entrypoints": ["route_request"],
+            "defines": ["route_request"],
+        },
+        "src/context.py": {
+            "defines": ["RequestContext"],
+            "symbols": [{
+                "name": "RequestContext",
+                "kind": "class",
+                "start_line": 1,
+                "end_line": 3,
+                "signature": "class RequestContext",
+                "summary": "Request context routing support",
+                "body": "class RequestContext: def route_context(self): return self.request",
+            }],
+        },
+    }
+    file_by_path = {
+        "src/router.py": SimpleNamespace(path="src/router.py", content=owner.read_text(encoding="utf-8")),
+        "src/context.py": SimpleNamespace(path="src/context.py", content=carrier.read_text(encoding="utf-8")),
+    }
+
+    old_projection = _mav_span_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/router.py": 500, "src/context.py": 900},
+        selected_modes={"src/router.py": "skeleton", "src/context.py": "skeleton"},
+        expected_set={"src/router.py"},
+        file_by_path=file_by_path,
+        summaries=summaries,
+        task="fix request context routing",
+        changed_paths=set(),
+    )
+    neutral_projection = _neutral_mav_span_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/router.py": 500, "src/context.py": 900},
+        selected_modes={"src/router.py": "skeleton", "src/context.py": "skeleton"},
+        expected_set={"src/router.py"},
+        file_by_path=file_by_path,
+        summaries=summaries,
+        task="fix request context routing",
+        changed_paths=set(),
+    )
+
+    assert old_projection["projected_file_count"] == 0
+    assert neutral_projection["selected_file_set_unchanged"] is True
+    assert neutral_projection["projected_tier_counts"] == {"neutral_mav_carrier": 1}
+    assert neutral_projection["expected_token_loss"] == 0
+    assert neutral_projection["strict_noise_removed"] == neutral_projection["removed_tokens"]
+    assert neutral_projection["projected_files"][0]["path"] == "src/context.py"
+    assert neutral_projection["projected_files"][0]["compression_score"] >= neutral_projection["projected_files"][0]["compression_threshold"]
+
+
+def test_neutral_mav_span_optimizer_protects_memory_confirmed_owner(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "service.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def target_handler(request):",
+            "    return request.user",
+            "",
+            *[f"def unrelated_{index}(): return {index}" for index in range(80)],
+        ]),
+        encoding="utf-8",
+    )
+    selected = [
+        SimpleNamespace(
+            path="src/service.py",
+            include_mode="skeleton",
+            reasons=[
+                "matched define: target_handler",
+                "episodic memory similar task; overlap=target; confidence=0.70 boost +12",
+                "content keyword match (1)",
+            ],
+            symbols=[],
+        )
+    ]
+
+    projection = _neutral_mav_span_excerpt_projection(
+        selected=selected,
+        selected_tokens={"src/service.py": 700},
+        selected_modes={"src/service.py": "skeleton"},
+        expected_set={"src/service.py"},
+        file_by_path={"src/service.py": SimpleNamespace(path="src/service.py", content=source.read_text(encoding="utf-8"))},
+        summaries={
+            "src/service.py": {
+                "defines": ["target_handler"],
+                "symbols": [{
+                    "name": "target_handler",
+                    "kind": "function",
+                    "start_line": 1,
+                    "end_line": 2,
+                    "signature": "def target_handler(request)",
+                    "summary": "Handle target requests",
+                    "body": "def target_handler(request): return request.user",
+                }],
+            },
+        },
+        task="fix target handler",
+        changed_paths=set(),
+    )
+
+    assert projection["memory_signals_tested"] is True
+    assert projection["memory_signal_selected_files"] == 1
+    assert projection["memory_signal_projected_files"] == 0
+    assert projection["tier_counts"] == {"neutral_mav_action_owner": 1}
+    assert projection["projected_file_count"] == 0
+    assert projection["expected_token_loss"] == 0
+
+
+def test_benchmark_ablation_report_computes_tiered_oracle_capture_rate() -> None:
+    records = [{
+        "task": "tiered case",
+        "recall": 1.0,
+        "token_precision": 100 / 400,
+        "expected_files": ["src/service.py"],
+        "selected_tokens": {"src/service.py": 100, "src/utils.py": 300},
+        "selection_diagnostics": {
+            "oracle_non_expected_excerpt_ceiling": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 150,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 250,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 250,
+                "projected_file_count": 1,
+                "token_precision_delta": round((100 / 150) - (100 / 400), 4),
+                "projected_files": [{"path": "src/utils.py"}],
+            },
+            "label_free_tiered_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 250,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 150,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 150,
+                "projected_file_count": 1,
+                "token_precision_delta": round((100 / 250) - (100 / 400), 4),
+                "tier_counts": {"strong": 1, "weak": 1},
+                "projected_tier_counts": {"weak": 1},
+                "removed_tokens_by_tier": {"weak": 150},
+                "strict_noise_removed_by_tier": {"weak": 150},
+                "expected_loss_by_tier": {},
+                "projected_files": [{"path": "src/utils.py"}],
+            },
+            "strong_carrier_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 300,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 100,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 100,
+                "projected_file_count": 1,
+                "token_precision_delta": round((100 / 300) - (100 / 400), 4),
+                "tier_counts": {"strong_carrier": 1, "strong_action_owner": 1},
+                "projected_tier_counts": {"strong_carrier": 1},
+                "removed_tokens_by_tier": {"strong_carrier": 100},
+                "strict_noise_removed_by_tier": {"strong_carrier": 100},
+                "expected_loss_by_tier": {},
+                "projected_files": [{"path": "src/carrier.py"}],
+            },
+            "guarded_strong_carrier_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 320,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 80,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 80,
+                "projected_file_count": 1,
+                "token_precision_delta": round((100 / 320) - (100 / 400), 4),
+                "tier_counts": {"strong_carrier": 1, "strong_action_owner": 1},
+                "projected_tier_counts": {"strong_carrier": 1},
+                "removed_tokens_by_tier": {"strong_carrier": 80},
+                "strict_noise_removed_by_tier": {"strong_carrier": 80},
+                "expected_loss_by_tier": {},
+                "projected_files": [{"path": "src/carrier.py"}],
+            },
+            "ast_checkpoint_memory_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 310,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 90,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 90,
+                "projected_file_count": 1,
+                "memory_signal_selected_files": 2,
+                "memory_signal_projected_files": 1,
+                "memory_signals_tested": True,
+                "token_precision_delta": round((100 / 310) - (100 / 400), 4),
+                "tier_counts": {"ast_checkpoint_carrier": 1, "ast_checkpoint_owner": 1},
+                "projected_tier_counts": {"ast_checkpoint_carrier": 1},
+                "removed_tokens_by_tier": {"ast_checkpoint_carrier": 90},
+                "strict_noise_removed_by_tier": {"ast_checkpoint_carrier": 90},
+                "expected_loss_by_tier": {},
+                "projected_files": [{"path": "src/carrier.py"}],
+            },
+            "mav_span_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 280,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 120,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 120,
+                "projected_file_count": 1,
+                "memory_signal_selected_files": 0,
+                "memory_signal_projected_files": 0,
+                "memory_signals_tested": False,
+                "token_precision_delta": round((100 / 280) - (100 / 400), 4),
+                "tier_counts": {"mav_evidence_carrier": 1, "mav_action_owner": 1},
+                "projected_tier_counts": {"mav_evidence_carrier": 1},
+                "removed_tokens_by_tier": {"mav_evidence_carrier": 120},
+                "strict_noise_removed_by_tier": {"mav_evidence_carrier": 120},
+                "expected_loss_by_tier": {},
+                "projected_files": [{"path": "src/carrier.py"}],
+            },
+            "neutral_mav_span_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 400,
+                "projected_selected_tokens": 240,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 160,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 160,
+                "projected_file_count": 1,
+                "memory_signal_selected_files": 0,
+                "memory_signal_projected_files": 0,
+                "memory_signals_tested": False,
+                "token_precision_delta": round((100 / 240) - (100 / 400), 4),
+                "tier_counts": {"neutral_mav_carrier": 1, "neutral_mav_action_owner": 1},
+                "projected_tier_counts": {"neutral_mav_carrier": 1},
+                "removed_tokens_by_tier": {"neutral_mav_carrier": 160},
+                "strict_noise_removed_by_tier": {"neutral_mav_carrier": 160},
+                "expected_loss_by_tier": {},
+                "projected_files": [{"path": "src/carrier.py"}],
+            },
+        },
+    }]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+    tiered = report["label_free_tiered_excerpt_projection"]
+    carrier = report["strong_carrier_excerpt_projection"]
+    guarded_carrier = report["guarded_strong_carrier_excerpt_projection"]
+    ast_checkpoint = report["ast_checkpoint_memory_excerpt_projection"]
+    mav_span = report["mav_span_excerpt_projection"]
+    neutral_mav = report["neutral_mav_span_excerpt_projection"]
+
+    assert tiered["aggregate_token_precision_delta"] == pytest.approx((100 / 250) - (100 / 400))
+    assert tiered["oracle_capture_rate"] == pytest.approx(((100 / 250) - (100 / 400)) / ((100 / 150) - (100 / 400)))
+    assert tiered["removed_tokens_by_tier"] == {"weak": 150}
+    assert carrier["aggregate_token_precision_delta"] == pytest.approx((100 / 300) - (100 / 400))
+    assert carrier["oracle_capture_rate"] == pytest.approx(((100 / 300) - (100 / 400)) / ((100 / 150) - (100 / 400)))
+    assert carrier["removed_tokens_by_tier"] == {"strong_carrier": 100}
+    assert guarded_carrier["aggregate_token_precision_delta"] == pytest.approx((100 / 320) - (100 / 400))
+    assert guarded_carrier["removed_tokens_by_tier"] == {"strong_carrier": 80}
+    assert ast_checkpoint["aggregate_token_precision_delta"] == pytest.approx((100 / 310) - (100 / 400))
+    assert ast_checkpoint["removed_tokens_by_tier"] == {"ast_checkpoint_carrier": 90}
+    assert ast_checkpoint["memory_signals_tested"] is True
+    assert ast_checkpoint["memory_signal_selected_files"] == 2
+    assert ast_checkpoint["memory_signal_projected_files"] == 1
+    assert mav_span["aggregate_token_precision_delta"] == pytest.approx((100 / 280) - (100 / 400))
+    assert mav_span["oracle_capture_rate"] == pytest.approx(((100 / 280) - (100 / 400)) / ((100 / 150) - (100 / 400)))
+    assert mav_span["removed_tokens_by_tier"] == {"mav_evidence_carrier": 120}
+    assert mav_span["memory_signals_tested"] is False
+    assert neutral_mav["aggregate_token_precision_delta"] == pytest.approx((100 / 240) - (100 / 400))
+    assert neutral_mav["oracle_capture_rate"] == pytest.approx(((100 / 240) - (100 / 400)) / ((100 / 150) - (100 / 400)))
+    assert neutral_mav["removed_tokens_by_tier"] == {"neutral_mav_carrier": 160}
+    assert neutral_mav["memory_signals_tested"] is False
+
+
+def test_benchmark_ablation_report_audits_oracle_missed_signatures() -> None:
+    records = [{
+        "task": "fix render context",
+        "recall": 1.0,
+        "token_precision": 100 / 600,
+        "expected_files": ["render.go"],
+        "selected_tokens": {"render.go": 100, "context.go": 500},
+        "selected_modes": {"render.go": "skeleton", "context.go": "skeleton"},
+        "selection_diagnostics": {
+            "selected_noise": [{
+                "path": "context.go",
+                "family": "source",
+                "mode": "skeleton",
+                "rank": 2,
+                "score": 450.0,
+                "tokens": 500,
+                "reasons": [
+                    "direct dependency of changed file",
+                    "content keyword match (2)",
+                ],
+            }],
+            "oracle_non_expected_excerpt_ceiling": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 600,
+                "projected_selected_tokens": 180,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 420,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 420,
+                "projected_file_count": 1,
+                "token_precision_delta": round((100 / 180) - (100 / 600), 4),
+                "projected_files": [{
+                    "path": "context.go",
+                    "family": "source",
+                    "mode": "skeleton",
+                    "current_tokens": 500,
+                    "projected_tokens": 80,
+                    "removed_tokens": 420,
+                    "matched_terms": ["render", "context"],
+                }],
+            },
+            "risk_aware_tiered_excerpt_projection": {
+                "selected_file_set_unchanged": True,
+                "baseline_selected_tokens": 600,
+                "projected_selected_tokens": 600,
+                "baseline_expected_tokens": 100,
+                "projected_expected_tokens": 100,
+                "removed_tokens": 0,
+                "expected_token_loss": 0,
+                "strict_noise_removed": 0,
+                "projected_file_count": 0,
+                "token_precision_delta": 0.0,
+                "projected_files": [],
+            },
+        },
+    }]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+    audit = report["oracle_miss_signature_audit"]
+
+    assert audit["missed_files"] == 1
+    assert audit["missed_oracle_tokens"] == 420
+    assert audit["signature_counts"]["dependency_neighbor_non_owner"] == 1
+    assert audit["signature_tokens"]["evidence_carrier_not_action_owner"] == 420
+    assert audit["signature_marginal_union"][0]["signature"] == "evidence_carrier_not_action_owner"
+    assert audit["signature_marginal_union"][0]["removed_tokens"] == 420
+    assert audit["signature_marginal_union"][0]["expected_token_loss"] == 0
+    assert audit["top_missed"][0]["path"] == "context.go"
+
+
 def test_benchmark_intent_profile_classifies_dependency_and_miss_families() -> None:
     profile = _benchmark_intent_profile(
         task="Upgrade Spring Boot and update Docker images",
@@ -766,6 +3172,625 @@ def test_write_results_jsonl_uses_benchmark_record_shape(tmp_path: Path) -> None
     assert rows[0]["misses"] == []
 
 
+def test_benchmark_ablation_report_quantifies_prune_ceiling() -> None:
+    records = [
+        {
+            "task": "noisy case",
+            "recall": 1.0,
+            "token_precision": 0.25,
+            "expected_files": ["a.py"],
+            "selected_tokens": {"a.py": 100, "noise.py": 300},
+            "failure_type_counts": {"NOISE_SELECTED_ABOVE_EXPECTED": 1},
+            "selected_family_waste_tokens": {"source": 300},
+            "selection_diagnostics": {
+                "label_audit": {
+                    "selected_noise_tokens": 300,
+                    "plausibly_useful_tokens": 50,
+                    "audited_noise_tokens": 250,
+                }
+            },
+        },
+        {
+            "task": "all noise",
+            "recall": 0.0,
+            "token_precision": 0.0,
+            "expected_files": ["b.py"],
+            "selected_tokens": {"noise2.py": 200},
+            "failure_type_counts": {"EXPECTED_SKIPPED": 1},
+            "selected_family_waste_tokens": {"test": 200},
+            "selection_diagnostics": {
+                "label_audit": {
+                    "selected_noise_tokens": 200,
+                    "plausibly_useful_tokens": 0,
+                    "audited_noise_tokens": 200,
+                }
+            },
+        },
+    ]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+
+    assert report["scored_cases"] == 2
+    assert report["selected_tokens"] == 600
+    assert report["expected_selected_tokens"] == 100
+    assert report["strict_noise_tokens"] == 500
+    assert report["aggregate_noise_removal_to_target"] == 400
+    assert report["case_noise_removal_to_target"] == 400
+    assert report["zero_expected_selected_cases"] == 1
+    assert report["zero_expected_selected_tokens"] == 200
+    assert report["audited_true_noise_tokens"] == 450
+    assert report["projected_avg_tp_remove_true_noise"] == pytest.approx(5 / 6)
+    assert report["projected_aggregate_tp_remove_true_noise"] == pytest.approx(2 / 3)
+    assert report["failure_type_counts"] == {
+        "NOISE_SELECTED_ABOVE_EXPECTED": 1,
+        "EXPECTED_SKIPPED": 1,
+    }
+    assert report["selected_waste_family_tokens"] == {"source": 300, "test": 200}
+
+
+def test_benchmark_ablation_report_scores_heuristic_prune_false_positives() -> None:
+    records = [{
+        "task": "release metadata noise",
+        "recall": 1.0,
+        "token_precision": 100 / 460,
+        "expected_files": ["a.py"],
+        "selected_tokens": {
+            "a.py": 100,
+            "pyproject.toml": 80,
+            "tests/test_options.py": 50,
+            "src/pkg/__init__.py": 30,
+            "src/pkg/core.py": 200,
+        },
+        "selection_diagnostics": {
+            "selected_noise": [
+                {
+                    "path": "pyproject.toml",
+                    "family": "config",
+                    "mode": "skeleton",
+                    "rank": 12,
+                    "tokens": 80,
+                    "reasons": ["config file", "release/version metadata"],
+                },
+                {
+                    "path": "tests/test_options.py",
+                    "family": "test",
+                    "mode": "summary",
+                    "rank": 5,
+                    "tokens": 50,
+                    "reasons": ["matched define: ConfigParamType.convert"],
+                },
+                {
+                    "path": "src/pkg/__init__.py",
+                    "family": "source",
+                    "mode": "skeleton",
+                    "rank": 2,
+                    "tokens": 30,
+                    "reasons": ["matched call: importlib.metadata.version", "release/version metadata"],
+                },
+                {
+                    "path": "src/pkg/core.py",
+                    "family": "source",
+                    "mode": "skeleton",
+                    "rank": 3,
+                    "tokens": 200,
+                    "reasons": ["direct content evidence +270", "matched define: core"],
+                },
+            ],
+            "selected_not_expected_but_plausibly_useful": [
+                {"path": "src/pkg/__init__.py", "tokens": 30},
+                {"path": "src/pkg/core.py", "tokens": 200},
+            ],
+            "label_audit": {
+                "selected_noise_tokens": 360,
+                "plausibly_useful_tokens": 230,
+                "audited_noise_tokens": 130,
+            },
+        },
+    }]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+
+    heuristic = report["heuristic_prune"]
+    assert heuristic["pruned_tokens"] == 160
+    assert heuristic["pruned_true_noise_tokens"] == 130
+    assert heuristic["pruned_plausibly_useful_tokens"] == 30
+    assert heuristic["true_noise_purity"] == pytest.approx(130 / 160)
+    assert heuristic["plausibly_useful_prune_fraction"] == pytest.approx(30 / 230)
+    assert heuristic["projected_aggregate_token_precision"] == pytest.approx(1 / 3)
+    assert heuristic["prune_reason_counts"] == {
+        "release_metadata": 1,
+        "unsupported_release_metadata": 2,
+        "low_rank_config": 1,
+        "weak_test_summary": 1,
+    }
+
+
+def test_benchmark_mav_score_prefers_direct_source_over_weak_config_noise() -> None:
+    direct_source = {
+        "path": "src/server/open_browser.py",
+        "family": "source",
+        "rank": 4,
+        "score": 420.0,
+        "tokens": 90,
+        "reasons": [
+            "content keyword match (3)",
+            "matched call: open_browser",
+            "keyword phrase match: create react app",
+            "direct content evidence +170",
+        ],
+    }
+    weak_config = {
+        "path": ".github/workflows/tests.yaml",
+        "family": "config",
+        "rank": 3,
+        "score": 250.0,
+        "tokens": 85,
+        "reasons": ["content keyword match (1)", "config file", "recently modified"],
+    }
+
+    assert _benchmark_mav_score(direct_source) > _benchmark_mav_score(weak_config) + 80
+
+
+def test_benchmark_mav_score_protects_structural_support() -> None:
+    structural_source = {
+        "path": "src/click/__init__.py",
+        "family": "source",
+        "rank": 9,
+        "score": 180.0,
+        "tokens": 70,
+        "reasons": [
+            "content keyword match (5)",
+            "recall neighbor of src/click/decorators.py",
+            "second-pass recall neighbor of src/click/types.py",
+        ],
+    }
+    weak_config = {
+        "path": ".github/workflows/tests.yaml",
+        "family": "config",
+        "rank": 3,
+        "score": 250.0,
+        "tokens": 85,
+        "reasons": ["content keyword match (2)", "config file", "recently modified", "high churn (38 commits)"],
+    }
+
+    assert _benchmark_mav_score(structural_source) > 20
+    assert _benchmark_mav_score(weak_config) < 20
+
+
+def test_benchmark_ablation_report_includes_mav_tradeoffs() -> None:
+    records = [{
+        "task": "replace weak workflow with owner",
+        "recall": 0.5,
+        "token_precision": 100 / 290,
+        "expected_files": ["a.py", "b.py"],
+        "selected_tokens": {
+            "a.py": 100,
+            ".github/workflows/tests.yaml": 90,
+            "src/plausible.py": 100,
+        },
+        "misses": [{
+            "path": "b.py",
+            "rank": 2,
+            "score": 500.0,
+            "family": "source",
+            "failure_type": "EXPECTED_SKIPPED",
+            "status": "compressed context cap reached",
+            "reasons": ["matched call: build_owner", "content keyword match (3)", "direct content evidence +170"],
+            "cap_block_diagnostic": {
+                "candidate_has_strong_evidence": True,
+                "candidate_tokens": 80,
+                "block_reason": "no replaceable selected compressed noise",
+            },
+        }],
+        "selection_diagnostics": {
+            "selected_noise": [
+                {
+                    "path": ".github/workflows/tests.yaml",
+                    "family": "config",
+                    "mode": "skeleton",
+                    "rank": 3,
+                    "score": 250.0,
+                    "tokens": 90,
+                    "reasons": ["content keyword match (1)", "config file", "recently modified"],
+                },
+                {
+                    "path": "src/plausible.py",
+                    "family": "source",
+                    "mode": "skeleton",
+                    "rank": 4,
+                    "score": 220.0,
+                    "tokens": 100,
+                    "reasons": [
+                        "content keyword match (3)",
+                        "recall neighbor of src/owner.py",
+                        "second-pass recall neighbor of src/service.py",
+                    ],
+                },
+            ],
+            "selected_not_expected_but_plausibly_useful": [
+                {"path": "src/plausible.py", "tokens": 100},
+            ],
+            "label_audit": {
+                "selected_noise_tokens": 190,
+                "plausibly_useful_tokens": 100,
+                "audited_noise_tokens": 90,
+            },
+        },
+    }]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+
+    mav = report["mav_ablation"]
+    assert mav["guarded_prune"]["pruned_true_noise_tokens"] == 90
+    assert mav["guarded_prune"]["pruned_plausibly_useful_tokens"] == 0
+    assert mav["replacement"]["accepted_replacements"] == 1
+    assert mav["replacement"]["added_expected_tokens"] == 80
+
+
+def test_benchmark_ablation_report_includes_activation_gate_tradeoffs() -> None:
+    records = [
+        {
+            "task": "test(render): add regression tests",
+            "recall": 0.5,
+            "token_precision": 100 / 400,
+            "expected_files": ["render/expected.go", "render/expected_test.go"],
+            "selected_tokens": {
+                "render/expected.go": 100,
+                "context.go": 120,
+                "pyproject.toml": 80,
+                "render/plausible.go": 100,
+            },
+            "misses": [{
+                "path": "render/expected_test.go",
+                "rank": 2,
+                "family": "test",
+                "status": "compressed context cap reached",
+                "cap_block_diagnostic": {"candidate_tokens": 200},
+            }],
+            "selection_diagnostics": {
+                "intent_profile": {"primary": "test_focus"},
+                "selected_noise": [
+                    {
+                        "path": "context.go",
+                        "family": "source",
+                        "mode": "skeleton",
+                        "rank": 12,
+                        "score": 280.0,
+                        "tokens": 120,
+                        "reasons": ["symbol keyword match", "content keyword match (2)"],
+                    },
+                    {
+                        "path": "pyproject.toml",
+                        "family": "config",
+                        "mode": "skeleton",
+                        "rank": 3,
+                        "score": 300.0,
+                        "tokens": 80,
+                        "reasons": ["content keyword match (1)", "config file"],
+                    },
+                    {
+                        "path": "render/plausible.go",
+                        "family": "source",
+                        "mode": "skeleton",
+                        "rank": 4,
+                        "score": 350.0,
+                        "tokens": 100,
+                        "reasons": ["direct dependency of changed file", "matched define: Render"],
+                    },
+                ],
+                "selected_not_expected_but_plausibly_useful": [
+                    {"path": "render/plausible.go", "tokens": 100},
+                ],
+                "label_audit": {
+                    "selected_noise_tokens": 300,
+                    "plausibly_useful_tokens": 100,
+                    "audited_noise_tokens": 200,
+                },
+            },
+        },
+        {
+            "task": "Fix broken fish completion",
+            "recall": 1.0,
+            "token_precision": 100 / 340,
+            "expected_files": ["src/click/shell_completion.py"],
+            "selected_tokens": {
+                "src/click/shell_completion.py": 100,
+                "tests/test_shell_completion.py": 150,
+                "tests/test_useful.py": 90,
+            },
+            "misses": [{
+                "path": "src/click/core.py",
+                "rank": 8,
+                "family": "source",
+                "status": "summary score below floor",
+            }],
+            "selection_diagnostics": {
+                "intent_profile": {"primary": "source_behavior"},
+                "selected_noise": [
+                    {
+                        "path": "tests/test_shell_completion.py",
+                        "family": "test",
+                        "mode": "skeleton",
+                        "rank": 2,
+                        "score": 380.0,
+                        "tokens": 150,
+                        "reasons": ["symbol keyword match", "matched define: test_completion_item_data"],
+                    },
+                    {
+                        "path": "tests/test_useful.py",
+                        "family": "test",
+                        "mode": "skeleton",
+                        "rank": 3,
+                        "score": 360.0,
+                        "tokens": 90,
+                        "reasons": [
+                            "symbol keyword match",
+                            "matched define: test_completion",
+                            "test for high-scoring src/click/shell_completion.py",
+                        ],
+                    },
+                ],
+                "selected_not_expected_but_plausibly_useful": [
+                    {"path": "tests/test_useful.py", "tokens": 90},
+                ],
+                "label_audit": {
+                    "selected_noise_tokens": 240,
+                    "plausibly_useful_tokens": 90,
+                    "audited_noise_tokens": 150,
+                },
+            },
+        },
+    ]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+
+    activation = report["activation_gate"]
+    assert activation["policy"] == "two_stage_activation_v1_offline"
+    profile = activation["activation_only"]
+    assert profile["pruned_tokens"] == 350
+    assert profile["pruned_true_noise_tokens"] == 350
+    assert profile["pruned_plausibly_useful_tokens"] == 0
+    assert profile["true_noise_purity"] == pytest.approx(1.0)
+    assert profile["projected_aggregate_token_precision"] == pytest.approx(200 / 390)
+    assert profile["reason_counts"] == {
+        "test_task_late_source_without_costimulus": 1,
+        "non_action_family_without_costimulus": 1,
+        "non_test_task_test_symbol_define_without_costimulus": 1,
+    }
+    combined = activation["activation_plus_guarded_mav"]
+    assert combined["pruned_tokens"] == 350
+    assert combined["pruned_plausibly_useful_tokens"] == 0
+    atom_80 = activation["atom_ceiling"]["profiles"][0]
+    assert atom_80["atom_tokens"] == 80
+    assert atom_80["atoms"] == 2
+    assert atom_80["added_expected_tokens"] == 160
+    assert atom_80["projected_aggregate_token_precision"] == pytest.approx(360 / 550)
+
+
+def test_benchmark_ablation_report_audits_ranked_expected_skips() -> None:
+    records = [{
+        "task": "fix ranked miss",
+        "recall": 0.5,
+        "token_precision": 0.25,
+        "expected_files": ["src/a.py", "tests/test_a.py"],
+        "selected_tokens": {"src/a.py": 100, "src/noise.py": 300},
+        "misses": [
+            {
+                "path": "tests/test_a.py",
+                "rank": 3,
+                "score": 410.0,
+                "family": "test",
+                "failure_type": "EXPECTED_SKIPPED",
+                "status": "compressed context cap reached; no live changed-file signal",
+                "reasons": ["matched call: do_work"],
+                "would_select_with_one_more_slot": True,
+                "cap_block_diagnostic": {
+                    "candidate_has_strong_evidence": True,
+                    "block_reason": "no replaceable selected compressed noise",
+                },
+                "selected_noise_file_that_beat_expected": {
+                    "path": "src/noise.py",
+                    "family": "source",
+                },
+            },
+            {
+                "path": "src/low.py",
+                "rank": 15,
+                "score": 22.0,
+                "family": "source",
+                "failure_type": "EXPECTED_RANKED_LOW",
+                "status": "summary score below floor; no live changed-file signal",
+                "reasons": ["content keyword match (1)"],
+            },
+            {
+                "path": "src/missing.py",
+                "rank": None,
+                "family": "source",
+                "failure_type": "EXPECTED_SKIPPED",
+                "status": "not ranked",
+            },
+        ],
+    }]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+
+    audit = report["ranked_skip_audit"]
+    assert audit["missed_expected_files"] == 3
+    assert audit["ranked_missed_expected_files"] == 2
+    assert audit["high_ranked_missed_expected_files"] == 1
+    assert audit["high_ranked_strong_evidence_files"] == 1
+    assert audit["would_select_with_one_more_slot"] == 1
+    assert audit["status_counts"] == {
+        "compressed_context_cap": 1,
+        "summary_score_floor": 1,
+        "not_ranked": 1,
+    }
+    assert audit["failure_type_counts"] == {
+        "EXPECTED_SKIPPED": 2,
+        "EXPECTED_RANKED_LOW": 1,
+    }
+    assert audit["blocker_family_counts"] == {"source": 1}
+    assert audit["cap_block_reason_counts"] == {"no replaceable selected compressed noise": 1}
+    assert audit["top_ranked_misses"][0]["path"] == "tests/test_a.py"
+
+
+def test_benchmark_ablation_report_audits_zero_expected_selected_cases() -> None:
+    records = [{
+        "task": "zero expected selected",
+        "recall": 0.0,
+        "token_precision": 0.0,
+        "expected_files": ["src/owner.py", "tests/test_owner.py"],
+        "selected_tokens": {
+            ".github/workflows/tests.yaml": 90,
+            "src/plausible.py": 110,
+        },
+        "misses": [
+            {
+                "path": "src/owner.py",
+                "rank": 3,
+                "score": 410.0,
+                "family": "source",
+                "failure_type": "EXPECTED_SKIPPED",
+                "status": "compressed context cap reached; no live changed-file signal",
+                "reasons": ["matched call: build_owner"],
+                "cap_block_diagnostic": {
+                    "candidate_has_strong_evidence": True,
+                    "block_reason": "no replaceable selected compressed noise",
+                },
+            },
+            {
+                "path": "tests/test_owner.py",
+                "rank": 18,
+                "score": 55.0,
+                "family": "test",
+                "failure_type": "EXPECTED_RANKED_LOW",
+                "status": "summary score below floor; no live changed-file signal",
+                "reasons": ["content keyword match (1)"],
+            },
+        ],
+        "selection_diagnostics": {
+            "selected_noise": [
+                {
+                    "path": ".github/workflows/tests.yaml",
+                    "family": "config",
+                    "mode": "skeleton",
+                    "rank": 4,
+                    "score": 250.0,
+                    "tokens": 90,
+                    "reasons": ["content keyword match (2)", "config file", "recently modified"],
+                },
+                {
+                    "path": "src/plausible.py",
+                    "family": "source",
+                    "mode": "skeleton",
+                    "rank": 5,
+                    "score": 220.0,
+                    "tokens": 110,
+                    "reasons": ["matched call: helper", "direct content evidence +120"],
+                },
+            ],
+            "selected_not_expected_but_plausibly_useful": [
+                {"path": "src/plausible.py", "tokens": 110},
+            ],
+            "label_audit": {
+                "selected_noise_tokens": 200,
+                "plausibly_useful_tokens": 110,
+                "audited_noise_tokens": 90,
+            },
+        },
+    }]
+
+    report = _benchmark_ablation_report(records, min_token_precision=0.5)
+
+    audit = report["zero_expected_audit"]
+    assert audit["cases"] == 1
+    assert audit["selected_tokens"] == 200
+    assert audit["audited_true_noise_tokens"] == 90
+    assert audit["plausibly_useful_tokens"] == 110
+    assert audit["high_ranked_missed_expected_files"] == 1
+    assert audit["high_ranked_strong_evidence_files"] == 1
+    assert audit["miss_status_counts"] == {
+        "compressed_context_cap": 1,
+        "summary_score_floor": 1,
+    }
+    assert audit["selected_family_tokens"] == {"source": 110, "config": 90}
+    assert audit["cap_block_reason_counts"] == {"no replaceable selected compressed noise": 1}
+    assert audit["guarded_mav_reason_counts"] == {
+        "config_family": 1,
+        "content_only": 1,
+        "recent_only": 1,
+    }
+    assert audit["top_cases"][0]["top_miss_path"] == "src/owner.py"
+    assert audit["top_cases"][0]["selected_family_mix"] == "source=110t, config=90t"
+
+
+def test_benchmark_cli_ablation_jsonl_reports_oracle(tmp_path: Path) -> None:
+    rows = [
+        {
+            "task": "noisy case",
+            "recall": 1.0,
+            "token_precision": 0.25,
+            "expected_files": ["a.py"],
+            "selected_tokens": {"a.py": 100, "noise.py": 300},
+            "misses": [{
+                "path": "b.py",
+                "rank": 2,
+                "failure_type": "EXPECTED_SKIPPED",
+                "status": "compressed context cap reached",
+            }],
+            "selection_diagnostics": {
+                "label_audit": {"audited_noise_tokens": 250},
+                "oracle_non_expected_excerpt_ceiling": {
+                    "selected_file_set_unchanged": True,
+                    "baseline_selected_tokens": 400,
+                    "projected_selected_tokens": 150,
+                    "baseline_expected_tokens": 100,
+                    "projected_expected_tokens": 100,
+                    "removed_tokens": 250,
+                    "expected_token_loss": 0,
+                    "strict_noise_removed": 250,
+                    "projected_file_count": 1,
+                    "token_precision_delta": 0.4167,
+                    "projected_files": [{"path": "noise.py"}],
+                },
+                "label_free_tiered_excerpt_projection": {
+                    "selected_file_set_unchanged": True,
+                    "baseline_selected_tokens": 400,
+                    "projected_selected_tokens": 250,
+                    "baseline_expected_tokens": 100,
+                    "projected_expected_tokens": 100,
+                    "removed_tokens": 150,
+                    "expected_token_loss": 0,
+                    "strict_noise_removed": 150,
+                    "projected_file_count": 1,
+                    "token_precision_delta": 0.15,
+                    "tier_counts": {"strong": 1, "weak": 1},
+                    "projected_tier_counts": {"weak": 1},
+                    "removed_tokens_by_tier": {"weak": 150},
+                    "strict_noise_removed_by_tier": {"weak": 150},
+                    "projected_files": [{"path": "noise.py"}],
+                },
+            },
+        }
+    ]
+    jsonl = tmp_path / "results.jsonl"
+    jsonl.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
+
+    runner = CliRunner()
+    result = runner.invoke(app, ["benchmark", "--ablation-jsonl", str(jsonl)])
+
+    assert result.exit_code == 0
+    assert "Benchmark Ablation Oracle" in result.output
+    assert "aggregate noise removal" in result.output
+    assert "audited true noise" in result.output
+    assert "heuristic prune policy" in result.output
+    assert "MAV Offline Ablation" in result.output
+    assert "Activation Gate Ablation" in result.output
+    assert "Label-Free Tiered Excerpt Projection" in result.output
+    assert "Oracle Non-Expected Excerpt Ceiling" in result.output
+    assert "Ranked Expected Skip Audit" in result.output
+
+
 # ---------------------------------------------------------------------------
 # _load_cases
 # ---------------------------------------------------------------------------
@@ -949,6 +3974,48 @@ def test_load_public_repo_specs_defaults_to_balanced_mode(tmp_path: Path) -> Non
 
     assert specs[0].mode == "balanced"
     assert specs[0].cases[0].mode == "balanced"
+
+
+def test_write_public_repo_lock_round_trips_as_explicit_cases(tmp_path: Path) -> None:
+    out = tmp_path / "public-lock.toml"
+    _write_public_repo_lock(
+        out,
+        [
+            PublicRepoSpec(
+                name="vite",
+                url="https://github.com/vitejs/vite.git",
+                ref="main",
+                sample_history=0,
+                task_type="typescript",
+                mode="balanced",
+                budget=4000,
+                include_globs=["packages/**/*.ts"],
+                exclude_globs=["docs/**"],
+                max_changed_files=8,
+                cases=[
+                    PublicRepoCase(
+                        commit="abc123",
+                        task='fix "quoted" task',
+                        task_type="typescript",
+                        mode="balanced",
+                        budget=4000,
+                        workspace="packages/vite",
+                        expected_files=["packages/vite/src/node/index.ts"],
+                    )
+                ],
+            )
+        ],
+    )
+
+    specs = _load_public_repo_specs(out)
+
+    assert specs[0].sample_history == 0
+    assert specs[0].include_globs == ["packages/**/*.ts"]
+    assert specs[0].exclude_globs == ["docs/**"]
+    assert specs[0].cases[0].commit == "abc123"
+    assert specs[0].cases[0].task == 'fix "quoted" task'
+    assert specs[0].cases[0].workspace == "packages/vite"
+    assert specs[0].cases[0].expected_files == ["packages/vite/src/node/index.ts"]
 
 
 def test_sample_public_history_cases_uses_commit_subject_and_changed_files(tmp_path: Path) -> None:

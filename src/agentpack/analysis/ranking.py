@@ -1318,6 +1318,59 @@ def _keyword_only_false_positive(path: str, reasons: list[str], content_hits: in
     return True
 
 
+def _is_go_file(path: str) -> bool:
+    return Path(path).suffix.lower() == ".go"
+
+
+def _is_root_go_source_file(path: str) -> bool:
+    path_obj = Path(path)
+    return _is_go_file(path) and len(path_obj.parts) == 1 and not _is_test_file(path)
+
+
+def _has_go_symbol_carrier_signal(reasons: list[str]) -> bool:
+    return "symbol keyword match" in reasons or any(
+        reason.startswith(("matched define:", "matched ranking keyword:", "matched role keyword:"))
+        for reason in reasons
+    )
+
+
+def _has_go_action_owner_signal(path: str, reasons: list[str], content_hits: int) -> bool:
+    if content_hits >= 5:
+        return True
+    if any(
+        reason.startswith((
+            "conventional scope path match",
+            "direct content evidence",
+            "keyword phrase match:",
+            "literal definition match:",
+            "multi-term path match",
+            "quoted literal match:",
+            "test for ",
+        ))
+        or reason == "explicit test task file"
+        for reason in reasons
+    ):
+        return True
+    if _is_root_go_source_file(path) and "filename keyword match" in reasons and any(
+        reason.startswith("matched role keyword:")
+        for reason in reasons
+    ):
+        return True
+    return False
+
+
+def _should_dampen_go_symbol_carrier(path: str, reasons: list[str], content_hits: int) -> bool:
+    if not _is_go_file(path) or not _has_go_symbol_carrier_signal(reasons):
+        return False
+    if _has_go_action_owner_signal(path, reasons, content_hits):
+        return False
+    if _is_root_go_source_file(path):
+        return True
+    if _is_test_file(path) and content_hits <= 2:
+        return True
+    return False
+
+
 def score_files(
     files: list[FileInfo],
     changed_paths: set[str],
@@ -1631,6 +1684,10 @@ def score_files(
         if _keyword_only_false_positive(fi.path, reasons, content_hits):
             score = max(0.0, score * 0.72)
             reasons.append("likely false positive: keyword-only match")
+
+        if _should_dampen_go_symbol_carrier(fi.path, reasons, content_hits):
+            score = max(0.0, score * 0.45)
+            reasons.append("broad Go symbol carrier dampening")
 
         if _is_generated_agent_artifact(fi.path):
             score = _generated_agent_artifact_score(score, changed=fi.path in changed_paths)
