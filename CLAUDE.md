@@ -19,7 +19,7 @@ mcp__agentpack__pack_context(task="<what you're working on>", budget=4000)
 Executable fallback:
 
 ```bash
-agentpack guard --agent claude --repair-stale --refresh-context
+agentpack guard --agent claude --repair-stale --refresh-context --thread global
 ```
 
 Other tools:
@@ -47,7 +47,7 @@ If AgentPack tools are unavailable or context looks stale/wrong-worktree, do not
 
 Prefer AgentPack MCP when tools are exposed. First call readiness (`agentpack_readiness()` or `mcp__agentpack__readiness()`) to prove live tool exposure.
 If MCP tools are unavailable: run `agentpack mcp` once with a short timeout. If it exits with command/import error, report the setup issue and fall back to CLI/direct search. If it waits until timeout, the local MCP server is runnable but the host did not expose tools; fall back to CLI/direct search and suggest `agentpack repair --agent claude` plus host restart. Do not keep `agentpack mcp` running manually.
-CLI fallback: `agentpack guard --agent claude --repair-stale --refresh-context`, `agentpack route --task "<task>"`, `agentpack pack --task auto`, then `rg` / direct file reads.
+CLI fallback: `agentpack guard --agent claude --repair-stale --refresh-context --thread global`, `agentpack route --task "<task>"`, `agentpack pack --task auto`, then `rg` / direct file reads.
 
 Prompt hygiene: for agent-mode coding work, prefer `Task`, `Files`, `Acceptance criteria`, `Constraints`, `Validation`, and `Output` sections. For short/simple questions, use Ask/Chat mode instead of agent mode. Keep routine responses concise unless the user asks for detail.
 For multiple agent threads in one repo, stay in legacy global mode unless a thread is explicit. Use

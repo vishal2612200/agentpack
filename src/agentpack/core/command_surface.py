@@ -37,11 +37,12 @@ def has_cli_command(command: str) -> bool:
 def refresh_commands(agent: str = "auto") -> RefreshCommands:
     if has_cli_command("guard"):
         base = f"agentpack guard --agent {agent} --repair-stale --refresh-context"
+        global_base = f"{base} --thread global"
         return RefreshCommands(
-            primary=base,
-            context_missing=base,
+            primary=global_base,
+            context_missing=global_base,
             thread_auto=f"AGENTPACK_THREAD_ID=<stable-id> {base} --thread auto",
-            repair=base,
+            repair=global_base,
             used_guard=True,
         )
     pack = f"agentpack pack --agent {agent} --task auto"

@@ -104,6 +104,19 @@ def test_refresh_commands_fall_back_when_guard_missing(monkeypatch) -> None:
         assert "--repair-stale" not in block
 
 
+def test_refresh_commands_make_global_guard_explicit(monkeypatch) -> None:
+    monkeypatch.setattr("agentpack.core.command_surface.available_cli_commands", lambda: ("guard",))
+
+    commands = refresh_commands("codex")
+
+    assert commands.primary == "agentpack guard --agent codex --repair-stale --refresh-context --thread global"
+    assert commands.repair == commands.primary
+    assert commands.thread_auto == (
+        "AGENTPACK_THREAD_ID=<stable-id> "
+        "agentpack guard --agent codex --repair-stale --refresh-context --thread auto"
+    )
+
+
 def test_static_refresh_guidance_uses_portable_commands() -> None:
     static_files = [
         REPO_ROOT / "skills" / "agentpack-refresh.md",

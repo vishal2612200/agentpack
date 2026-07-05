@@ -176,4 +176,6 @@ def _guard_repair_command(thread_id: str | None) -> str:
     command = "agentpack guard --repair-stale --refresh-context"
     if thread_id:
         command += f" --thread {thread_id}"
+    else:
+        command += " --thread global"
     return command
