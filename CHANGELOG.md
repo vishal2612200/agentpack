@@ -9,8 +9,20 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ## [Unreleased]
 
 ### Added
+- No changes yet.
+
+## [0.3.39] — 2026-07-06
+
+### Added
 - Broadened the scoped `mypy` gate beyond the initial three-file set to cover the entire `src/agentpack/analysis/` package (import extraction, dependency graph, ranking, monorepo, and task classification), with behavior-preserving type fixes in `analysis/ranking.py` and `analysis/task_classifier.py` and a `tomllib`/`tomli` import override for the optional TOML backends.
 - Added a Rust symbol extraction slice: `extract_rust_symbols` pulls free functions (including `async`/`const fn`), `impl`/`trait` methods qualified by their owning type, and `struct`/`enum`/`trait` as class-like constructs, wired through `extract_symbols` and the offline summary path (`_rust_summary`). Documented the supported slice and its regex-based limits in `docs/limitations.md`.
+- Added JSON-output smoke coverage for scriptable `route`, `next`, and release-check flows.
+
+### Changed
+- Improved the release benchmark and memory-gate diagnostics with stronger precision accounting, activation analysis, and regression coverage for context selection.
+
+### Fixed
+- Forced generated guard fallback commands and repair output to use global context unless thread mode is explicit, avoiding stale ambient Codex session missing-task failures when `.agentpack/task.md` is the intended source.
 
 ## [0.3.38] — 2026-07-04
 

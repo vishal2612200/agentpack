@@ -25,7 +25,7 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ![AgentPack route demo](https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-route-demo.svg)
 
-> **Status: alpha (v0.3.38).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
+> **Status: alpha (v0.3.39).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
 >
 > **Platform note:** macOS, Linux, and Windows are supported. Windows support targets PowerShell plus Git for Windows.
 >
@@ -33,11 +33,10 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ## Latest Update
 
-`0.3.38` ships the review and hook hardening from the latest main commits:
-review stages can author JSON while AgentPack canonicalizes checked TOON
-handoffs, guard/review preflight now surfaces git sync and dirty-state decisions
-before edits, and prompt hooks skip chat-only work while ignoring stale review
-state from other branches.
+`0.3.39` ships stronger release and routing reliability from the latest main commits:
+the release benchmark now has tighter precision and memory-gate diagnostics, offline
+summaries understand Rust symbols, JSON-mode CLI commands have smoke coverage, and
+fallback guard commands force global context unless thread mode is explicit.
 
 ```bash
 npx @vishal2612200/agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
