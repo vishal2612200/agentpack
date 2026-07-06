@@ -217,7 +217,13 @@ agentpack ships multiple release-related workflows:
   - `agent-integration-matrix`: integration checks for supported agents.
 - **`agentpack-pr.yml`** — generates and uploads `.agentpack/context.claude.md` for PR review artifacts in `.github/workflows/agentpack-pr.yml`.
 - **`publish.yml`** — validates release tag provenance/version/changelog then builds and publishes to PyPI with trusted publishing.
-- **`publish-npm.yml`** — publishes the npm package on `v*` tags after the same release checks.
+- **`publish-npm.yml`** — publishes the npm package on `v*` tags after the same release checks and uses npm provenance.
+
+Release trust surfaces are intentionally visible from install docs: PyPI trusted
+publishing, npm provenance, GitHub Release evidence, and HOL trust/security
+badges. The next artifact hardening step is to generate release checksums, SBOM
+output, and SLSA-style provenance automatically from the release workflow rather
+than documenting those signals by hand.
 
 ### Add context packing to your repo
 

@@ -8,6 +8,13 @@ AgentPack remains a local context engine, not a coding agent.
 
 ## Current Distribution Paths
 
+Canonical short description for directories and listings:
+
+```text
+AgentPack is a local context engine for AI coding agents: ranked files,
+tests, rules, skills, and compact task context without hosted indexing.
+```
+
 | Host | Current path | What it does |
 |---|---|---|
 | Codex | `.codex-plugin/` and `skills/` | Adds `@agentpack-*` commands for local routing, packing, refresh, review, and learning |
@@ -21,6 +28,28 @@ AgentPack remains a local context engine, not a coding agent.
 | OpenCode | `.opencode/agentpack.md` | Portable OpenCode rule file |
 | Antigravity | `agentpack init --agent antigravity` | Writes `GEMINI.md`, VS Code task, git hooks, and generated skill guidance |
 | Generic agents | `agentpack init --agent generic` | Uses `.agentpack/context.md` directly |
+
+## Public Directory Placement
+
+Treat public directories as pointers to the same local CLI/MCP engine, not as
+separate products. Each listing should use the canonical short description,
+link to the install docs, and avoid claims that go beyond the public benchmark
+evidence.
+
+| Directory surface | Status | Next action |
+|---|---|---|
+| npm | Live wrapper package | Keep README synced with PyPI version, release evidence, and troubleshooting |
+| PyPI | Live core CLI package | Keep long description aligned with root README and release evidence |
+| GitHub Releases | Live release notes | Keep release-check, benchmark, wheel, and registry receipts in each release body |
+| HOL plugin registry | Live Codex plugin listing | Keep packaged metadata, privacy/terms URLs, lockfiles, and scanner workflow current |
+| Codex plugin directories | Local packaged plugin today | Reuse `.codex-plugin/plugin.json`, icon, screenshots, and `skills/` bundle for submissions |
+| MCP directories | Candidate | List AgentPack as local MCP context engine; link to `mcp-context-engine.md` |
+| Agent-tool awesome lists | Candidate | Submit only after install transcript and E2E proof page are easy to verify |
+| Comparison pages | Live docs pages | Keep comparisons scoped to context selection, not coding-agent success claims |
+
+Distribution submissions should include the same boundaries: local-first, no
+hosted indexing, no LLM calls for scan/rank/pack, and selected files are a
+starting map rather than proof.
 
 ## Shared Plugin Contract
 

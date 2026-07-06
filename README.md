@@ -18,6 +18,9 @@
   <a href="https://pepy.tech/projects/agentpack-cli"><img alt="PyPI downloads" src="https://static.pepy.tech/personalized-badge/agentpack-cli?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads"></a>
   <a href="https://www.npmjs.com/package/@vishal2612200/agentpack"><img alt="npm version" src="https://img.shields.io/npm/v/@vishal2612200/agentpack.svg?cacheSeconds=300"></a>
   <a href="https://www.npmjs.com/package/@vishal2612200/agentpack"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@vishal2612200/agentpack.svg"></a>
+  <a href="https://github.com/vishal2612200/agentpack/releases/latest"><img alt="Release evidence" src="https://img.shields.io/github/v/release/vishal2612200/agentpack?label=release%20evidence"></a>
+  <a href="https://github.com/vishal2612200/agentpack/actions/workflows/publish.yml"><img alt="PyPI trusted publishing" src="https://img.shields.io/badge/PyPI-trusted%20publishing-blue"></a>
+  <a href="https://github.com/vishal2612200/agentpack/actions/workflows/publish-npm.yml"><img alt="npm provenance" src="https://img.shields.io/badge/npm-provenance-blue"></a>
   <a href="https://hol.org/registry/plugins/agentpack%2Fagentpack"><img alt="HOL trust score" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dagentpack%252Fagentpack%26metric%3Dtrust%26style%3Dflat"></a>
   <a href="https://hol.org/registry/plugins/agentpack%2Fagentpack"><img alt="HOL security score" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dagentpack%252Fagentpack%26metric%3Dsecurity%26style%3Dflat"></a>
   <a href="https://github.com/vishal2612200/agentpack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/vishal2612200/agentpack/actions/workflows/ci.yml/badge.svg"></a>
@@ -136,6 +139,17 @@ npx @vishal2612200/agentpack start "fix auth token expiry"
 npx @vishal2612200/agentpack next
 ```
 
+## Release Trust
+
+Install surfaces intentionally point at the same local CLI:
+
+- PyPI publishes `agentpack-cli` through GitHub Actions trusted publishing.
+- npm publishes `@vishal2612200/agentpack` with npm provenance.
+- GitHub Releases include release-check, benchmark, wheel verification, and registry evidence.
+- HOL registry badges track packaged Codex plugin trust and security signals.
+
+Planned hardening: attach release checksums, publish an SBOM, and add SLSA-style provenance once the release artifact pipeline can produce them automatically.
+
 ## Proof So Far
 
 AgentPack's current public benchmark checks one narrow thing: whether selected context overlaps with files actually changed in historical commits. Treat it as evidence for a ranked starting map, not proof that any agent will finish every task faster or better.
@@ -251,6 +265,18 @@ See [`docs/integrations.md`](docs/integrations.md) and [`docs/mcp-context-engine
 ### Agent And IDE Plugins
 
 AgentPack can be used through thin plugin and IDE integration layers so agents start with ranked repo context. Codex has a packaged plugin skeleton; Cursor, Windsurf, Copilot, Cline, Kiro, OpenCode, Claude Code, Antigravity, and generic agents use the same local CLI/MCP engine through portable rules, hooks, and native integration stubs.
+
+Canonical directory description:
+
+```text
+AgentPack is a local context engine for AI coding agents: ranked files,
+tests, rules, skills, and compact task context without hosted indexing.
+```
+
+Current public placement includes PyPI, npm, GitHub Releases, GitHub Pages docs,
+and HOL's plugin registry. Next distribution targets are MCP/plugin directories,
+agent-tool awesome lists, and comparison pages that point back to the same
+canonical docs instead of creating separate host-specific claims.
 
 Inside Codex:
 

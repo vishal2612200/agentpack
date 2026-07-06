@@ -3,6 +3,9 @@
 [![npm version](https://img.shields.io/npm/v/@vishal2612200/agentpack.svg)](https://www.npmjs.com/package/@vishal2612200/agentpack)
 [![npm downloads](https://img.shields.io/npm/dm/@vishal2612200/agentpack.svg)](https://www.npmjs.com/package/@vishal2612200/agentpack)
 [![PyPI core](https://img.shields.io/pypi/v/agentpack-cli.svg)](https://pypi.org/project/agentpack-cli/)
+[![Release evidence](https://img.shields.io/github/v/release/vishal2612200/agentpack?label=release%20evidence)](https://github.com/vishal2612200/agentpack/releases/latest)
+[![PyPI trusted publishing](https://img.shields.io/badge/PyPI-trusted%20publishing-blue)](https://github.com/vishal2612200/agentpack/actions/workflows/publish.yml)
+[![npm provenance](https://img.shields.io/badge/npm-provenance-blue)](https://github.com/vishal2612200/agentpack/actions/workflows/publish-npm.yml)
 [![CI](https://github.com/vishal2612200/agentpack/actions/workflows/ci.yml/badge.svg)](https://github.com/vishal2612200/agentpack/actions/workflows/ci.yml)
 
 **Your agent starts cold. AgentPack hands it the map.**
@@ -104,6 +107,13 @@ The Python CLI remains the source of truth. The npm package exists so JavaScript
 npm install -g @vishal2612200/agentpack
 agentpack --version
 ```
+
+Release trust signals:
+
+- PyPI core package uses GitHub Actions trusted publishing.
+- npm wrapper is published with npm provenance.
+- GitHub Releases include release-check, benchmark, wheel verification, and registry evidence.
+- Next hardening targets are release checksums, SBOM output, and SLSA-style provenance.
 
 Requirements:
 
