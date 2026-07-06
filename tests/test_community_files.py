@@ -83,6 +83,8 @@ def test_repository_topics_include_discovery_targets() -> None:
     assert "First Contributions" in setup
     assert "at least three open issues" in setup
     assert "at least ten contributors" in setup
+    assert "Good First Issue submission status: submitted on 2026-07-06" in setup
+    assert "Your response has been recorded" in setup
 
 
 def test_contributor_issue_manifest_has_first_issue_and_pin_queue() -> None:

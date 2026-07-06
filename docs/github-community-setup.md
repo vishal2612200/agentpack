@@ -45,12 +45,13 @@ issues by language. Its published criteria include at least three open issues
 with `good first issue`, at least ten contributors, setup instructions,
 `CONTRIBUTING.md`, recent activity, and a license.
 
-Current live status checked before this file was updated:
+Current live status checked on 2026-07-06:
 
-- open starter issues: `15` (`#20` through `#34`)
-- open issues with `good first issue`: `9`
+- open issues: `9`
+- open issues with `good first issue`: `5`
+- open issues with `help wanted`: `5`
 - open issues with `first-timers-only`: `2`
-- contributor count from GitHub contributors API: `4`
+- contributor count from GitHub contributors API: `11`
 - license detected by GitHub license endpoint: `MIT`
 - repository permission with the personal `gh` token: `ADMIN`
 - target topics present: `good-first-issue`, `help-wanted`, `first-timers-only`, `developer-tools`, `cli`, `python`
@@ -59,14 +60,18 @@ Current live status checked before this file was updated:
 - pinned issues: `#20`, `#32`, `#33`
 - seeded discussions: Roadmap `#36`, Ideas `#37`, Help wanted `#38`
 
-AgentPack should be submitted to Good First Issue after the contributor-count
-criterion is met.
+Good First Issue submission status: submitted on 2026-07-06 through the
+official Google Form linked from
+[`DeepSourceCorp/good-first-issue`](https://github.com/DeepSourceCorp/good-first-issue#adding-a-new-project).
+The form response page returned: "Your response has been recorded." Approval is
+now external to this repository.
 
 First Contributions is a contributor education project with a project discovery
 website. AgentPack has been submitted to that project list:
 
 - First Contributions website PR: <https://github.com/firstcontributions/firstcontributions.github.io/pull/718>
-  with `Good First Issue` and `First Timers Only` tags
+  with `Good First Issue` and `First Timers Only` tags. Live status checked on
+  2026-07-06: `OPEN`.
 
 For any follow-up there, use the same readiness bar before proposing AgentPack
 in another project list:
