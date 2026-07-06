@@ -146,7 +146,7 @@ headline number.
 | `/tmp/agentpack-full-benchmark-targeted-atoms-postselect.jsonl` | 62.0% | 40.2% | 54,914 | 37.5% | Rejected as production behavior. Fixed selected-set projection was safer but barely moved precision. |
 | `/tmp/agentpack-full-benchmark-oracle-excerpt-ceiling.jsonl` | 62.0% | 40.0% | 57,512 | 37.3% | Diagnostic only. Oracle compression of non-expected selected files showed +24.8pp aggregate TP headroom. |
 | `/tmp/agentpack-full-benchmark-label-free-tiered-excerpts.jsonl` | 62.0% | 40.0% | 57,512 | 37.3% | Rejected. Removed 3,332 tokens but lost 1,510 expected tokens, for -0.5pp aggregate TP. |
-| `/tmp/agentpack-full-benchmark-risk-aware-excerpt-variants-corrected.jsonl` | 62.0% | 40.0% | 57,512 | 37.3% | Rejected. Risk-aware compression was safer but too small: +0.06pp aggregate TP. |
+| risk-aware excerpt variants, corrected | 62.0% | 40.0% | 57,512 | 37.3% | Rejected. Risk-aware compression was safer but too small: +0.06pp aggregate TP. |
 | `/tmp/agentpack-full-benchmark-guarded-strong-carrier-excerpts.jsonl` | 62.0% | 40.0% | 57,512 | 37.3% | Kept as diagnostic. +1.63pp projected aggregate TP, but not enough alone. |
 | `/tmp/agentpack-full-benchmark-ast-checkpoint-memory-excerpts.jsonl` | 62.0% | 40.0% | 57,512 | 37.3% | Kept as diagnostic. +1.33pp projected aggregate TP. Public run had 0 memory markers, so it did not test live memory. |
 | `/tmp/agentpack-full-benchmark-mav-span.jsonl` | 62.0% | 40.0% | 57,512 | 37.3% | Kept as diagnostic. +1.63pp projected aggregate TP with only 73 expected-token loss. |

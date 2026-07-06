@@ -9,8 +9,9 @@ PLUGIN_JSON = ROOT / ".codex-plugin" / "plugin.json"
 PACKAGED_PLUGIN_JSON = ROOT / "src" / "agentpack" / "data" / "codex_plugin" / ".codex-plugin" / "plugin.json"
 SKILLS_DIR = ROOT / "skills"
 PACKAGED_SKILLS_DIR = ROOT / "src" / "agentpack" / "data" / "codex_plugin" / "skills"
-PLUGIN_ICON = ROOT / "assets" / "icon.svg"
-PACKAGED_PLUGIN_ICON = ROOT / "src" / "agentpack" / "data" / "codex_plugin" / "assets" / "icon.svg"
+README_SYMBOL = ROOT / "docs" / "assets" / "agentpack-symbol.png"
+PLUGIN_ICON = ROOT / "assets" / "icon.png"
+PACKAGED_PLUGIN_ICON = ROOT / "src" / "agentpack" / "data" / "codex_plugin" / "assets" / "icon.png"
 PLUGIN_SCREENSHOT = ROOT / "assets" / "route-demo.svg"
 PACKAGED_PLUGIN_SCREENSHOT = ROOT / "src" / "agentpack" / "data" / "codex_plugin" / "assets" / "route-demo.svg"
 
@@ -24,8 +25,8 @@ def test_codex_plugin_manifest_points_to_skills() -> None:
     assert manifest["name"] == "agentpack"
     assert manifest["skills"] == "./skills/"
     assert manifest["interface"]["displayName"] == "AgentPack"
-    assert manifest["interface"]["composerIcon"] == "./assets/icon.svg"
-    assert manifest["interface"]["logo"] == "./assets/icon.svg"
+    assert manifest["interface"]["composerIcon"] == "./assets/icon.png"
+    assert manifest["interface"]["logo"] == "./assets/icon.png"
     assert manifest["interface"]["screenshots"] == ["./assets/route-demo.svg"]
     assert manifest["homepage"] == "https://vishal2612200.github.io/agentpack/codex-plugin/"
     assert manifest["interface"]["websiteURL"] == "https://vishal2612200.github.io/agentpack/"
@@ -45,9 +46,10 @@ def test_codex_plugin_manifest_points_to_skills() -> None:
 
 
 def test_codex_plugin_has_distribution_icon() -> None:
-    assert PACKAGED_PLUGIN_ICON.read_text(encoding="utf-8") == PLUGIN_ICON.read_text(encoding="utf-8")
-    assert PLUGIN_ICON.stat().st_size < 50_000
-    assert "<svg" in PLUGIN_ICON.read_text(encoding="utf-8")
+    assert README_SYMBOL.read_bytes() == PLUGIN_ICON.read_bytes()
+    assert PACKAGED_PLUGIN_ICON.read_bytes() == PLUGIN_ICON.read_bytes()
+    assert PLUGIN_ICON.stat().st_size < 250_000
+    assert PLUGIN_ICON.read_bytes().startswith(b"\x89PNG\r\n\x1a\n")
 
 
 def test_codex_plugin_has_distribution_screenshot() -> None:
@@ -71,6 +73,13 @@ def test_hol_plugin_scanner_workflow_exists() -> None:
     assert 'plugin_dir: "src/agentpack/data/codex_plugin"' in workflow
     assert "min_score: 80" in workflow
     assert "fail_on_severity: high" in workflow
+
+
+def test_hol_repository_scan_ignores_generated_agentpack_state() -> None:
+    scanner_config = (ROOT / ".plugin-scanner.toml").read_text(encoding="utf-8")
+
+    assert "[scanner]" in scanner_config
+    assert '".agentpack/**"' in scanner_config
 
 
 def test_codexignore_keeps_plugin_scan_focused() -> None:
