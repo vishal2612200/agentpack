@@ -14,9 +14,9 @@
 
 <p align="center">
   <a href="https://deepwiki.com/vishal2612200/agentpack"><img src="https://deepwiki.com/badge.svg" alt="Ask DeepWiki"></a>
-  <a href="https://pypi.org/project/agentpack-cli/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/agentpack-cli.svg"></a>
+  <a href="https://pypi.org/project/agentpack-cli/"><img alt="PyPI version" src="https://img.shields.io/pypi/v/agentpack-cli.svg?cacheSeconds=300"></a>
   <a href="https://pepy.tech/projects/agentpack-cli"><img alt="PyPI downloads" src="https://static.pepy.tech/personalized-badge/agentpack-cli?period=total&units=INTERNATIONAL_SYSTEM&left_color=BLACK&right_color=GREEN&left_text=downloads"></a>
-  <a href="https://www.npmjs.com/package/@vishal2612200/agentpack"><img alt="npm version" src="https://img.shields.io/npm/v/@vishal2612200/agentpack.svg"></a>
+  <a href="https://www.npmjs.com/package/@vishal2612200/agentpack"><img alt="npm version" src="https://img.shields.io/npm/v/@vishal2612200/agentpack.svg?cacheSeconds=300"></a>
   <a href="https://www.npmjs.com/package/@vishal2612200/agentpack"><img alt="npm downloads" src="https://img.shields.io/npm/dm/@vishal2612200/agentpack.svg"></a>
   <a href="https://hol.org/registry/plugins/agentpack%2Fagentpack"><img alt="HOL trust score" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dagentpack%252Fagentpack%26metric%3Dtrust%26style%3Dflat"></a>
   <a href="https://hol.org/registry/plugins/agentpack%2Fagentpack"><img alt="HOL security score" src="https://img.shields.io/endpoint?url=https%3A%2F%2Fhol.org%2Fapi%2Fregistry%2Fbadges%2Fplugin%3Fslug%3Dagentpack%252Fagentpack%26metric%3Dsecurity%26style%3Dflat"></a>
@@ -158,6 +158,17 @@ Memory feedback has its own guardrail: compare ranking with memory off/on using
 `agentpack eval --memory-ab`. Timestamped memory can explain or boost context,
 but it is not task-success proof.
 
+## Current Release Snapshot
+
+Current package line: `0.3.39`.
+
+- Public release gate: 107 historical commit cases, 67.2% average recall, and 50.6% token precision.
+- Ranking/runtime: ranked carrier compaction now keeps lower-action support files tighter without dropping the release benchmark below target.
+- Language context: Rust symbol extraction covers free functions, `impl`/`trait` methods, and `struct`/`enum`/`trait` declarations, with the regex-based limits documented in [`docs/limitations.md`](docs/limitations.md).
+- Automation confidence: scoped `mypy` coverage now spans `src/agentpack/analysis/`, and JSON-output smoke tests cover scriptable `route`, `next`, and release-check flows.
+- Guard behavior: generated fallback and repair guidance use global task context unless thread mode is explicit, avoiding stale ambient Codex task state.
+- Plugin distribution: the Codex plugin now uses the README symbol as its `composerIcon`/`logo`, and the packaged plugin scanner path reports `100/A` with zero local findings.
+
 ## New Contributors
 
 Start with [`good first issue`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22good%20first%20issue%22) or [`help wanted`](https://github.com/vishal2612200/agentpack/issues?q=is%3Aissue%20is%3Aopen%20label%3A%22help%20wanted%22) issues.
@@ -252,7 +263,8 @@ Inside Codex:
 The Codex plugin calls the local AgentPack engine. Codex setup enables the
 local `agentpack@local` bundle so commands like `@agentpack-review` match the
 installed CLI version. Verify with `agentpack doctor --agent codex` after
-upgrades.
+upgrades. Its packaged marketplace icon is the same checked-in symbol shown at
+the top of this README.
 
 The review flow prepares a local two-stage PR review bundle: preflight metadata,
 a runbook, stage prompts, and branch-scoped understanding/findings JSON files.
