@@ -17,12 +17,11 @@ intentionally detailed because the main outcome was not a single magic weight.
 The durable learning was how to avoid benchmark gaming while reducing packed
 token waste.
 
-The evidence below comes from local release-gate JSONL artifacts and a scoped
-origin replay worktree. The final code change was committed as
-`d1b469e fix(benchmark): improve release precision and memory gate`. Treat the
-`/tmp/...jsonl` paths as audit breadcrumbs from the local run, not as published
-benchmark artifacts. Before using these numbers in release copy, publish a
-dated `benchmarks/results/YYYY-MM-DD-public.md` file from a fresh run.
+The evidence below comes from local release-gate JSONL artifacts and scoped
+release replay worktrees. Treat the `/tmp/...jsonl` paths as audit breadcrumbs
+from local runs, not as published benchmark artifacts. Before using these
+numbers in release copy, publish a dated
+`benchmarks/results/YYYY-MM-DD-public.md` file from a fresh run.
 
 ### Latest Validation Snapshot
 
@@ -39,10 +38,10 @@ Release-worktree command:
 PYTHONPATH=src python -m agentpack.cli benchmark \
   --release-gate \
   --no-public-table \
-  --benchmark-jsonl /tmp/agentpack-release-0.3.39-owner-rescue-fixed-full.jsonl
+  --benchmark-jsonl /tmp/agentpack-release-0.3.39-local-compaction-retry.jsonl
 ```
 
-Release-worktree result:
+Release-worktree result after owner rescue and ranked carrier compaction:
 
 | Metric | Before owner rescue | After owner rescue |
 |---|---:|---:|

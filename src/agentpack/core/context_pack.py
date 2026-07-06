@@ -2640,6 +2640,17 @@ def _compact_selected_file_payload(
         if projection is not None:
             projected_tokens, excerpt = projection
             projections.append((projected_tokens, excerpt, str(ranked_decision["tier"])))
+        elif bool(ranked_decision.get("allow_minimal_fallback")):
+            projection = _minimal_compaction_projection(
+                file_info=file_info,
+                path=path,
+                current_tokens=current_tokens,
+                max_excerpt_tokens=int(ranked_decision["max_excerpt_tokens"]),
+                minimal_excerpt_tokens=int(ranked_decision.get("minimal_excerpt_tokens") or 32),
+            )
+            if projection is not None:
+                projected_tokens, excerpt = projection
+                projections.append((projected_tokens, excerpt, str(ranked_decision["tier"])))
 
     if not projections:
         return None
@@ -2709,17 +2720,32 @@ def _ranked_compaction_decision(
     if mode not in {"summary", "skeleton"}:
         return None
 
+    if current_tokens >= 80 and mode == "summary":
+        cross_layer_summary = _ranked_cross_layer_summary_decision(path=path, task=task, reasons=reasons, rank=rank)
+        if cross_layer_summary is not None:
+            return cross_layer_summary
+
     if current_tokens >= 120 and _is_test_path(path):
+        test_action_mismatch = _ranked_test_action_mismatch_decision(path=path, task=task, reasons=reasons, rank=rank)
         test_skeleton = _ranked_test_skeleton_decision(path=path, reasons=reasons, rank=rank)
         test_symbol = _ranked_test_symbol_carrier_decision(path=path, task=task, reasons=reasons, rank=rank)
-        decisions = [decision for decision in (test_skeleton, test_symbol) if decision is not None]
+        test_support = _ranked_test_support_skeleton_decision(path=path, task=task, reasons=reasons, rank=rank)
+        decisions = [
+            decision for decision in (test_action_mismatch, test_skeleton, test_symbol, test_support) if decision is not None
+        ]
         if decisions:
             return min(decisions, key=lambda decision: int(decision["max_excerpt_tokens"]))
 
     if current_tokens >= 120 and _path_family(path) == "source":
         source_churn = _ranked_source_churn_decision(path=path, reasons=reasons, rank=rank)
-        if source_churn is not None:
-            return source_churn
+        source_low_anchor = _ranked_source_low_anchor_decision(path=path, task=task, reasons=reasons, rank=rank)
+        source_late = _ranked_source_late_carrier_decision(path=path, task=task, reasons=reasons, rank=rank)
+        source_support = _ranked_source_support_skeleton_decision(path=path, task=task, reasons=reasons, rank=rank)
+        decisions = [
+            decision for decision in (source_churn, source_low_anchor, source_late, source_support) if decision is not None
+        ]
+        if decisions:
+            return min(decisions, key=lambda decision: int(decision["max_excerpt_tokens"]))
 
     if current_tokens >= 80 and _benchmark_metadata_or_docs_task(task):
         source_metadata = _ranked_source_metadata_decision(path=path, reasons=reasons, rank=rank)
@@ -2797,6 +2823,63 @@ def _ranked_test_symbol_carrier_decision(*, path: str, task: str, reasons: list[
     return {"tier": "ranked_test_symbol_carrier", "max_excerpt_tokens": max_excerpt_tokens}
 
 
+def _ranked_test_support_skeleton_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank <= 1:
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "explicit test task file",
+        "keyword phrase match:",
+        "quoted literal match",
+        "literal definition match",
+        "matched entrypoint:",
+        "episodic memory similar task",
+        "learning feedback miss",
+    ):
+        return None
+    if not _has_reason_signal(reasons, "filename keyword match", "symbol keyword match", "matched ranking keyword:", "matched role keyword:"):
+        return None
+    max_excerpt_tokens = 64
+    if _has_reason_signal(reasons, "matched define:"):
+        max_excerpt_tokens += 16
+    if _has_reason_signal(reasons, "matched call:"):
+        max_excerpt_tokens += 8
+    return {"tier": "ranked_test_support_skeleton_carrier", "max_excerpt_tokens": max_excerpt_tokens}
+
+
+def _ranked_test_action_mismatch_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank <= 1:
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if _has_reason_signal(reasons, "episodic memory similar task", "learning feedback miss"):
+        return None
+    if not _has_reason_signal(
+        reasons,
+        "filename keyword match",
+        "symbol keyword match",
+        "matched ranking keyword:",
+        "matched role keyword:",
+        "matched define:",
+        "matched call:",
+    ):
+        return None
+    max_excerpt_tokens = 32
+    if _has_reason_signal(reasons, "keyword phrase match:", "quoted literal match", "literal definition match"):
+        max_excerpt_tokens += 16
+    if _has_reason_signal(reasons, "matched entrypoint:"):
+        max_excerpt_tokens += 8
+    return {
+        "tier": "ranked_test_action_mismatch_carrier",
+        "max_excerpt_tokens": max_excerpt_tokens,
+        "minimal_excerpt_tokens": min(32, max_excerpt_tokens),
+        "allow_minimal_fallback": True,
+    }
+
+
 def _ranked_source_churn_decision(*, path: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
     if rank < 4:
         return None
@@ -2812,6 +2895,140 @@ def _ranked_source_churn_decision(*, path: str, reasons: list[str], rank: int) -
     if _has_reason_signal(reasons, "matched call:"):
         max_excerpt_tokens += 12
     return {"tier": "ranked_source_churn_carrier", "max_excerpt_tokens": max_excerpt_tokens}
+
+
+def _ranked_source_support_skeleton_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank < 4:
+        return None
+    if Path(path).suffix == ".py":
+        return None
+    if _source_compaction_has_structural_risk(path):
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "keyword phrase match:",
+        "quoted literal match",
+        "literal definition match",
+        "matched entrypoint:",
+        "episodic memory similar task",
+        "learning feedback miss",
+    ):
+        return None
+    if not _has_reason_signal(reasons, "symbol keyword match", "matched ranking keyword:", "matched role keyword:", "matched define:", "matched call:"):
+        return None
+    max_excerpt_tokens = 48
+    if _has_reason_signal(reasons, "matched define:"):
+        max_excerpt_tokens += 16
+    if _has_reason_signal(reasons, "matched call:"):
+        max_excerpt_tokens += 8
+    return {
+        "tier": "ranked_source_support_skeleton_carrier",
+        "max_excerpt_tokens": max_excerpt_tokens,
+        "minimal_excerpt_tokens": min(32, max_excerpt_tokens),
+        "allow_minimal_fallback": True,
+    }
+
+
+def _ranked_source_low_anchor_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank < 4:
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if _content_keyword_hits(reasons) >= 5:
+        return None
+    if _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "keyword phrase match:",
+        "quoted literal match",
+        "literal definition match",
+        "matched entrypoint:",
+        "matched define:",
+        "matched call:",
+        "episodic memory similar task",
+        "learning feedback miss",
+    ):
+        return None
+    if not _has_reason_signal(
+        reasons,
+        "symbol keyword match",
+        "matched ranking keyword:",
+        "matched role keyword:",
+        "content keyword match",
+        "implementation role match",
+    ):
+        return None
+    return {
+        "tier": "ranked_source_low_anchor_carrier",
+        "max_excerpt_tokens": 32,
+        "minimal_excerpt_tokens": 24,
+        "allow_minimal_fallback": True,
+    }
+
+
+def _ranked_source_late_carrier_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank < 6:
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if _content_keyword_hits(reasons) >= 5:
+        return None
+    if _has_reason_signal(
+        reasons,
+        "direct content evidence",
+        "keyword phrase match:",
+        "quoted literal match",
+        "literal definition match",
+        "matched entrypoint:",
+        "episodic memory similar task",
+        "learning feedback miss",
+    ):
+        return None
+    if not _has_reason_signal(
+        reasons,
+        "symbol keyword match",
+        "matched ranking keyword:",
+        "matched role keyword:",
+        "matched define:",
+        "matched call:",
+        "content keyword match",
+        "implementation role match",
+    ):
+        return None
+    return {
+        "tier": "ranked_source_late_carrier",
+        "max_excerpt_tokens": 32,
+        "minimal_excerpt_tokens": 24,
+        "allow_minimal_fallback": True,
+    }
+
+
+def _ranked_cross_layer_summary_decision(*, path: str, task: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
+    if rank < 3:
+        return None
+    if _path_task_aligned(path=path, task=task):
+        return None
+    if not _has_reason_signal(reasons, "cross-layer related implementation", "implementation role match"):
+        return None
+    if _has_reason_signal(
+        reasons,
+        "keyword phrase match:",
+        "quoted literal match",
+        "literal definition match",
+        "matched entrypoint:",
+        "episodic memory similar task",
+        "learning feedback miss",
+    ):
+        return None
+    return {
+        "tier": "ranked_cross_layer_summary_carrier",
+        "max_excerpt_tokens": 32,
+        "minimal_excerpt_tokens": 24,
+        "allow_minimal_fallback": True,
+    }
 
 
 def _ranked_source_metadata_decision(*, path: str, reasons: list[str], rank: int) -> dict[str, Any] | None:
@@ -3721,7 +3938,10 @@ def _benchmark_metadata_or_docs_task(task: str) -> bool:
 
 
 def _path_task_aligned(*, path: str, task: str) -> bool:
-    return bool(_action_terms_from_path(path) & _action_terms_from_task(task))
+    stopwords = {"test", "tests"}
+    path_terms = _action_terms_from_path(path) - stopwords
+    task_terms = _action_terms_from_task(task) - stopwords
+    return bool(path_terms & task_terms)
 
 
 def _action_terms_from_path(path: str) -> set[str]:

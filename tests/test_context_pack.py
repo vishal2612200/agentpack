@@ -307,6 +307,375 @@ def test_compact_selected_file_payloads_protects_direct_config_summary(tmp_path)
     assert compacted[0] == selected[0]
 
 
+def test_compact_selected_file_payloads_shrinks_ranked_test_support_skeleton(tmp_path):
+    source = tmp_path / "tests" / "test_render.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def test_render_writer_support():",
+            "    assert True",
+            "",
+            *[f"def unrelated_render_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="tests/test_render.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="tests/test_render.py",
+            language="python",
+            score=250.0,
+            include_mode="skeleton",
+            reasons=["filename keyword match", "symbol keyword match", "matched ranking keyword: writer"],
+            content=source.read_text(encoding="utf-8"),
+            summary="render test support",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (_fi("tests/test_response_writer.py"), 400.0, ["keyword phrase match: response writer"]),
+            (fi, 250.0, selected[0].reasons),
+        ],
+        task="test(response_writer): add tests for Flush with http Flusher",
+        changed_paths=set(),
+    )
+
+    assert compacted[0].path == selected[0].path
+    assert _sf_tokens(compacted[0]) < _sf_tokens(selected[0])
+    assert "source-aware compacted ranked_test_action_mismatch_carrier" in compacted[0].reasons
+
+
+def test_compact_selected_file_payloads_protects_path_aligned_ranked_test_owner(tmp_path):
+    source = tmp_path / "tests" / "test_response_writer.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def test_response_writer_flush():",
+            "    assert True",
+            "",
+            *[f"def unrelated_writer_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="tests/test_response_writer.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="tests/test_response_writer.py",
+            language="python",
+            score=400.0,
+            include_mode="skeleton",
+            reasons=["filename keyword match", "symbol keyword match", "matched ranking keyword: writer"],
+            content=source.read_text(encoding="utf-8"),
+            summary="response writer tests",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[(fi, 400.0, selected[0].reasons)],
+        task="test(response_writer): add tests for Flush with http Flusher",
+        changed_paths=set(),
+    )
+
+    assert compacted[0] == selected[0]
+
+
+def test_compact_selected_file_payloads_protects_python_ranked_source_support_skeleton(tmp_path):
+    source = tmp_path / "src" / "types.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def convert_value(value):",
+            "    return value",
+            "",
+            *[f"def unrelated_type_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="src/types.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="src/types.py",
+            language="python",
+            score=220.0,
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "matched ranking keyword: value", "matched define: convert_value"],
+            content=source.read_text(encoding="utf-8"),
+            summary="value conversion support",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (_fi("src/core.py"), 400.0, ["quoted literal match: flag value", "direct content evidence +170"]),
+            (_fi("src/parser.py"), 300.0, ["symbol keyword match"]),
+            (fi, 220.0, selected[0].reasons),
+        ],
+        task="Only try to set flag_value if is_flag is true",
+        changed_paths=set(),
+    )
+
+    assert compacted[0] == selected[0]
+
+
+def test_compact_selected_file_payloads_shrinks_non_python_ranked_source_support_skeleton(tmp_path):
+    source = tmp_path / "recovery" / "recovery.go"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "package binding",
+            "",
+            "func setIntField(value int) int {",
+            "    return value",
+            "}",
+            "",
+            *[f"func unrelatedField{index}() int {{ return {index} }}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="recovery/recovery.go",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="go",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="recovery/recovery.go",
+            language="go",
+            score=220.0,
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "matched ranking keyword: field", "matched define: setIntField"],
+            content=source.read_text(encoding="utf-8"),
+            summary="field mapping support",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (_fi("context.go"), 420.0, ["matched define: Context.Copy", "keyword phrase match: copy errors"]),
+            (_fi("context_test.go"), 320.0, ["explicit test task file"]),
+            (_fi("errors.go"), 260.0, ["symbol keyword match"]),
+            (fi, 220.0, selected[0].reasons),
+        ],
+        task="fix(context): Copy copies Errors and Accepted fields",
+        changed_paths=set(),
+    )
+
+    assert compacted[0].path == selected[0].path
+    assert _sf_tokens(compacted[0]) < _sf_tokens(selected[0])
+    assert "source-aware compacted ranked_source_support_skeleton_carrier" in compacted[0].reasons
+
+
+def test_compact_selected_file_payloads_shrinks_low_anchor_source_carrier(tmp_path):
+    source = tmp_path / "src" / "support.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def helper_line(value):",
+            "    return str(value)",
+            "",
+            *[f"def unrelated_support_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="src/support.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="src/support.py",
+            language="python",
+            score=210.0,
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "content keyword match (3)"],
+            content=source.read_text(encoding="utf-8"),
+            summary="broad support carrier",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (_fi("src/owner.py"), 500.0, ["keyword phrase match: flag value", "matched define: set_flag_value"]),
+            (_fi("tests/test_owner.py"), 300.0, ["explicit test task file"]),
+            (_fi("src/other.py"), 260.0, ["matched define: other"]),
+            (fi, 210.0, selected[0].reasons),
+        ],
+        task="Only try to set flag_value if is_flag is true",
+        changed_paths=set(),
+    )
+
+    assert compacted[0].path == selected[0].path
+    assert _sf_tokens(compacted[0]) < _sf_tokens(selected[0])
+    assert "source-aware compacted ranked_source_low_anchor_carrier" in compacted[0].reasons
+
+
+def test_compact_selected_file_payloads_protects_low_anchor_source_with_definition(tmp_path):
+    source = tmp_path / "src" / "support.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def flag_value(value):",
+            "    return value",
+            "",
+            *[f"def unrelated_support_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="src/support.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="src/support.py",
+            language="python",
+            score=210.0,
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "matched define: flag_value", "content keyword match (3)"],
+            content=source.read_text(encoding="utf-8"),
+            summary="definition carrier",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (_fi("src/owner.py"), 500.0, ["keyword phrase match: flag value", "matched define: set_flag_value"]),
+            (_fi("tests/test_owner.py"), 300.0, ["explicit test task file"]),
+            (_fi("src/other.py"), 260.0, ["matched define: other"]),
+            (fi, 210.0, selected[0].reasons),
+        ],
+        task="Only try to set flag_value if is_flag is true",
+        changed_paths=set(),
+    )
+
+    assert compacted[0] == selected[0]
+
+
+def test_compact_selected_file_payloads_shrinks_late_ranked_source_carrier(tmp_path):
+    source = tmp_path / "src" / "late_support.py"
+    source.parent.mkdir()
+    source.write_text(
+        "\n".join([
+            "def related_helper(value):",
+            "    return value",
+            "",
+            *[f"def unrelated_late_{index}(): return {index}" for index in range(120)],
+        ]),
+        encoding="utf-8",
+    )
+    fi = FileInfo(
+        path="src/late_support.py",
+        abs_path=source,
+        size_bytes=source.stat().st_size,
+        estimated_tokens=700,
+        hash=file_hash(source),
+        language="python",
+        content=source.read_text(encoding="utf-8"),
+    )
+    selected = [
+        SelectedFile(
+            path="src/late_support.py",
+            language="python",
+            score=180.0,
+            include_mode="skeleton",
+            reasons=["symbol keyword match", "matched define: related_helper", "content keyword match (3)"],
+            content=source.read_text(encoding="utf-8"),
+            summary="late support carrier",
+            symbols=[],
+            source_hash=fi.hash,
+        )
+    ]
+
+    compacted = compact_selected_file_payloads(
+        selected,
+        files=[fi],
+        summaries={},
+        scored=[
+            (_fi("src/owner.py"), 500.0, ["keyword phrase match: flag value", "matched define: set_flag_value"]),
+            (_fi("tests/test_owner.py"), 300.0, ["explicit test task file"]),
+            (_fi("src/first.py"), 260.0, ["matched define: first"]),
+            (_fi("src/second.py"), 240.0, ["matched define: second"]),
+            (_fi("src/third.py"), 220.0, ["matched define: third"]),
+            (fi, 180.0, selected[0].reasons),
+        ],
+        task="Only try to set flag_value if is_flag is true",
+        changed_paths=set(),
+    )
+
+    assert compacted[0].path == selected[0].path
+    assert _sf_tokens(compacted[0]) < _sf_tokens(selected[0])
+    assert "source-aware compacted ranked_source_late_carrier" in compacted[0].reasons
+
+
 def test_selects_changed_file_as_full(tmp_path):
     f = tmp_path / "session.py"
     f.write_text("def login(): pass\n")

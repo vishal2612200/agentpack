@@ -20,6 +20,7 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ### Changed
 - Improved the release benchmark and memory-gate diagnostics with stronger precision accounting, activation analysis, and regression coverage for context selection.
+- Tightened ranked carrier compaction for lower-action support files, clearing the official public release gate at 107 scored cases, 67.2% recall, and 50.6% average token precision.
 
 ### Fixed
 - Forced generated guard fallback commands and repair output to use global context unless thread mode is explicit, avoiding stale ambient Codex session missing-task failures when `.agentpack/task.md` is the intended source.
