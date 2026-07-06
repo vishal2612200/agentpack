@@ -105,8 +105,24 @@ def test_packaged_codex_plugin_is_self_contained_for_distribution() -> None:
         ".github/dependabot.yml",
         ".github/workflows/hol-plugin-scanner.yml",
         "uv.lock",
+        "package.json",
+        "package-lock.json",
     ):
         assert (bundle / rel).exists()
+
+
+def test_packaged_codex_plugin_lockfiles_match_manifest_version() -> None:
+    bundle = ROOT / "src" / "agentpack" / "data" / "codex_plugin"
+    manifest = json.loads(PACKAGED_PLUGIN_JSON.read_text(encoding="utf-8"))
+    package = json.loads((bundle / "package.json").read_text(encoding="utf-8"))
+    package_lock = json.loads((bundle / "package-lock.json").read_text(encoding="utf-8"))
+    dependabot = (bundle / ".github" / "dependabot.yml").read_text(encoding="utf-8")
+
+    assert package["private"] is True
+    assert package["version"] == manifest["version"]
+    assert package_lock["version"] == manifest["version"]
+    assert package_lock["packages"][""]["version"] == manifest["version"]
+    assert 'package-ecosystem: "npm"' in dependabot
 
 
 def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
