@@ -1,1 +1,24 @@
-<svg xmlns="http://www.w3.org/2000/svg" aria-labelledby="title desc" role="img" viewBox="0 0 512 512"><title id="title">AgentPack icon</title><desc id="desc">Layered context cards converging into a focused path.</desc><rect width="512" height="512" fill="#0F172A" rx="96"/><path fill="#1F6FEB" d="M128 142h176c44 0 80 36 80 80v148H208c-44 0-80-36-80-80V142Z"/><path fill="#22C55E" d="M178 112h176c44 0 80 36 80 80v148H258c-44 0-80-36-80-80V112Z"/><path fill="#F8FAFC" d="M154 196h204c20 0 36 16 36 36v104H190c-20 0-36-16-36-36V196Z"/><path stroke="#0F172A" stroke-linecap="round" stroke-width="24" d="M206 246h152"/><path stroke="#0F172A" stroke-linecap="round" stroke-width="24" d="M206 296h104"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" aria-labelledby="title desc" role="img" viewBox="0 0 512 512">
+  <title id="title">AgentPack icon</title>
+  <desc id="desc">A compact pack with routed context cards converging on a focused agent task.</desc>
+  <defs>
+    <linearGradient id="bg" x1="80" y1="64" x2="430" y2="456" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#111827"/>
+      <stop offset="1" stop-color="#0B1220"/>
+    </linearGradient>
+    <linearGradient id="pack" x1="132" y1="148" x2="382" y2="388" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#E6EEF8"/>
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="92" fill="url(#bg)"/>
+  <path fill="#2563EB" d="M112 178c0-28 22-50 50-50h126c28 0 50 22 50 50v168H162c-28 0-50-22-50-50V178Z"/>
+  <path fill="#22C55E" d="M176 118c0-28 22-50 50-50h124c28 0 50 22 50 50v168H226c-28 0-50-22-50-50V118Z"/>
+  <path fill="url(#pack)" d="M138 210c0-30 24-54 54-54h174c30 0 54 24 54 54v168H192c-30 0-54-24-54-54V210Z"/>
+  <path fill="#0B1220" d="M214 156h96c23 0 42 19 42 42v18h-36v-18c0-3-3-6-6-6h-96c-3 0-6 3-6 6v18h-36v-18c0-23 19-42 42-42Z"/>
+  <path fill="none" stroke="#0B1220" stroke-linecap="round" stroke-linejoin="round" stroke-width="24" d="M206 288h78c28 0 50-22 50-50v-10"/>
+  <path fill="none" stroke="#2563EB" stroke-linecap="round" stroke-width="20" d="M214 336h120"/>
+  <circle cx="188" cy="256" r="18" fill="#22C55E"/>
+  <circle cx="256" cy="288" r="18" fill="#F59E0B"/>
+  <circle cx="334" cy="228" r="22" fill="#2563EB"/>
+</svg>

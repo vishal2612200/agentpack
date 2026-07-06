@@ -73,6 +73,13 @@ def test_hol_plugin_scanner_workflow_exists() -> None:
     assert "fail_on_severity: high" in workflow
 
 
+def test_hol_repository_scan_ignores_generated_agentpack_state() -> None:
+    scanner_config = (ROOT / ".plugin-scanner.toml").read_text(encoding="utf-8")
+
+    assert "[scanner]" in scanner_config
+    assert '".agentpack/**"' in scanner_config
+
+
 def test_codexignore_keeps_plugin_scan_focused() -> None:
     ignore = (ROOT / ".codexignore").read_text(encoding="utf-8")
 
