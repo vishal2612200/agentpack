@@ -5,6 +5,7 @@ import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Any
 
 import typer
 
@@ -582,6 +583,131 @@ def _mcp_status_note(root: Path, *, has_mcp: bool, task: str, thread_id: str | N
     )
 
 
+def _git_sync_decision_note(root: Path) -> str:
+    """Cheap prompt-time git reminder. No fetch, pull, pack, or repair work."""
+    if not _looks_like_git_checkout(root):
+        return ""
+    status = _fast_git_status(root)
+    if not status:
+        return ""
+    summary = _parse_git_status_summary(status)
+    branch = summary["branch"] or "(none)"
+    upstream_value = summary["upstream"]
+    upstream = upstream_value or "(none)"
+    tracked_dirty = summary["staged"] + summary["unstaged"]
+    untracked = summary["untracked"]
+    ahead = summary["ahead"]
+    behind = summary["behind"]
+    dirty_sample = summary["dirty_sample"][:3]
+    if tracked_dirty:
+        action = "decide whether tracked local changes are the task target before editing or repacking"
+    elif not upstream_value:
+        action = "no upstream configured; verify the intended base before editing"
+    elif behind and ahead:
+        action = "branch diverged from upstream; choose rebase/merge before editing"
+    elif behind:
+        action = "branch appears behind upstream from local git status; sync before editing when safe"
+    else:
+        action = "local status is clean enough to proceed"
+    sample = f"; dirty sample: {', '.join(dirty_sample)}" if dirty_sample else ""
+    return (
+        "GIT SYNC DECISION: "
+        f"branch={branch}, upstream={upstream}, tracked_dirty={tracked_dirty}, "
+        f"untracked={untracked}, ahead/behind={ahead}/{behind}. "
+        f"Action: {action}{sample}.\n"
+    )
+
+
+def _fast_git_status(root: Path) -> str:
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain=v1", "--branch"],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            timeout=1,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return ""
+    if result.returncode != 0:
+        return ""
+    return result.stdout
+
+
+def _parse_git_status_summary(status: str) -> dict[str, Any]:
+    summary: dict[str, Any] = {
+        "branch": "",
+        "upstream": "",
+        "ahead": 0,
+        "behind": 0,
+        "staged": 0,
+        "unstaged": 0,
+        "untracked": 0,
+        "dirty_sample": [],
+    }
+    dirty_sample: list[str] = []
+    for line in status.splitlines():
+        if line.startswith("## "):
+            branch, upstream, ahead, behind = _parse_git_branch_line(line[3:].strip())
+            summary["branch"] = branch or ""
+            summary["upstream"] = upstream or ""
+            summary["ahead"] = ahead
+            summary["behind"] = behind
+            continue
+        if not line:
+            continue
+        status_code = line[:2]
+        path = line[3:].strip() if len(line) > 3 else ""
+        if " -> " in path:
+            path = path.rsplit(" -> ", 1)[1]
+        if status_code == "??":
+            summary["untracked"] += 1
+        else:
+            if status_code[0] != " ":
+                summary["staged"] += 1
+            if len(status_code) > 1 and status_code[1] != " ":
+                summary["unstaged"] += 1
+        if path:
+            dirty_sample.append(path)
+    summary["dirty_sample"] = dirty_sample
+    return summary
+
+
+def _parse_git_branch_line(value: str) -> tuple[str | None, str | None, int, int]:
+    if "..." not in value:
+        return (None if value == "HEAD (no branch)" else value), None, 0, 0
+    branch_part, rest = value.split("...", 1)
+    branch = branch_part.strip() or None
+    upstream = rest.split(" ", 1)[0].strip() or None
+    ahead = behind = 0
+    if "[" in rest and "]" in rest:
+        meta = rest.split("[", 1)[1].split("]", 1)[0]
+        for part in meta.split(","):
+            item = part.strip()
+            if item.startswith("ahead "):
+                ahead = _safe_int(item.split(" ", 1)[1])
+            elif item.startswith("behind "):
+                behind = _safe_int(item.split(" ", 1)[1])
+    return branch, upstream, ahead, behind
+
+
+def _safe_int(value: str) -> int:
+    try:
+        return int(value)
+    except ValueError:
+        return 0
+
+
+def _looks_like_git_checkout(root: Path) -> bool:
+    try:
+        for candidate in (root, *root.parents):
+            if (candidate / ".git").exists():
+                return True
+    except OSError:
+        return False
+    return False
+
+
 # ---------------------------------------------------------------------------
 # Event handlers
 # ---------------------------------------------------------------------------
@@ -647,6 +773,7 @@ def _run_user_prompt_submit(root: Path) -> None:
     task_md = _load_task_md(root, thread_id)
     if not task_md:
         if _looks_like_coding_prompt(prompt):
+            git_note = _git_sync_decision_note(root)
             reminder = _session_state_path(root, ".no_task_reminded", thread_id)
             if not reminder.exists():
                 try:
@@ -659,7 +786,8 @@ def _run_user_prompt_submit(root: Path) -> None:
                     start_cmd += f" --thread {thread_id}"
                 _emit_additional_context(
                     f"AgentPack idle. No active task in `{_task_label(thread_id)}`.\n"
-                    f"Run `{start_cmd}` to enable prompt-time hints."
+                    + git_note
+                    + f"Run `{start_cmd}` to enable prompt-time hints."
                 )
         return
 
@@ -720,6 +848,7 @@ def _run_user_prompt_submit(root: Path) -> None:
 
     has_mcp = _mcp_installed(root)
     current_task = _load_task_md(root, thread_id) or _infer_live_task(root)
+    git_note = _git_sync_decision_note(root)
     review_intent = _looks_like_review_prompt(prompt)
     delta = _load_delta_summary(root, thread_id)
     safe_hints = not pack_missing and not pack_task_changed and not task_switched and not repo_changed
@@ -766,6 +895,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + stale_detail
                 + mcp_detail
                 + (f"refresh error: {refresh_error}\n" if refresh_error else "")
@@ -783,6 +913,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + stale_detail
                 + mcp_detail
                 + (
@@ -798,6 +929,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + stale_detail
                 + mcp_detail
                 + (f"refresh error: {refresh_error}\n" if refresh_error else "")
@@ -813,6 +945,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + mcp_detail
                 + (f"delta: {delta}\n" if delta else "")
                 + (
@@ -824,6 +957,7 @@ def _run_user_prompt_submit(root: Path) -> None:
             msg = (
                 "AgentPack active. No pack yet.\n"
                 + source_note
+                + git_note
                 + mcp_detail
                 + (
                     'If the AgentPack MCP tool is visible, call agentpack_pack_context(task="..."); '
@@ -850,6 +984,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + stale_detail
                 + mcp_detail
                 + (f"refresh error: {refresh_error}\n" if refresh_error else "")
@@ -866,6 +1001,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + stale_detail
                 + mcp_detail
                 + f"Run `{_refresh_command(thread_id)}`. If tools stay unavailable, use direct repo search."
@@ -878,6 +1014,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + stale_detail
                 + mcp_detail
                 + (f"refresh error: {refresh_error}\n" if refresh_error else "")
@@ -890,6 +1027,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 + review_note
                 + review_stage_gate
                 + source_note
+                + git_note
                 + mcp_detail
                 + (f"delta: {delta}\n" if delta else "")
                 + f"Run `{_refresh_command(thread_id)}` for a fresh pack, or use direct repo search."
@@ -900,6 +1038,7 @@ def _run_user_prompt_submit(root: Path) -> None:
                 pack_cmd += f" --thread {thread_id}"
             msg = (
                 f"AgentPack active. Write `{_task_label(thread_id)}`, then run `{pack_cmd}` to build context.\n"
+                + git_note
                 + mcp_detail
                 + "For auto context, install MCP: agentpack install --agent claude"
             )

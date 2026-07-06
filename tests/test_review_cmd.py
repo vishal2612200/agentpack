@@ -8,6 +8,7 @@ from typer.testing import CliRunner
 
 from agentpack.cli import app
 from agentpack.commands.review_cmd import (
+    _ReviewPreflightError,
     _build_review_preflight,
     _findings_to_inline_comments,
     _load_review_template,
@@ -160,6 +161,25 @@ def test_review_command_explicit_pr_binds_diff_and_run_dir(tmp_path, monkeypatch
     assert preflight["diff"]["source"] == "pr-target"
     assert preflight["paths"]["run_dir"].startswith(".agentpack/reviews/pr-98/")
     assert (repo / ".agentpack" / "review-state.json").exists()
+
+
+def test_review_command_prints_run_id_before_preflight_failure(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+
+    def fail_preflight(*_args, **_kwargs):
+        raise _ReviewPreflightError("simulated slow preflight failure")
+
+    monkeypatch.setattr("agentpack.commands.review_cmd._build_review_preflight", fail_preflight)
+
+    result = CliRunner().invoke(app, ["review", "--pr", "98", "focus latency"])
+
+    assert result.exit_code == 1
+    assert "Review run id:" in result.output
+    assert "Review run dir:" in result.output
+    assert "Review preflight blocked" in result.output
+    assert "simulated slow preflight failure" in result.output
 
 
 def test_review_command_explicit_pr_fetch_failure_blocks_without_fallback(tmp_path, monkeypatch) -> None:

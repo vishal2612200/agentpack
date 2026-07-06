@@ -11,6 +11,7 @@ from agentpack.commands.hook_cmd import (
     _load_top_files,
     _load_pack_task,
     _current_root_hash,
+    _git_sync_decision_note,
     _run_git_auto_repack,
     _run_user_prompt_submit,
     _review_stage_gate_note,
@@ -504,6 +505,29 @@ class TestRunGitAutoRepack:
         assert "No active task" in json.loads(first[0])["hookSpecificOutput"]["additionalContext"]
         assert second == []
 
+    def test_no_task_coding_prompt_includes_git_sync_decision(self, tmp_path: Path, monkeypatch) -> None:
+        import io
+        import subprocess
+
+        (tmp_path / ".agentpack").mkdir()
+        subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+        (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+        (tmp_path / "app.py").write_text("print('changed')\n", encoding="utf-8")
+
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": "fix login bug"})))
+        outputs: list[str] = []
+        monkeypatch.setattr("builtins.print", lambda x: outputs.append(x))
+        _run_user_prompt_submit(tmp_path)
+
+        ctx = json.loads(outputs[0])["hookSpecificOutput"]["additionalContext"]
+        assert "GIT SYNC DECISION" in ctx
+        assert "tracked_dirty=1" in ctx
+        assert "decide whether tracked local changes are the task target" in ctx
+
     def test_no_task_chat_prompt_stays_silent(self, repo: Path, monkeypatch) -> None:
         import io
 
@@ -532,6 +556,22 @@ class TestRunGitAutoRepack:
             _run_user_prompt_submit(repo)
 
         assert outputs == []
+
+    def test_git_sync_decision_note_is_local_status_only(self, tmp_path: Path) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+        (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+
+        note = _git_sync_decision_note(tmp_path)
+
+        assert "GIT SYNC DECISION" in note
+        assert "upstream=(none)" in note
+        assert "no upstream configured" in note
 
     def test_session_start_clears_no_task_reminder(self, repo: Path) -> None:
         reminder = repo / ".agentpack" / ".no_task_reminded"

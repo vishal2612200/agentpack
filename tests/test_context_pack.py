@@ -1829,6 +1829,111 @@ def test_strict_balanced_replaces_weak_config_slot_with_stronger_direct_evidence
     )
 
 
+def test_marginal_replacement_allows_symbol_owner_over_broad_source_carrier():
+    broad_carrier = SelectedFile(
+        path="packages/app/src/node/optimizer/index.ts",
+        language="typescript",
+        score=490.0,
+        include_mode="skeleton",
+        reasons=[
+            "matched call: scanImports",
+            "content keyword match (5)",
+            "keyword phrase match: dynamic imports",
+            "direct content evidence +270",
+        ],
+        content="export function scanImports() {}",
+        symbols=[],
+    )
+
+    replacement_index = _find_marginal_replacement(
+        [broad_carrier],
+        challenger_path="packages/app/src/node/plugins/importAnalysisBuild.ts",
+        challenger_score=461.0,
+        challenger_reasons=[
+            "filename keyword match",
+            "symbol keyword match",
+            "matched ranking keyword: preload",
+            "matched define: preloadMethod",
+        ],
+        challenger_tokens=290,
+        selected_token_costs={broad_carrier.path: 194},
+        max_extra_tokens=120,
+        max_owner_carrier_extra_tokens=220,
+    )
+
+    assert replacement_index == 0
+
+
+def test_marginal_replacement_protects_broad_source_carrier_without_symbol_owner():
+    broad_carrier = SelectedFile(
+        path="packages/app/src/node/optimizer/index.ts",
+        language="typescript",
+        score=490.0,
+        include_mode="skeleton",
+        reasons=[
+            "matched call: scanImports",
+            "content keyword match (5)",
+            "keyword phrase match: dynamic imports",
+            "direct content evidence +270",
+        ],
+        content="export function scanImports() {}",
+        symbols=[],
+    )
+
+    replacement_index = _find_marginal_replacement(
+        [broad_carrier],
+        challenger_path="packages/app/src/node/plugins/importAnalysisBuild.ts",
+        challenger_score=461.0,
+        challenger_reasons=[
+            "filename keyword match",
+            "content keyword match (2)",
+            "matched ranking keyword: preload",
+        ],
+        challenger_tokens=290,
+        selected_token_costs={broad_carrier.path: 194},
+        max_extra_tokens=120,
+        max_owner_carrier_extra_tokens=220,
+    )
+
+    assert replacement_index is None
+
+
+def test_marginal_replacement_protects_high_score_content_owner_from_lower_symbol_carrier():
+    content_owner = SelectedFile(
+        path="packages/core/injector/injector.ts",
+        language="typescript",
+        score=515.0,
+        include_mode="skeleton",
+        reasons=[
+            "matched call: this.shouldSkipProviderLoading",
+            "content keyword match (5)",
+            "keyword phrase match: transient providers",
+            "direct content evidence +270",
+        ],
+        content="export class Injector {}",
+        symbols=[],
+    )
+
+    replacement_index = _find_marginal_replacement(
+        [content_owner],
+        challenger_path="integration/scopes/src/nested-transient/transient-logger.service.ts",
+        challenger_score=367.4,
+        challenger_reasons=[
+            "filename keyword match",
+            "symbol keyword match",
+            "matched role keyword: transient logger.service classes",
+            "matched ranking keyword: transient",
+            "matched define: TransientLoggerService",
+        ],
+        challenger_tokens=36,
+        selected_token_costs={content_owner.path: 160},
+        max_extra_tokens=120,
+        max_owner_carrier_extra_tokens=220,
+    )
+
+    assert replacement_index is None
+
+
 def test_config_source_balance_seeds_source_before_duplicate_configs():
     first_config = _fi("packages/vite/vite.config.ts", tokens=120)
     second_config = _fi("packages/vite/vitest.config.ts", tokens=120)

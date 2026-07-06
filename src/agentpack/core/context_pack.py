@@ -1596,6 +1596,7 @@ def _find_marginal_replacement(
     required_family: str | None = None,
     max_extra_tokens: int = 0,
     max_strong_source_extra_tokens: int = 0,
+    max_owner_carrier_extra_tokens: int = 0,
 ) -> int | None:
     challenger_evidence = _marginal_evidence_score(
         challenger_path,
@@ -1639,6 +1640,7 @@ def _find_marginal_replacement(
             incumbent=incumbent,
             incumbent_tokens=incumbent_tokens,
             max_extra_tokens=max_extra_tokens,
+            max_owner_carrier_extra_tokens=max_owner_carrier_extra_tokens,
         )
         if token_delta > max_extra_tokens and not can_budgeted_source_replace and not can_rescue_high_signal_candidate:
             continue
@@ -1678,6 +1680,13 @@ def _find_marginal_replacement(
         gain = challenger_evidence - incumbent_evidence
         if can_rescue_high_signal_candidate:
             gain += min(140.0, max(0.0, challenger_score - incumbent.score) * 0.25)
+        can_owner_over_broad_carrier = can_rescue_high_signal_candidate and _can_symbol_owner_replace_broad_source_carrier(
+            challenger_path=challenger_path,
+            challenger_reasons=challenger_reasons,
+            incumbent=incumbent,
+        )
+        if can_owner_over_broad_carrier:
+            gain += 220.0
         required_gain = 70.0 + max(0, token_delta) * 0.15
         if _can_token_neutral_owner_replace_incumbent(
             challenger_path=challenger_path,
@@ -1690,6 +1699,8 @@ def _find_marginal_replacement(
             required_gain = min(required_gain, 45.0 + max(0, token_delta) * 0.04)
         if can_rescue_high_signal_candidate:
             required_gain = min(required_gain, 50.0 + max(0, token_delta) * 0.05)
+        if can_owner_over_broad_carrier:
+            required_gain = min(required_gain, 45.0 + max(0, token_delta) * 0.03)
         if (
             _is_test_path(challenger_path)
             and _can_token_neutral_test_replace_incumbent(
@@ -1715,9 +1726,17 @@ def _can_rescue_high_signal_candidate_replace_incumbent(
     incumbent: SelectedFile,
     incumbent_tokens: int,
     max_extra_tokens: int,
+    max_owner_carrier_extra_tokens: int = 0,
 ) -> bool:
     token_delta = challenger_tokens - incumbent_tokens
-    if challenger_tokens > 220 or token_delta > max_extra_tokens:
+    owner_over_broad_carrier = _can_symbol_owner_replace_broad_source_carrier(
+        challenger_path=challenger_path,
+        challenger_reasons=challenger_reasons,
+        incumbent=incumbent,
+    )
+    token_limit = 360 if owner_over_broad_carrier else 220
+    extra_limit = max(max_extra_tokens, max_owner_carrier_extra_tokens) if owner_over_broad_carrier else max_extra_tokens
+    if challenger_tokens > token_limit or token_delta > extra_limit:
         return False
     if challenger_score < 120.0:
         return False
@@ -1746,7 +1765,7 @@ def _can_rescue_high_signal_candidate_replace_incumbent(
             or _has_strict_summary_support(incumbent.reasons, incumbent.path)
         )
     )
-    if incumbent_is_supported_code_owner:
+    if incumbent_is_supported_code_owner and not owner_over_broad_carrier:
         return False
 
     content_hits = _content_keyword_hits(challenger_reasons)
@@ -1793,9 +1812,54 @@ def _can_rescue_high_signal_candidate_replace_incumbent(
         incumbent_tokens,
     )
     score_gain = challenger_score - incumbent.score
+    if owner_over_broad_carrier:
+        return challenger_score >= incumbent.score - 140.0
     if challenger_evidence + max(0.0, score_gain) * 0.25 < incumbent_evidence + 45.0:
         return False
     return True
+
+
+def _can_symbol_owner_replace_broad_source_carrier(
+    *,
+    challenger_path: str,
+    challenger_reasons: list[str],
+    incumbent: SelectedFile,
+) -> bool:
+    if not _is_source_like_code_path(challenger_path) or _is_test_path(challenger_path):
+        return False
+    if not _is_source_like_code_path(incumbent.path) or _is_test_path(incumbent.path):
+        return False
+    if _is_docs_path(challenger_path) or _is_example_or_playground_path(challenger_path):
+        return False
+    if _is_docs_path(incumbent.path) or _is_example_or_playground_path(incumbent.path):
+        return False
+
+    challenger_has_symbol_owner = (
+        _has_reason_signal(challenger_reasons, "symbol keyword match")
+        and _has_reason_signal(challenger_reasons, "matched define:", "multi-token defines match")
+        and (
+            _has_reason_signal(challenger_reasons, "filename keyword match", "conventional scope path match", "multi-term path match")
+            or _has_reason_signal(challenger_reasons, "matched ranking keyword:", "matched role keyword:")
+        )
+    )
+    if not challenger_has_symbol_owner:
+        return False
+
+    incumbent_has_owner_anchor = _has_reason_signal(
+        incumbent.reasons,
+        "filename keyword match",
+        "symbol keyword match",
+        "matched define:",
+        "multi-token defines match",
+        "conventional scope path match",
+        "multi-term path match",
+        "literal definition match:",
+        "quoted literal match:",
+        "matched entrypoint:",
+    )
+    if incumbent_has_owner_anchor:
+        return False
+    return _has_reason_signal(incumbent.reasons, "direct content evidence", "keyword phrase match:", "matched call:") and _content_keyword_hits(incumbent.reasons) >= 3
 
 
 def _can_budgeted_strong_source_replace_incumbent(
@@ -2276,6 +2340,7 @@ def select_files(
                             selected_token_costs=selected_token_costs,
                             required_family=family,
                             max_extra_tokens=max_extra_tokens,
+                            max_owner_carrier_extra_tokens=min(220, max(0, budget - tokens_used)),
                         )
                         if replacement_index is not None:
                             displace_selected(replacement_index, fi.path)
@@ -2338,6 +2403,7 @@ def select_files(
                     selected_token_costs=selected_token_costs,
                     max_extra_tokens=max_extra_tokens,
                     max_strong_source_extra_tokens=min(220, max(0, budget - tokens_used)),
+                    max_owner_carrier_extra_tokens=min(220, max(0, budget - tokens_used)),
                 )
                 if replacement_index is not None:
                     displace_selected(replacement_index, fi.path)
