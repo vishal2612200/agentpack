@@ -6,8 +6,8 @@ It is a decision log, not a marketing table.
 ## Latest Public Evidence
 
 The current public release evidence table is
-[`benchmarks/results/2026-06-25-public.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/2026-06-25-public.md):
-107 scored public cases at 65.7% recall and 51.4% token precision. Treat it as
+[`benchmarks/results/2026-07-06-public.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/2026-07-06-public.md):
+107 scored public cases at 67.2% recall and 50.6% token precision. Treat it as
 scoped file-selection evidence, not broad proof of downstream agent success.
 
 ## 2026-07-06 Precision Push Decision Log

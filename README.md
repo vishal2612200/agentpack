@@ -143,12 +143,12 @@ AgentPack's current public benchmark checks one narrow thing: whether selected c
 | Signal | Result | Developer meaning |
 |---|---:|---|
 | Public commit cases | 107 | real historical file-selection checks |
-| Average recall | 65.7% | did AgentPack include files that mattered? |
-| Token precision | 51.4% | how much of pack was useful instead of noise? |
+| Average recall | 67.2% | did AgentPack include files that mattered? |
+| Token precision | 50.6% | how much of pack was useful instead of noise? |
 | Pack p50 | 315 tokens | typical compact starting context |
 | Pack p95 | 1,137 tokens | larger but still bounded starting context |
 
-Source: [`benchmarks/results/2026-06-25-public.md`](benchmarks/results/2026-06-25-public.md). Benchmark guide: [`docs/benchmarking.md`](docs/benchmarking.md).
+Source: [`benchmarks/results/2026-07-06-public.md`](benchmarks/results/2026-07-06-public.md). Benchmark guide: [`docs/benchmarking.md`](docs/benchmarking.md).
 
 This is useful but not magic. It says AgentPack often gets meaningful files into a small pack. It does not replace source inspection, tests, runtime evidence, or review. Agent success A/B benchmarks should report task success, tool calls, token cost, validation quality, and time-to-first-correct-file.
 

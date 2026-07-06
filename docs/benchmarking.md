@@ -83,8 +83,8 @@ Python, TypeScript, Go, Java, and monorepo projects. For sampled repos,
 regression tests, but should not be presented as market proof.
 
 The current public release evidence table is
-[`benchmarks/results/2026-06-25-public.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/2026-06-25-public.md):
-107 scored public cases at 65.7% recall and 51.4% token precision. The
+[`benchmarks/results/2026-07-06-public.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/2026-07-06-public.md):
+107 scored public cases at 67.2% recall and 50.6% token precision. The
 precision margin is thin, so use slice regressions before changing selector
 rules.
 

@@ -52,7 +52,7 @@ def test_local_markdown_links_have_targets() -> None:
 
 
 def test_public_benchmark_claims_match_current_result() -> None:
-    result_path = ROOT / "benchmarks/results/2026-06-25-public.md"
+    result_path = ROOT / "benchmarks/results/2026-07-06-public.md"
     metrics = _benchmark_metrics(result_path)
     expected_snippets = [
         str(result_path.relative_to(ROOT)),
