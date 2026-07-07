@@ -28,9 +28,22 @@ import {
 } from "@xyflow/react";
 import { loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { DashboardEdge, DashboardGraph, DashboardNode, DashboardSnapshot } from "./data/schema";
+import { AppShell } from "./components/cockpit/app-shell";
+import { InspectorPanel } from "./components/cockpit/inspector-panel";
+import { MetricCard } from "./components/cockpit/metric-card";
+import { Badge, StatusBadge } from "./components/ui/badge";
+import { Button } from "./components/ui/button";
+import { Card, CardHeader } from "./components/ui/card";
+import { DataTable, type DataTableColumn } from "./components/ui/data-table";
+import { Input } from "./components/ui/input";
+import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 
 type View = "cockpit" | "projects" | "graph" | "memory" | "learning" | "risk" | "reviews" | "replay" | "raw";
 type GraphFilter = "all" | "selected" | "risk" | "memory" | "tests";
+type ProjectRow = NonNullable<DashboardSnapshot["project_index"]["projects"]>[number];
+type LearningSessionRow = NonNullable<DashboardSnapshot["learning_prep"]["sessions"]>[number];
+type TaskMapRow = DashboardSnapshot["task_map"][number];
+type ReviewRunRow = DashboardSnapshot["review_runs"][number];
 
 const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "cockpit", label: "Cockpit", icon: Activity },
@@ -90,36 +103,13 @@ export function App() {
   const selected = findSelected(payload.graph, selectedId);
 
   return (
-    <div className="app-shell">
-      <aside className="sidebar" aria-label="Dashboard navigation">
-        <div className="brand-block">
-          <div className="brand-mark" aria-hidden="true">AP</div>
-          <div>
-            <strong>AgentPack</strong>
-            <span>Context cockpit</span>
-          </div>
-        </div>
-        <nav className="nav-list">
-          {views.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={view === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => setView(item.id)}
-              >
-                <Icon size={17} aria-hidden="true" />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
-        </nav>
-      </aside>
-
-      <main className="workspace">
-        <TopBar snapshot={payload.snapshot} query={query} onQueryChange={setQuery} />
-        <section className="main-panel" aria-label={`${view} view`}>
+    <AppShell
+      navItems={views}
+      activeView={view}
+      onViewChange={setView}
+      topbar={<TopBar snapshot={payload.snapshot} query={query} onQueryChange={setQuery} />}
+      inspector={<Inspector selected={selected} onCopy={copyText} copyMessage={copyMessage} />}
+    >
           {view === "cockpit" && (
             <CockpitView
               payload={payload}
@@ -149,11 +139,7 @@ export function App() {
           {view === "reviews" && <ReviewsView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "replay" && <ReplayView snapshot={payload.snapshot} graph={payload.graph} />}
           {view === "raw" && <RawDataView payload={payload} />}
-        </section>
-      </main>
-
-      <Inspector selected={selected} onCopy={copyText} copyMessage={copyMessage} />
-    </div>
+    </AppShell>
   );
 }
 
@@ -176,9 +162,9 @@ function TopBar({
       <label className="search-box">
         <Search size={16} aria-hidden="true" />
         <span className="sr-only">Search graph</span>
-        <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search paths, memory, tests" />
+        <Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search paths, memory, tests" />
       </label>
-      <StatusPill status={snapshot.context.status} />
+      <StatusBadge status={snapshot.context.status} />
     </header>
   );
 }
@@ -215,10 +201,10 @@ function CockpitView({
             AgentPack selected context, memory, risk, and next actions for this local run.
           </p>
         </div>
-        <button className="primary-action" type="button" onClick={() => onOpenGraph()}>
+        <Button variant="primary" className="primary-action" onClick={() => onOpenGraph()}>
           <Network size={17} aria-hidden="true" />
           Open graph
-        </button>
+        </Button>
       </section>
 
       {sparse ? <EmptyDecisionState onLoadSample={onLoadSample} /> : null}
@@ -231,15 +217,15 @@ function CockpitView({
         </div>
         <div className="decision-actions">
           {decision.command ? (
-            <button type="button" className="primary-action" onClick={() => onCopy(decision.command, "Next action")}>
+            <Button variant="primary" className="primary-action" onClick={() => onCopy(decision.command, "Next action")}>
               <Copy size={16} aria-hidden="true" />
               Copy command
-            </button>
+            </Button>
           ) : null}
-          <button type="button" className="secondary-action" onClick={() => onOpenGraph(decision.filter)}>
+          <Button variant="secondary" className="secondary-action" onClick={() => onOpenGraph(decision.filter)}>
             <Network size={16} aria-hidden="true" />
             Show path
-          </button>
+          </Button>
         </div>
       </section>
 
@@ -294,7 +280,7 @@ function CockpitView({
                   <strong>{item.path}</strong>
                   <small>{(item.may_break || []).slice(0, 1).join("; ") || "High-risk task map file"}</small>
                 </span>
-                <span className="badge risk">High</span>
+                <Badge tone="risk">High</Badge>
               </button>
             ))}
             {tests.slice(0, 5).map((test) => (
@@ -330,7 +316,7 @@ function CockpitView({
                   <strong>{node.label}</strong>
                   <small>{node.summary || "Prior evidence connected to this task"}</small>
                 </span>
-                <span className={`badge ${node.stale ? "warn" : "memory"}`}>{node.stale ? "stale" : node.type}</span>
+                <Badge tone={node.stale ? "warn" : "memory"}>{node.stale ? "stale" : node.type}</Badge>
               </button>
             ))}
             {!memoryNodes.length ? <p className="empty">No memory influence found for this task.</p> : null}
@@ -371,19 +357,19 @@ function TaskGraph({
       <div className="graph-toolbar">
         <span><CircleDot size={14} aria-hidden="true" /> {graph.summary.node_count} nodes</span>
         <span>{graph.summary.edge_count} edges</span>
-        {graph.summary.truncated ? <span className="badge warn">Truncated</span> : null}
-        <div className="segmented-control" role="group" aria-label="Graph filter">
+        {graph.summary.truncated ? <Badge tone="warn">Truncated</Badge> : null}
+        <Tabs value={filter} onValueChange={(value) => onFilterChange(value as GraphFilter)}>
+          <TabsList aria-label="Graph filter">
           {filterItems.map((item) => (
-            <button
+            <TabsTrigger
               key={item.id}
-              type="button"
-              className={filter === item.id ? "active" : ""}
-              onClick={() => onFilterChange(item.id)}
+              value={item.id}
             >
               {item.label}
-            </button>
+            </TabsTrigger>
           ))}
-        </div>
+          </TabsList>
+        </Tabs>
         <div className="graph-legend" aria-label="Graph legend">
           <span><i className="legend-dot selected" />Selected</span>
           <span><i className="legend-dot risk" />High risk</span>
@@ -430,6 +416,80 @@ function ProjectsView({
 }) {
   const index = snapshot.project_index || { projects: [] };
   const projects = index.projects || [];
+  const columns = useMemo<Array<DataTableColumn<ProjectRow>>>(
+    () => [
+      {
+        id: "project",
+        header: "Project",
+        cell: ({ row }) => {
+          const project = row.original;
+          return (
+            <>
+              <strong>{project.name}{project.current ? " (current)" : ""}</strong>
+              <small>{project.task || project.path}</small>
+              <code>{project.path}</code>
+            </>
+          );
+        }
+      },
+      {
+        id: "context",
+        header: "Context",
+        cell: ({ row }) => {
+          const project = row.original;
+          return (
+            <>
+              <Badge tone={riskTone(project.context_status)}>{project.context_status || "unknown"}</Badge>
+              {project.branch ? <small>{project.branch} {project.git_sha || ""}</small> : null}
+            </>
+          );
+        }
+      },
+      {
+        id: "tokens",
+        header: "Tokens",
+        cell: ({ row }) => {
+          const project = row.original;
+          return (
+            <>
+              <strong>{project.saving_pct || 0}% saved</strong>
+              <small>{formatNumber(project.packed_tokens || 0)} / {formatNumber(project.raw_tokens || 0)} tokens</small>
+            </>
+          );
+        }
+      },
+      {
+        id: "signals",
+        header: "Signals",
+        cell: ({ row }) => {
+          const project = row.original;
+          return (
+            <>
+              <small>{project.selected_files_count || 0} files</small>
+              <small>{project.review_runs_count || 0} reviews</small>
+              <small>{project.memory_count || 0} memories</small>
+              <small>{project.weak_spots_count || 0} learning spots</small>
+            </>
+          );
+        }
+      },
+      {
+        id: "commands",
+        header: "Commands",
+        cell: ({ row }) => {
+          const project = row.original;
+          return (
+            <div className="stack-sm">
+              {project.open_command ? <CopyCommand value={project.open_command} label={`open ${project.name}`} onCopy={onCopy} /> : null}
+              {project.refresh_command ? <CopyCommand value={project.refresh_command} label={`refresh ${project.name}`} onCopy={onCopy} /> : null}
+            </div>
+          );
+        }
+      }
+    ],
+    [onCopy]
+  );
+
   return (
     <div className="view-stack">
       <SectionTitle title="Projects" subtitle="AgentPack-associated local projects, context health, token savings, and developer-productivity signals." />
@@ -439,53 +499,7 @@ function ProjectsView({
         <Metric label="Saved tokens" value={formatNumber(index.estimated_saved_tokens || 0)} tone="good" />
         <Metric label="Avg savings" value={`${index.average_saving_pct || 0}%`} tone="memory" />
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Project</th>
-              <th>Context</th>
-              <th>Tokens</th>
-              <th>Signals</th>
-              <th>Commands</th>
-            </tr>
-          </thead>
-          <tbody>
-            {projects.map((project) => (
-              <tr key={project.path}>
-                <td>
-                  <strong>{project.name}{project.current ? " (current)" : ""}</strong>
-                  <small>{project.task || project.path}</small>
-                  <code>{project.path}</code>
-                </td>
-                <td>
-                  <span className={`badge ${riskTone(project.context_status)}`}>{project.context_status || "unknown"}</span>
-                  {project.branch ? <small>{project.branch} {project.git_sha || ""}</small> : null}
-                </td>
-                <td>
-                  <strong>{project.saving_pct || 0}% saved</strong>
-                  <small>{formatNumber(project.packed_tokens || 0)} / {formatNumber(project.raw_tokens || 0)} tokens</small>
-                </td>
-                <td>
-                  <small>{project.selected_files_count || 0} files</small>
-                  <small>{project.review_runs_count || 0} reviews</small>
-                  <small>{project.memory_count || 0} memories</small>
-                  <small>{project.weak_spots_count || 0} learning spots</small>
-                </td>
-                <td>
-                  <div className="stack-sm">
-                    {project.open_command ? <CopyCommand value={project.open_command} label={`open ${project.name}`} onCopy={onCopy} /> : null}
-                    {project.refresh_command ? <CopyCommand value={project.refresh_command} label={`refresh ${project.name}`} onCopy={onCopy} /> : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!projects.length ? (
-              <tr><td colSpan={5}>No AgentPack projects found near this checkout.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+      <DataTable data={projects} columns={columns} empty="No AgentPack projects found near this checkout." getRowKey={(project) => project.path} />
     </div>
   );
 }
@@ -524,7 +538,7 @@ function MemoryView({
                   <strong>{spot.concept}</strong>
                   <small>{spot.latest_question || spot.latest_task || "Learning weak spot"}</small>
                 </span>
-                <span className="badge neutral">{spot.count || 0}</span>
+                <Badge tone="neutral">{spot.count || 0}</Badge>
               </div>
             ))}
             {!snapshot.learning_weak_spots.length ? <p className="empty">No learning weak spots found.</p> : null}
@@ -545,6 +559,57 @@ function LearningPrepView({
   const prep = snapshot.learning_prep || {};
   const sessions = prep.sessions || [];
   const weakSpots = snapshot.learning_weak_spots || [];
+  const columns = useMemo<Array<DataTableColumn<LearningSessionRow>>>(
+    () => [
+      {
+        id: "session",
+        header: "Session",
+        cell: ({ row }) => {
+          const session = row.original;
+          return (
+            <>
+              <strong>{session.topic || session.mode || "Learning session"}</strong>
+              <small>{session.task}</small>
+              {session.request ? <code>{session.request}</code> : null}
+            </>
+          );
+        }
+      },
+      {
+        id: "question",
+        header: "Question",
+        cell: ({ row }) => row.original.question || "No question recorded."
+      },
+      {
+        id: "evidence",
+        header: "Evidence",
+        cell: ({ row }) => {
+          const session = row.original;
+          return (
+            <>
+              {(session.concepts || []).slice(0, 4).map((concept) => <Badge key={concept} tone="memory">{concept}</Badge>)}
+              {(session.evidence_files || []).slice(0, 3).map((path) => <code key={path}>{path}</code>)}
+            </>
+          );
+        }
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => {
+          const session = row.original;
+          return (
+            <>
+              <Badge tone={learningStatusTone(session.status)}>{session.status || "queued"}</Badge>
+              {typeof session.score === "number" ? <small>{session.score}%</small> : null}
+            </>
+          );
+        }
+      }
+    ],
+    []
+  );
+
   return (
     <div className="view-stack">
       <SectionTitle title="Learning Prep" subtitle="Task-backed quiz, interview, and failure-drill preparation from AgentPack memory." />
@@ -570,87 +635,68 @@ function LearningPrepView({
                   <strong>{concept}</strong>
                   <small>{weakSpots.find((spot) => spot.concept === concept)?.latest_question || "Task-backed learning concept"}</small>
                 </span>
-                <span className="badge memory">concept</span>
+                <Badge tone="memory">concept</Badge>
               </div>
             ))}
             {!(prep.top_concepts || []).length ? <p className="empty">No learning concepts found yet.</p> : null}
           </div>
         </Panel>
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Session</th>
-              <th>Question</th>
-              <th>Evidence</th>
-              <th>Status</th>
-            </tr>
-          </thead>
-          <tbody>
-            {sessions.map((session, index) => (
-              <tr key={`${session.created_at}:${session.question}:${index}`}>
-                <td>
-                  <strong>{session.topic || session.mode || "Learning session"}</strong>
-                  <small>{session.task}</small>
-                  {session.request ? <code>{session.request}</code> : null}
-                </td>
-                <td>{session.question || "No question recorded."}</td>
-                <td>
-                  {(session.concepts || []).slice(0, 4).map((concept) => <span key={concept} className="badge memory">{concept}</span>)}
-                  {(session.evidence_files || []).slice(0, 3).map((path) => <code key={path}>{path}</code>)}
-                </td>
-                <td>
-                  <span className={`badge ${learningStatusTone(session.status)}`}>{session.status || "queued"}</span>
-                  {typeof session.score === "number" ? <small>{session.score}%</small> : null}
-                </td>
-              </tr>
-            ))}
-            {!sessions.length ? (
-              <tr><td colSpan={4}>No learning prep sessions found.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        data={sessions}
+        columns={columns}
+        empty="No learning prep sessions found."
+        getRowKey={(session, index) => `${session.created_at || "session"}:${session.question || ""}:${index}`}
+      />
     </div>
   );
 }
 
 function RiskTestsView({ snapshot, onSelect }: { snapshot: DashboardSnapshot; onSelect: (id: string) => void }) {
+  const columns = useMemo<Array<DataTableColumn<TaskMapRow>>>(
+    () => [
+      {
+        id: "path",
+        header: "Path",
+        cell: ({ row }) => (
+          <Button variant="link" onClick={() => onSelect(`file:${row.original.path}`)}>
+            <code>{row.original.path}</code>
+          </Button>
+        )
+      },
+      {
+        id: "risk",
+        header: "Risk",
+        cell: ({ row }) => <Badge tone={riskTone(row.original.risk_level)}>{row.original.risk_level || "low"}</Badge>
+      },
+      {
+        id: "why",
+        header: "Why",
+        cell: ({ row }) => (row.original.why_selected || row.original.risk_reasons || []).slice(0, 2).join("; ")
+      },
+      {
+        id: "tests",
+        header: "Tests",
+        cell: ({ row }) => (row.original.tests_to_run || []).slice(0, 3).map((test) => <code key={test}>{test}</code>)
+      },
+      {
+        id: "may-break",
+        header: "May break",
+        cell: ({ row }) => (row.original.may_break || []).slice(0, 2).join("; ")
+      }
+    ],
+    [onSelect]
+  );
+
   return (
     <div className="view-stack">
       <SectionTitle title="Risk & Tests" subtitle="Task-map risk, breakage hints, and validation commands." />
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Path</th>
-              <th>Risk</th>
-              <th>Why</th>
-              <th>Tests</th>
-              <th>May break</th>
-            </tr>
-          </thead>
-          <tbody>
-            {snapshot.task_map.map((item) => (
-              <tr key={`${item.kind}:${item.path}`}>
-                <td>
-                  <button type="button" className="link-button" onClick={() => onSelect(`file:${item.path}`)}>
-                    <code>{item.path}</code>
-                  </button>
-                </td>
-                <td><span className={`badge ${riskTone(item.risk_level)}`}>{item.risk_level || "low"}</span></td>
-                <td>{(item.why_selected || item.risk_reasons || []).slice(0, 2).join("; ")}</td>
-                <td>{(item.tests_to_run || []).slice(0, 3).map((test) => <code key={test}>{test}</code>)}</td>
-                <td>{(item.may_break || []).slice(0, 2).join("; ")}</td>
-              </tr>
-            ))}
-            {!snapshot.task_map.length ? (
-              <tr><td colSpan={5}>No task map found.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+      <DataTable
+        data={snapshot.task_map}
+        columns={columns}
+        empty="No task map found."
+        getRowKey={(item) => `${item.kind}:${item.path}`}
+      />
     </div>
   );
 }
@@ -663,6 +709,67 @@ function ReviewsView({
   onCopy: (value: string, label?: string) => void;
 }) {
   const runs = snapshot.review_runs || [];
+  const columns = useMemo<Array<DataTableColumn<ReviewRunRow>>>(
+    () => [
+      {
+        id: "run",
+        header: "Run",
+        cell: ({ row }) => {
+          const run = row.original;
+          return (
+            <>
+              <strong>{run.run_id}</strong>
+              <small>{run.generated_at || run.branch_prefix || ""}</small>
+            </>
+          );
+        }
+      },
+      {
+        id: "target",
+        header: "Target",
+        cell: ({ row }) => row.original.target_number ? `PR #${row.original.target_number}` : row.original.branch_prefix || "local"
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => <Badge tone={reviewStatusTone(row.original.status)}>{row.original.status || "prepared"}</Badge>
+      },
+      {
+        id: "files",
+        header: "Files",
+        cell: ({ row }) => row.original.changed_files_count || 0
+      },
+      {
+        id: "artifacts",
+        header: "Artifacts",
+        cell: ({ row }) => {
+          const run = row.original;
+          return (
+            <>
+              {run.understanding_path ? <code>{run.understanding_path}</code> : null}
+              {run.findings_path ? <code>{run.findings_path}</code> : null}
+            </>
+          );
+        }
+      },
+      {
+        id: "commands",
+        header: "Commands",
+        cell: ({ row }) => {
+          const run = row.original;
+          return (
+            <div className="stack-sm">
+              {run.resume_command ? <CopyCommand value={run.resume_command} label="resume" onCopy={onCopy} /> : null}
+              {run.check_command ? <CopyCommand value={run.check_command} label="check" onCopy={onCopy} /> : null}
+              {run.post_command ? <CopyCommand value={run.post_command} label="post" onCopy={onCopy} /> : null}
+            </div>
+          );
+        }
+      }
+    ],
+    [onCopy]
+  );
+
   return (
     <div className="view-stack">
       <SectionTitle title="PR Reviews" subtitle="AgentPack review runs, stage state, and review commands for this project." />
@@ -700,47 +807,7 @@ function ReviewsView({
           />
         </Panel>
       </div>
-      <div className="table-wrap">
-        <table>
-          <thead>
-            <tr>
-              <th>Run</th>
-              <th>Target</th>
-              <th>Status</th>
-              <th>Files</th>
-              <th>Artifacts</th>
-              <th>Commands</th>
-            </tr>
-          </thead>
-          <tbody>
-            {runs.map((run) => (
-              <tr key={run.run_id}>
-                <td>
-                  <strong>{run.run_id}</strong>
-                  <small>{run.generated_at || run.branch_prefix || ""}</small>
-                </td>
-                <td>{run.target_number ? `PR #${run.target_number}` : run.branch_prefix || "local"}</td>
-                <td><span className={`badge ${reviewStatusTone(run.status)}`}>{run.status || "prepared"}</span></td>
-                <td>{run.changed_files_count || 0}</td>
-                <td>
-                  {run.understanding_path ? <code>{run.understanding_path}</code> : null}
-                  {run.findings_path ? <code>{run.findings_path}</code> : null}
-                </td>
-                <td>
-                  <div className="stack-sm">
-                    {run.resume_command ? <CopyCommand value={run.resume_command} label="resume" onCopy={onCopy} /> : null}
-                    {run.check_command ? <CopyCommand value={run.check_command} label="check" onCopy={onCopy} /> : null}
-                    {run.post_command ? <CopyCommand value={run.post_command} label="post" onCopy={onCopy} /> : null}
-                  </div>
-                </td>
-              </tr>
-            ))}
-            {!runs.length ? (
-              <tr><td colSpan={6}>No review runs found.</td></tr>
-            ) : null}
-          </tbody>
-        </table>
-      </div>
+      <DataTable data={runs} columns={columns} empty="No review runs found." getRowKey={(run) => run.run_id} />
     </div>
   );
 }
@@ -794,18 +861,19 @@ function Inspector({
   onCopy: (value: string, label?: string) => void;
   copyMessage: string;
 }) {
+  const badges = selected
+    ? [
+        "type" in selected ? { label: selected.type, tone: selected.type } : null,
+        "risk" in selected && selected.risk ? { label: selected.risk, tone: riskTone(selected.risk) } : null
+      ].filter(Boolean) as Array<{ label: string; tone?: string }>
+    : [];
+
   return (
-    <aside className="inspector" aria-label="Selection inspector">
-      <div className="inspector-header">
-        <span className="eyebrow">Inspector</span>
-        <h2>{selected?.label || selected?.id || "Nothing selected"}</h2>
-      </div>
+    <InspectorPanel title={selected?.label || selected?.id || "Nothing selected"} badges={badges}>
       {!selected ? (
         <p className="empty">Select a node or edge to inspect evidence and actions.</p>
       ) : (
         <div className="stack">
-          {"type" in selected ? <span className={`badge ${selected.type}`}>{selected.type}</span> : null}
-          {"risk" in selected && selected.risk ? <span className={`badge ${riskTone(selected.risk)}`}>{selected.risk}</span> : null}
           {"summary" in selected && selected.summary ? <p>{selected.summary}</p> : null}
           {"reason" in selected && selected.reason ? <p>{selected.reason}</p> : null}
           {"path" in selected && selected.path ? <code>{selected.path}</code> : null}
@@ -814,7 +882,7 @@ function Inspector({
           <p className="sr-only" aria-live="polite">{copyMessage}</p>
         </div>
       )}
-    </aside>
+    </InspectorPanel>
   );
 }
 
@@ -870,13 +938,10 @@ function ActionList({
 
 function Panel({ title, icon: Icon, children }: { title: string; icon: typeof Activity; children: ReactNode }) {
   return (
-    <section className="panel">
-      <div className="panel-header">
-        <Icon size={17} aria-hidden="true" />
-        <h2>{title}</h2>
-      </div>
+    <Card className="panel">
+      <CardHeader title={title} icon={Icon} />
       {children}
-    </section>
+    </Card>
   );
 }
 
@@ -890,12 +955,7 @@ function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) 
 }
 
 function Metric({ label, value, tone }: { label: string; value: string | number; tone: string }) {
-  return (
-    <div className={`metric ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
-    </div>
-  );
+  return <MetricCard label={label} value={value} tone={tone} />;
 }
 
 function ItemList({
@@ -918,15 +978,11 @@ function ItemList({
             <strong>{item.title}</strong>
             <small>{item.detail}</small>
           </span>
-          <span className={`badge ${riskTone(item.tone)}`}>{item.tone || "view"}</span>
+          <Badge tone={riskTone(item.tone)}>{item.tone || "view"}</Badge>
         </button>
       ))}
     </div>
   );
-}
-
-function StatusPill({ status }: { status: string }) {
-  return <span className={`status-pill ${status}`}>{status || "unknown"}</span>;
 }
 
 function ErrorState({ message, onLoadSample }: { message: string; onLoadSample: () => void }) {
@@ -935,9 +991,9 @@ function ErrorState({ message, onLoadSample }: { message: string; onLoadSample: 
       <AlertTriangle size={28} aria-hidden="true" />
       <h1>Dashboard failed to load</h1>
       <p>{message}</p>
-      <button type="button" className="secondary-action" onClick={onLoadSample}>
+      <Button variant="secondary" onClick={onLoadSample}>
         Show sample cockpit
-      </button>
+      </Button>
     </div>
   );
 }
@@ -967,9 +1023,9 @@ function EmptyDecisionState({ onLoadSample }: { onLoadSample: () => void }) {
           risk, tests, and memory.
         </p>
       </div>
-      <button type="button" className="secondary-action" onClick={onLoadSample}>
+      <Button variant="secondary" onClick={onLoadSample}>
         Show sample decision
-      </button>
+      </Button>
     </section>
   );
 }
@@ -984,9 +1040,9 @@ function CopyButton({
   onCopy: (value: string, label?: string) => void;
 }) {
   return (
-    <button type="button" className="icon-button" aria-label={`Copy ${label}`} onClick={() => onCopy(value, label)}>
+    <Button variant="icon" aria-label={`Copy ${label}`} onClick={() => onCopy(value, label)}>
       <Copy size={15} aria-hidden="true" />
-    </button>
+    </Button>
   );
 }
 
@@ -1000,9 +1056,9 @@ function CopyCommand({
   onCopy: (value: string, label?: string) => void;
 }) {
   return (
-    <button type="button" className="link-button" onClick={() => onCopy(value, label)}>
+    <Button variant="link" onClick={() => onCopy(value, label)}>
       <code>{value}</code>
-    </button>
+    </Button>
   );
 }
 
