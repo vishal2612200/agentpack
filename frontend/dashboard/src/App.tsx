@@ -20,7 +20,6 @@ import {
 import {
   Background,
   Controls,
-  MiniMap,
   ReactFlow,
   type Edge,
   type Node,
@@ -40,6 +39,7 @@ import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 
 type View = "cockpit" | "projects" | "graph" | "memory" | "learning" | "risk" | "reviews" | "replay" | "raw";
 type GraphFilter = "all" | "selected" | "risk" | "memory" | "reviews" | "tests";
+type GraphMode = "decision" | "full";
 type ProjectRow = NonNullable<DashboardSnapshot["project_index"]["projects"]>[number];
 type LearningSessionRow = NonNullable<DashboardSnapshot["learning_prep"]["sessions"]>[number];
 type TaskMapRow = DashboardSnapshot["task_map"][number];
@@ -342,7 +342,9 @@ function TaskGraph({
   onFilterChange: (filter: GraphFilter) => void;
   onSelect: (id: string) => void;
 }) {
-  const { nodes, edges } = useMemo(() => toFlowGraph(graph, query, filter, selectedId), [graph, query, filter, selectedId]);
+  const [graphMode, setGraphMode] = useState<GraphMode>("decision");
+  const flow = useMemo(() => toFlowGraph(graph, query, filter, selectedId, graphMode), [graph, query, filter, selectedId, graphMode]);
+  const { nodes, edges } = flow;
   const handleClick: NodeMouseHandler = (_event, node) => onSelect(node.id);
   const filterItems: Array<{ id: GraphFilter; label: string }> = [
     { id: "all", label: "All" },
@@ -358,7 +360,18 @@ function TaskGraph({
       <div className="graph-toolbar">
         <span><CircleDot size={14} aria-hidden="true" /> {graph.summary.node_count} nodes</span>
         <span>{graph.summary.edge_count} edges</span>
+        <Badge tone={flow.canvasCurated ? "warn" : "neutral"}>
+          {graphMode === "decision" ? "Decision map" : "Full map"} · {nodes.length} of {flow.matchedNodeCount}
+        </Badge>
         {graph.summary.truncated ? <Badge tone="warn">Truncated</Badge> : null}
+        <div className="graph-mode-toggle" aria-label="Graph map mode">
+          <Button variant={graphMode === "decision" ? "secondary" : "ghost"} size="sm" onClick={() => setGraphMode("decision")}>
+            Decision
+          </Button>
+          <Button variant={graphMode === "full" ? "secondary" : "ghost"} size="sm" onClick={() => setGraphMode("full")}>
+            Full
+          </Button>
+        </div>
         <Tabs value={filter} onValueChange={(value) => onFilterChange(value as GraphFilter)}>
           <TabsList aria-label="Graph filter">
           {filterItems.map((item) => (
@@ -381,9 +394,20 @@ function TaskGraph({
         </div>
       </div>
       {nodes.length ? (
-        <ReactFlow nodes={nodes} edges={edges} fitView onNodeClick={handleClick} nodesDraggable panOnDrag={[1, 2]}>
+        <ReactFlow
+          key={`${graphMode}:${filter}:${query}:${nodes.length}:${edges.length}`}
+          nodes={nodes}
+          edges={edges}
+          fitView
+          fitViewOptions={{ padding: 0.18, minZoom: 0.35, maxZoom: 1.05 }}
+          minZoom={0.25}
+          maxZoom={1.35}
+          onNodeClick={handleClick}
+          nodesDraggable
+          nodesConnectable={false}
+          panOnDrag={[2]}
+        >
           <Background />
-          <MiniMap pannable zoomable />
           <Controls />
         </ReactFlow>
       ) : (
@@ -1128,16 +1152,38 @@ function nextDecision(payload: DashboardPayload): { title: string; detail: strin
   };
 }
 
-function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, selectedId: string): { nodes: Node[]; edges: Edge[] } {
+type FlowGraphResult = {
+  nodes: Node[];
+  edges: Edge[];
+  matchedNodeCount: number;
+  canvasCurated: boolean;
+};
+
+const CANVAS_LIMITS = {
+  tasks: 3,
+  reviews: 4,
+  memory: 4,
+  memoryTargets: 8,
+  files: 8,
+  symbols: 10,
+  tests: 3,
+  actions: 3,
+  taskFileEdges: 4
+};
+
+function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, selectedId: string, mode: GraphMode): FlowGraphResult {
   const lower = query.trim().toLowerCase();
   const memoryTargets = new Set(graph.edges.filter((edge) => edge.type === "memory_influenced").map((edge) => edge.target));
-  const visibleNodes = graph.nodes.filter((node) => {
+  const matchedNodes = graph.nodes.filter((node) => {
     if (!matchesGraphFilter(node, filter, memoryTargets)) return false;
     if (!lower) return true;
     return [node.label, node.path, node.summary, node.type].some((value) => String(value || "").toLowerCase().includes(lower));
   });
+  const visibleNodes = mode === "full" ? matchedNodes : curateCanvasNodes(graph, matchedNodes, filter, memoryTargets, selectedId);
   const visible = new Set(visibleNodes.map((node) => node.id));
-  const visibleEdges = graph.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target));
+  const visibleEdges = mode === "full"
+    ? graph.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target))
+    : curateCanvasEdges(graph.edges, visibleNodes, filter);
   const positions = layoutGraph(visibleNodes, visibleEdges);
 
   const nodes = visibleNodes
@@ -1152,11 +1198,16 @@ function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, 
       id: edge.id,
       source: edge.source,
       target: edge.target,
-      label: edge.label || edge.type,
+      label: edgeLabel(edge),
       className: `flow-edge ${edge.type}`,
       animated: edge.type === "memory_influenced"
     }));
-  return { nodes, edges };
+  return {
+    nodes,
+    edges,
+    matchedNodeCount: matchedNodes.length,
+    canvasCurated: mode === "decision" && visibleNodes.length < matchedNodes.length
+  };
 }
 
 function matchesGraphFilter(node: DashboardNode, filter: GraphFilter, memoryTargets: Set<string>) {
@@ -1166,6 +1217,132 @@ function matchesGraphFilter(node: DashboardNode, filter: GraphFilter, memoryTarg
   if (filter === "reviews") return node.type === "task" || node.type === "review";
   if (filter === "tests") return node.type === "task" || node.type === "test" || node.actions?.some((action) => action.command?.includes("pytest"));
   return true;
+}
+
+function curateCanvasNodes(
+  graph: DashboardGraph,
+  nodes: DashboardNode[],
+  filter: GraphFilter,
+  memoryTargets: Set<string>,
+  selectedId: string
+): DashboardNode[] {
+  const edges = graph.edges;
+  const focused = nodes.find((node) => node.id === selectedId);
+  const focus = focused ? [focused] : [];
+  const tasks = takeRanked(nodes.filter((node) => node.type === "task"), edges, CANVAS_LIMITS.tasks);
+  const reviews = takeRanked(nodes.filter((node) => node.type === "review"), edges, CANVAS_LIMITS.reviews);
+  const memory = takeRanked(
+    nodes.filter((node) => node.type === "episode" || node.type === "procedure"),
+    edges,
+    CANVAS_LIMITS.memory
+  );
+  const files = takeRanked(nodes.filter((node) => node.type === "file"), edges, CANVAS_LIMITS.files);
+  const visibleFilePaths = new Set(files.map((node) => node.path).filter(Boolean));
+  const symbolsForVisibleFiles = nodes.filter(
+    (node) => node.type === "symbol" && visibleFilePaths.has(String(node.metadata?.file || node.path || ""))
+  );
+  const symbols = takeRanked(symbolsForVisibleFiles.length ? symbolsForVisibleFiles : nodes.filter((node) => node.type === "symbol"), edges, CANVAS_LIMITS.symbols);
+  const tests = takeRanked(nodes.filter((node) => node.type === "test"), edges, CANVAS_LIMITS.tests);
+  const actions = takeRanked(nodes.filter((node) => node.type === "action"), edges, CANVAS_LIMITS.actions);
+
+  if (filter === "reviews") {
+    return uniqueNodes([...focus, ...tasks, ...reviews]);
+  }
+  if (filter === "memory") {
+    const targets = takeRanked(
+      nodes.filter((node) => memoryTargets.has(node.id) && node.type !== "episode" && node.type !== "procedure"),
+      edges,
+      CANVAS_LIMITS.memoryTargets
+    );
+    return uniqueNodes([...focus, ...tasks, ...memory, ...targets]);
+  }
+  if (filter === "tests") {
+    const testTargets = connectedNodes(nodes, edges, new Set(tests.map((node) => node.id)));
+    return uniqueNodes([...focus, ...tasks, ...tests, ...takeRanked(testTargets, edges, CANVAS_LIMITS.files), ...actions]);
+  }
+  if (filter === "risk") {
+    return uniqueNodes([...focus, ...tasks, ...files, ...tests, ...actions]);
+  }
+  if (filter === "selected") {
+    return uniqueNodes([...focus, ...tasks, ...files, ...symbols, ...tests]);
+  }
+  return uniqueNodes([...focus, ...tasks, ...reviews, ...memory, ...files, ...symbols, ...tests, ...actions]);
+}
+
+function curateCanvasEdges(edges: DashboardEdge[], nodes: DashboardNode[], filter: GraphFilter): DashboardEdge[] {
+  const visible = new Set(nodes.map((node) => node.id));
+  const typeById = new Map(nodes.map((node) => [node.id, node.type]));
+  const rankById = new Map(nodes.map((node, index) => [node.id, index]));
+  const candidates = edges
+    .filter((edge) => visible.has(edge.source) && visible.has(edge.target))
+    .sort((left, right) => (rankById.get(left.source) || 0) - (rankById.get(right.source) || 0));
+  const taskFileEdges = candidates.filter((edge) => typeById.get(edge.source) === "task" && typeById.get(edge.target) === "file");
+  const allowedTaskFileTargets = new Set(taskFileEdges.slice(0, CANVAS_LIMITS.taskFileEdges).map((edge) => edge.target));
+
+  return candidates.filter((edge) => {
+    const sourceType = typeById.get(edge.source);
+    const targetType = typeById.get(edge.target);
+    if (sourceType === "task" && targetType === "file" && !allowedTaskFileTargets.has(edge.target)) {
+      return false;
+    }
+    if (filter === "all" && edge.type === "contains" && sourceType === "task") {
+      return allowedTaskFileTargets.has(edge.target);
+    }
+    return true;
+  });
+}
+
+function takeRanked(nodes: DashboardNode[], edges: DashboardEdge[], limit: number) {
+  const degree = connectionDegree(edges);
+  return [...nodes]
+    .sort((left, right) => nodePriority(right, degree) - nodePriority(left, degree) || nodeSortLabel(left).localeCompare(nodeSortLabel(right)))
+    .slice(0, limit);
+}
+
+function connectedNodes(nodes: DashboardNode[], edges: DashboardEdge[], ids: Set<string>) {
+  const related = new Set<string>();
+  for (const edge of edges) {
+    if (ids.has(edge.source)) related.add(edge.target);
+    if (ids.has(edge.target)) related.add(edge.source);
+  }
+  return nodes.filter((node) => related.has(node.id));
+}
+
+function connectionDegree(edges: DashboardEdge[]) {
+  const degree = new Map<string, number>();
+  for (const edge of edges) {
+    degree.set(edge.source, (degree.get(edge.source) || 0) + 1);
+    degree.set(edge.target, (degree.get(edge.target) || 0) + 1);
+  }
+  return degree;
+}
+
+function nodePriority(node: DashboardNode, degree: Map<string, number>) {
+  const risk = node.risk === "high" ? 70 : node.risk === "medium" ? 45 : node.risk === "low" ? 12 : 0;
+  const family =
+    node.type === "task" ? 120 :
+    node.type === "review" ? 95 :
+    node.type === "episode" || node.type === "procedure" ? 90 :
+    node.type === "file" ? 75 :
+    node.type === "symbol" ? 45 :
+    node.type === "test" ? 55 :
+    node.type === "action" ? 50 :
+    0;
+  return family + risk + (node.selected ? 80 : 0) + (Number(node.score) || 0) * 10 + (degree.get(node.id) || 0) * 2;
+}
+
+function uniqueNodes(nodes: DashboardNode[]) {
+  const seen = new Set<string>();
+  return nodes.filter((node) => {
+    if (seen.has(node.id)) return false;
+    seen.add(node.id);
+    return true;
+  });
+}
+
+function edgeLabel(edge: DashboardEdge) {
+  if (edge.type === "contains" || edge.type === "selected_because") return undefined;
+  return edge.label || edge.type;
 }
 
 function nodeLabel(node: DashboardNode) {
@@ -1191,25 +1368,29 @@ function layoutGraph(nodes: DashboardNode[], edges: DashboardEdge[]): Map<string
   const fileOrder = orderByConnections(byType.get("file") || [], edges);
   const symbolOrder = orderSymbolsByFile(byType.get("symbol") || [], fileOrder);
   const positions = new Map<string, { x: number; y: number }>();
-  placeColumn(positions, byType.get("task") || [], 80, 210, 150);
-  placeColumn(positions, byType.get("memory") || [], 330, 60, 112);
-  placeColumn(positions, byType.get("review") || [], 330, 410, 118);
-  placeColumn(positions, fileOrder, 330, 210, 118);
-  placeColumn(positions, symbolOrder, 600, 170, 90);
-  placeColumn(positions, byType.get("test") || [], 890, 180, 112);
-  placeColumn(positions, byType.get("action") || [], 890, 430, 112);
+  placeLane(positions, byType.get("task") || [], 40, 260, 116, 180, 3);
+  placeLane(positions, byType.get("review") || [], 260, 64, 112, 180, 3);
+  placeLane(positions, byType.get("memory") || [], 260, 260, 112, 180, 4);
+  placeLane(positions, fileOrder, 480, 72, 90, 180, 6);
+  placeLane(positions, symbolOrder, 840, 72, 74, 180, 8);
+  placeLane(positions, byType.get("test") || [], 1080, 96, 108, 180, 4);
+  placeLane(positions, byType.get("action") || [], 1080, 390, 108, 180, 4);
   return positions;
 }
 
-function placeColumn(
+function placeLane(
   positions: Map<string, { x: number; y: number }>,
   nodes: DashboardNode[],
   x: number,
   yStart: number,
-  yStep: number
+  yStep: number,
+  xStep: number,
+  maxRows: number
 ) {
   nodes.forEach((node, index) => {
-    positions.set(node.id, { x, y: yStart + index * yStep });
+    const column = Math.floor(index / maxRows);
+    const row = index % maxRows;
+    positions.set(node.id, { x: x + column * xStep, y: yStart + row * yStep });
   });
 }
 
@@ -1241,6 +1422,10 @@ function positionFor(index: number, type: string) {
     x: 120 + (index % 6) * 190,
     y: 120 + lane * 140 + Math.floor(index / 6) * 170
   };
+}
+
+function nodeSortLabel(node: DashboardNode) {
+  return node.path || node.label || node.id;
 }
 
 function nodeFamily(node: DashboardNode): { label: string; tone: string } {

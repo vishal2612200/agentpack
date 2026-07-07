@@ -957,6 +957,16 @@ code {
   font-size: 12px;
 }
 
+.graph-mode-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+  padding: 2px;
+}
+
 .graph-legend span {
   display: inline-flex;
   align-items: center;
