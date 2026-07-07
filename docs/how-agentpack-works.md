@@ -64,7 +64,11 @@ what proof still needs to be checked.
 
    AgentPack records an append-only memory graph under `.agentpack/`: task-start snapshots, node refs, task events, episodes, procedures, and memory edges. This makes the first context pack the map before work starts, while later events become the travel log. Retrieval requires provenance, source hashes, confidence, and visible reasons; stale or failed memory can warn, but only validated current memories can boost future ranking.
 
-9. **Measure**
+9. **Visualize**
+
+   `agentpack dashboard` turns the same local artifacts into a context cockpit. It writes a bundled React/Vite HTML view plus `.agentpack/dashboard-data.json` for the normalized snapshot and `.agentpack/dashboard-graph.json` for the task-scoped graph. The view is local-only, uses packaged assets, and keeps graph nodes tied to source paths, retrieve refs, risks, tests, memory evidence, and suggested next actions.
+
+10. **Measure**
 
    `agentpack benchmark` scores expected-file recall, token precision, pack size, misses, and skill routing metrics. Benchmark cases can include `expected_skills` and `avoid_skills` to catch weak skill keywords or noisy skill recommendations.
 

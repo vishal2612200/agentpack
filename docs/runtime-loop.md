@@ -5,7 +5,7 @@ features around that router without becoming a provider proxy.
 
 | Need | AgentPack surface |
 |---|---|
-| Inspect risk, tests, impact, and retrieve refs for latest pack | MCP `get_task_map` and `agentpack dashboard` |
+| Inspect risk, tests, impact, retrieve refs, and memory influence for latest pack | MCP `get_task_map` and `agentpack dashboard` |
 | Retrieve selected, symbol, or omitted context after a pack | `agentpack retrieve` and MCP `retrieve_context` |
 | Record cheap task memory while work starts or finishes | `agentpack work` and `agentpack finish` |
 | Generate on-demand lessons, quiz, interview prep, or failure drills | `agentpack learn "<request>"` and `@agentpack-learn <request>` |
@@ -24,6 +24,7 @@ The runtime loop keeps the first context pack small and reversible:
 - **Compress** repo files into budget-aware pack views and compress noisy command output into failure-focused summaries.
 - **Cache** snapshots, summaries, pack metadata, registry records, session events, and learning feedback locally under `.agentpack/`.
 - **Map** selected and omitted files into Task Map v1 rows: why selected, advisory risk, related tests, likely impact, and retrieve refs.
+- **Visualize** the same local evidence in the dashboard cockpit through a task-scoped graph, risk/test panels, memory timeline, and raw JSON contracts.
 - **Retrieve** precise file, symbol, or omitted context from the latest pack registry through `agentpack retrieve` or MCP `retrieve_context`.
 
 Rendered packs are prompt-cache friendly by default. Every markdown and compact
@@ -73,7 +74,7 @@ Every loop writes `.agentpack/loop_runner_prompt.md` for provider-safe runner
 instructions: read context, keep edits scoped, avoid commits/pushes/destructive
 commands, run no hidden approval flow, and emit the final JSON contract.
 Historical outcomes are appended to `.agentpack/loop_metrics.jsonl`; inspect
-them with `agentpack loop-metrics` or the dashboard.
+them with `agentpack loop-metrics` or the dashboard cockpit.
 
 `agentpack work` also appends bounded `task_memory` facts to
 `.agentpack/session-events.jsonl` and mirrors an advisory observer event to
@@ -121,6 +122,7 @@ concepts. They do not replace `rg`, `git diff`, direct file reads, tests, or PR
 review evidence.
 
 On-demand `agentpack learn "quiz me on last task"` style requests append queued
-coach questions to `.agentpack/learning-sessions.jsonl`. The dashboard rolls
-those local records and observer signals into weak-spot and advisory cards, so
-developers see what to revisit without slowing `work`, `loop`, or `finish`.
+coach questions to `.agentpack/learning-sessions.jsonl`. The dashboard cockpit
+rolls those local records and observer signals into weak-spot, memory, and
+advisory graph views, so developers see what to revisit without slowing `work`,
+`loop`, or `finish`.
