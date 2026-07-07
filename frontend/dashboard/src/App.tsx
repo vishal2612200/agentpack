@@ -381,7 +381,7 @@ function TaskGraph({
         </div>
       </div>
       {nodes.length ? (
-        <ReactFlow nodes={nodes} edges={edges} fitView onNodeClick={handleClick} nodesDraggable={false}>
+        <ReactFlow nodes={nodes} edges={edges} fitView onNodeClick={handleClick} nodesDraggable panOnDrag={[1, 2]}>
           <Background />
           <MiniMap pannable zoomable />
           <Controls />
@@ -1131,28 +1131,24 @@ function nextDecision(payload: DashboardPayload): { title: string; detail: strin
 function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, selectedId: string): { nodes: Node[]; edges: Edge[] } {
   const lower = query.trim().toLowerCase();
   const memoryTargets = new Set(graph.edges.filter((edge) => edge.type === "memory_influenced").map((edge) => edge.target));
-  const visible = new Set(
-    graph.nodes
-      .filter((node) => {
-        if (!matchesGraphFilter(node, filter, memoryTargets)) return false;
-        if (!lower) return true;
-        return [node.label, node.path, node.summary, node.type].some((value) => String(value || "").toLowerCase().includes(lower));
-      })
-      .map((node) => node.id)
-  );
+  const visibleNodes = graph.nodes.filter((node) => {
+    if (!matchesGraphFilter(node, filter, memoryTargets)) return false;
+    if (!lower) return true;
+    return [node.label, node.path, node.summary, node.type].some((value) => String(value || "").toLowerCase().includes(lower));
+  });
+  const visible = new Set(visibleNodes.map((node) => node.id));
+  const visibleEdges = graph.edges.filter((edge) => visible.has(edge.source) && visible.has(edge.target));
+  const positions = layoutGraph(visibleNodes, visibleEdges);
 
-  const nodes = graph.nodes
-    .filter((node) => visible.has(node.id))
+  const nodes = visibleNodes
     .map((node, index) => ({
       id: node.id,
-      position: positionFor(index, node.type),
+      position: positions.get(node.id) || positionFor(index, node.type),
       data: { label: nodeLabel(node) },
       className: `flow-node ${node.type} ${node.selected ? "selected" : ""} ${node.stale ? "stale" : ""} ${node.id === selectedId ? "active" : ""}`,
       type: "default"
     }));
-  const edges = graph.edges
-    .filter((edge) => visible.has(edge.source) && visible.has(edge.target))
-    .map((edge) => ({
+  const edges = visibleEdges.map((edge) => ({
       id: edge.id,
       source: edge.source,
       target: edge.target,
@@ -1186,16 +1182,61 @@ function nodeLabel(node: DashboardNode) {
   );
 }
 
+function layoutGraph(nodes: DashboardNode[], edges: DashboardEdge[]): Map<string, { x: number; y: number }> {
+  const byType = new Map<string, DashboardNode[]>();
+  for (const node of nodes) {
+    const key = node.type === "episode" || node.type === "procedure" ? "memory" : node.type;
+    byType.set(key, [...(byType.get(key) || []), node]);
+  }
+  const fileOrder = orderByConnections(byType.get("file") || [], edges);
+  const symbolOrder = orderSymbolsByFile(byType.get("symbol") || [], fileOrder);
+  const positions = new Map<string, { x: number; y: number }>();
+  placeColumn(positions, byType.get("task") || [], 80, 210, 150);
+  placeColumn(positions, byType.get("memory") || [], 330, 60, 112);
+  placeColumn(positions, byType.get("review") || [], 330, 410, 118);
+  placeColumn(positions, fileOrder, 330, 210, 118);
+  placeColumn(positions, symbolOrder, 600, 170, 90);
+  placeColumn(positions, byType.get("test") || [], 890, 180, 112);
+  placeColumn(positions, byType.get("action") || [], 890, 430, 112);
+  return positions;
+}
+
+function placeColumn(
+  positions: Map<string, { x: number; y: number }>,
+  nodes: DashboardNode[],
+  x: number,
+  yStart: number,
+  yStep: number
+) {
+  nodes.forEach((node, index) => {
+    positions.set(node.id, { x, y: yStart + index * yStep });
+  });
+}
+
+function orderByConnections(nodes: DashboardNode[], edges: DashboardEdge[]) {
+  const score = new Map(edges.flatMap((edge) => [[edge.source, 0], [edge.target, 0]]));
+  for (const edge of edges) {
+    score.set(edge.source, (score.get(edge.source) || 0) + 1);
+    score.set(edge.target, (score.get(edge.target) || 0) + 1);
+  }
+  return [...nodes].sort((left, right) => {
+    const selected = Number(Boolean(right.selected)) - Number(Boolean(left.selected));
+    if (selected) return selected;
+    return (score.get(right.id) || 0) - (score.get(left.id) || 0) || (left.path || left.label).localeCompare(right.path || right.label);
+  });
+}
+
+function orderSymbolsByFile(symbols: DashboardNode[], files: DashboardNode[]) {
+  const fileRank = new Map(files.map((file, index) => [file.path, index]));
+  return [...symbols].sort((left, right) => {
+    const leftRank = fileRank.get(String(left.metadata?.file || left.path || "")) ?? 999;
+    const rightRank = fileRank.get(String(right.metadata?.file || right.path || "")) ?? 999;
+    return leftRank - rightRank || (left.label || left.id).localeCompare(right.label || right.id);
+  });
+}
+
 function positionFor(index: number, type: string) {
-  const lane = type === "task"
-    ? 0
-    : type === "episode" || type === "procedure"
-      ? -1
-      : type === "review"
-        ? 1
-        : type === "test" || type === "action"
-          ? 2
-          : 0;
+  const lane = type === "task" ? 0 : type === "episode" || type === "procedure" ? -1 : type === "review" ? 1 : type === "test" || type === "action" ? 2 : 0;
   return {
     x: 120 + (index % 6) * 190,
     y: 120 + lane * 140 + Math.floor(index / 6) * 170

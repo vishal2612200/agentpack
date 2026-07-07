@@ -80,8 +80,23 @@ def test_dashboard_graph_links_task_memory_to_files() -> None:
     graph = build_dashboard_graph(snapshot)
 
     assert any(node.type == "episode" and node.label == "Fix cache invalidation" for node in graph.nodes)
+    assert any(node.type == "task" and node.id.startswith("task:memory:") and node.label == "Fix cache invalidation" for node in graph.nodes)
+    assert any(edge.type == "memory_influenced" and edge.label == "related task" for edge in graph.edges)
     assert any(edge.type == "memory_influenced" and edge.target == "file:src/cache.py" for edge in graph.edges)
     assert graph.summary.memory_nodes == 1
+
+
+def test_dashboard_graph_uses_concise_task_title() -> None:
+    snapshot = DashboardSnapshot(
+        project=ProjectInfo(name="repo", path="/tmp/repo"),
+        task=TaskInfo(text="Implement dashboard graph visualization with distinct AST, memory, review, and task nodes"),
+    )
+
+    graph = build_dashboard_graph(snapshot)
+    task = next(node for node in graph.nodes if node.id == "task:active")
+
+    assert task.label == "Implement dashboard graph visualization with distinct AST,"
+    assert task.summary == "Implement dashboard graph visualization with distinct AST, memory, review, and task nodes"
 
 
 def test_dashboard_graph_builds_symbol_nodes_for_selected_files() -> None:

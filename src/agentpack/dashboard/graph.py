@@ -34,6 +34,7 @@ def build_dashboard_graph(
     builder = _GraphBuilder(snapshot, max_nodes=max_nodes)
     builder.add_task()
     builder.add_review_runs()
+    builder.add_related_task_nodes()
     builder.add_files()
     builder.add_suggested_actions()
     builder.add_learning_memories()
@@ -57,7 +58,7 @@ class _GraphBuilder:
             DashboardNode(
                 id="task:active",
                 type="task",
-                label=_clip(task, 90),
+                label=_task_title(task),
                 status=self.snapshot.task.state,
                 summary=task,
                 evidence=[
@@ -69,6 +70,41 @@ class _GraphBuilder:
                 ],
             )
         )
+
+    def add_related_task_nodes(self) -> None:
+        for memory in self.snapshot.learning_memories[:6]:
+            if not memory.task:
+                continue
+            node_id = "task:memory:" + _slug(memory.task or memory.git_sha or "task")
+            self._add_node(
+                DashboardNode(
+                    id=node_id,
+                    type="task",
+                    label=_task_title(memory.task),
+                    status=memory.status,
+                    summary=memory.task,
+                    metadata={
+                        "source": "task_memory",
+                        "stage": memory.stage,
+                        "branch": memory.branch,
+                        "git_sha": memory.git_sha,
+                        "concepts": memory.concepts,
+                    },
+                    evidence=[DashboardEvidence(kind="task_memory", summary=memory.task)],
+                )
+            )
+            self._add_edge(
+                DashboardEdge(
+                    id=f"edge:{node_id}:active-task",
+                    source=node_id,
+                    target="task:active",
+                    type="memory_influenced",
+                    label="related task",
+                    confidence=0.65,
+                    reason="Recent task memory is related to the current context decision.",
+                    evidence=[DashboardEvidence(kind="task_memory", summary=memory.task)],
+                )
+            )
 
     def add_files(self) -> None:
         task_map_by_path = {item.path: item for item in self.snapshot.task_map if item.path}
@@ -574,6 +610,24 @@ def _line_label(symbol: SelectedSymbolRow) -> str:
     if symbol.start_line:
         return f"L{symbol.start_line}"
     return ""
+
+
+def _task_title(task: str) -> str:
+    value = " ".join(str(task or "No active task").split())
+    if len(value) <= 58:
+        return value
+    for separator in (":", " - ", " — ", ".", ";"):
+        head = value.split(separator, 1)[0].strip()
+        if 18 <= len(head) <= 58:
+            return head
+    words = value.split()
+    title: list[str] = []
+    for word in words:
+        candidate = " ".join([*title, word])
+        if len(candidate) > 58:
+            break
+        title.append(word)
+    return " ".join(title) or _clip(value, 58)
 
 
 def _memory_symbol_cues(memory: Any, symbol_node: DashboardNode) -> list[str]:
