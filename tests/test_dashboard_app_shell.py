@@ -29,6 +29,13 @@ def test_dashboard_shell_inlines_assets_with_reordered_vite_tags(tmp_path: Path,
     (assets / "index.css").write_text(".app{color:red}", encoding="utf-8")
     (assets / "index.js").write_text("console.log('dashboard')", encoding="utf-8")
     monkeypatch.setattr(app_shell, "DASHBOARD_APP_DIR", app_dir)
+    atomic_writes: list[Path] = []
+
+    def fake_atomic_write(path: Path, text: str) -> None:
+        atomic_writes.append(path)
+        path.write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr(app_shell, "_atomic_write", fake_atomic_write)
     snapshot = DashboardSnapshot(project=ProjectInfo(name="repo", path=str(tmp_path)), task=TaskInfo(text="fix auth"))
     graph = build_dashboard_graph(snapshot)
     output = tmp_path / "dashboard.html"
@@ -41,11 +48,20 @@ def test_dashboard_shell_inlines_assets_with_reordered_vite_tags(tmp_path: Path,
     assert "__AGENTPACK_DASHBOARD_DATA_JSON__" not in html
     assert json.loads(html.split('<script id="agentpack-dashboard-data">', 1)[1].split("</script>", 1)[0])["task"]["text"] == "fix auth"
     assert (tmp_path / "assets" / "index.css").exists()
+    assert atomic_writes == [output]
 
 
 def test_dashboard_shell_falls_back_to_legacy_when_bundle_missing(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setattr(app_shell, "DASHBOARD_APP_DIR", tmp_path / "missing")
+    atomic_writes: list[Path] = []
+
+    def fake_atomic_write(path: Path, text: str) -> None:
+        atomic_writes.append(path)
+        path.write_text(text, encoding="utf-8")
+
+    monkeypatch.setattr(app_shell, "_atomic_write", fake_atomic_write)
     snapshot = DashboardSnapshot(project=ProjectInfo(name="repo", path=str(tmp_path)), task=TaskInfo(text="fix auth"))
 
     assert write_dashboard_shell(tmp_path / "dashboard.html", snapshot, build_dashboard_graph(snapshot)) is False
     assert "AgentPack Dashboard" in (tmp_path / "dashboard.html").read_text(encoding="utf-8")
+    assert atomic_writes == [tmp_path / "dashboard.html"]

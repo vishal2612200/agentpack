@@ -5,6 +5,7 @@ import re
 import shutil
 from pathlib import Path
 
+from agentpack.commands._shared import _atomic_write
 from agentpack.dashboard.models import DashboardGraph, DashboardSnapshot
 from agentpack.dashboard.renderers import render_dashboard_html
 
@@ -29,7 +30,7 @@ def write_dashboard_shell(
 
     index = DASHBOARD_APP_DIR / "index.html"
     if not index.exists():
-        output_path.write_text(render_dashboard_html(snapshot), encoding="utf-8")
+        _atomic_write(output_path, render_dashboard_html(snapshot))
         return False
 
     html = index.read_text(encoding="utf-8")
@@ -38,7 +39,7 @@ def write_dashboard_shell(
     html = html.replace("__AGENTPACK_DASHBOARD_DATA_JSON__", _json_for_script(snapshot.model_dump(mode="json")))
     html = html.replace("__AGENTPACK_DASHBOARD_GRAPH_JSON__", _json_for_script(graph.model_dump(mode="json")))
     html = _inline_built_assets(html)
-    output_path.write_text(html, encoding="utf-8")
+    _atomic_write(output_path, html)
     _copy_assets(output_path.parent)
     return True
 
