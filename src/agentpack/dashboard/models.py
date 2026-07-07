@@ -15,6 +15,17 @@ SkillFeedbackStatus = Literal[
     "ignored",
     "bad_recommendation",
 ]
+DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "action"]
+DashboardEdgeType = Literal[
+    "selected_because",
+    "omitted_because",
+    "imports",
+    "tested_by",
+    "memory_influenced",
+    "procedure_applies",
+    "may_break",
+    "retrieve_ref",
+]
 
 
 class ProjectInfo(BaseModel):
@@ -202,6 +213,68 @@ class SuggestedAction(BaseModel):
     label: str
     command: str
     reason: str = ""
+
+
+class DashboardEvidence(BaseModel):
+    kind: str
+    ref: str = ""
+    summary: str = ""
+    path: str = ""
+    line: int | None = None
+
+
+class DashboardAction(BaseModel):
+    label: str
+    command: str = ""
+    kind: str = "command"
+
+
+class DashboardNode(BaseModel):
+    id: str
+    type: DashboardNodeType
+    label: str
+    path: str = ""
+    status: str = ""
+    risk: str = ""
+    selected: bool = False
+    stale: bool = False
+    score: float = 0.0
+    summary: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    evidence: list[DashboardEvidence] = Field(default_factory=list)
+    actions: list[DashboardAction] = Field(default_factory=list)
+
+
+class DashboardEdge(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: DashboardEdgeType
+    label: str = ""
+    confidence: float = 0.0
+    reason: str = ""
+    stale: bool = False
+    evidence: list[DashboardEvidence] = Field(default_factory=list)
+    actions: list[DashboardAction] = Field(default_factory=list)
+
+
+class DashboardGraphSummary(BaseModel):
+    node_count: int = 0
+    edge_count: int = 0
+    selected_files: int = 0
+    omitted_files: int = 0
+    memory_nodes: int = 0
+    high_risk_files: int = 0
+    truncated: bool = False
+
+
+class DashboardGraph(BaseModel):
+    schema_version: int = 1
+    generated_at: str = ""
+    root_id: str = "task:active"
+    summary: DashboardGraphSummary = Field(default_factory=DashboardGraphSummary)
+    nodes: list[DashboardNode] = Field(default_factory=list)
+    edges: list[DashboardEdge] = Field(default_factory=list)
 
 
 class DashboardSnapshot(BaseModel):

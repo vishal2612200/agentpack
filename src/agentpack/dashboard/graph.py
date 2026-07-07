@@ -1,0 +1,411 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
+from pathlib import Path
+from typing import Any
+
+from agentpack.dashboard.models import (
+    DashboardAction,
+    DashboardEdge,
+    DashboardEvidence,
+    DashboardGraph,
+    DashboardGraphSummary,
+    DashboardNode,
+    DashboardSnapshot,
+    TaskMapFileRow,
+)
+from agentpack.learning.memory_timeline import build_memory_timeline
+
+MAX_GRAPH_NODES = 80
+MAX_MEMORY_ROWS = 200
+
+
+def build_dashboard_graph(
+    snapshot: DashboardSnapshot,
+    root: Path | None = None,
+    *,
+    max_nodes: int = MAX_GRAPH_NODES,
+) -> DashboardGraph:
+    """Build a task-scoped graph that explains context selection decisions."""
+
+    builder = _GraphBuilder(snapshot, max_nodes=max_nodes)
+    builder.add_task()
+    builder.add_files()
+    builder.add_suggested_actions()
+    builder.add_learning_memories()
+    if root is not None:
+        builder.add_memory_timeline(root)
+    return builder.graph()
+
+
+class _GraphBuilder:
+    def __init__(self, snapshot: DashboardSnapshot, *, max_nodes: int) -> None:
+        self.snapshot = snapshot
+        self.max_nodes = max(10, max_nodes)
+        self.nodes: dict[str, DashboardNode] = {}
+        self.edges: dict[str, DashboardEdge] = {}
+        self.truncated = False
+
+    def add_task(self) -> None:
+        task = self.snapshot.task.text or "No active task"
+        self._add_node(
+            DashboardNode(
+                id="task:active",
+                type="task",
+                label=_clip(task, 90),
+                status=self.snapshot.task.state,
+                summary=task,
+                evidence=[
+                    DashboardEvidence(
+                        kind="task",
+                        ref=".agentpack/task.md",
+                        summary="Active AgentPack task text.",
+                    )
+                ],
+            )
+        )
+
+    def add_files(self) -> None:
+        task_map_by_path = {item.path: item for item in self.snapshot.task_map if item.path}
+        for selected in self.snapshot.selected_files:
+            item = task_map_by_path.get(selected.path)
+            if item is None:
+                item = TaskMapFileRow(
+                    path=selected.path,
+                    kind="selected",
+                    include_mode=selected.include_mode,
+                    score=selected.score,
+                    why_selected=selected.reasons,
+                )
+            self._add_file_node(item, selected=True)
+
+        for item in self.snapshot.task_map:
+            if item.path and item.path not in {selected.path for selected in self.snapshot.selected_files}:
+                self._add_file_node(item, selected=item.kind == "selected")
+
+    def add_suggested_actions(self) -> None:
+        for index, action in enumerate(self.snapshot.suggested_actions[:8], start=1):
+            node_id = f"action:suggested:{index}"
+            self._add_node(
+                DashboardNode(
+                    id=node_id,
+                    type="action",
+                    label=action.label,
+                    summary=action.reason,
+                    actions=[DashboardAction(label=action.label, command=action.command)],
+                    evidence=[DashboardEvidence(kind="suggested_action", summary=action.reason)],
+                )
+            )
+            self._add_edge(
+                DashboardEdge(
+                    id=f"edge:task:action:{index}",
+                    source="task:active",
+                    target=node_id,
+                    type="retrieve_ref",
+                    label="next action",
+                    reason=action.reason,
+                    actions=[DashboardAction(label=action.label, command=action.command)],
+                )
+            )
+
+    def add_memory_timeline(self, root: Path) -> None:
+        try:
+            rows = build_memory_timeline(root, limit=MAX_MEMORY_ROWS)
+        except Exception:
+            rows = []
+        procedure_nodes: set[str] = set()
+        episode_nodes: set[str] = set()
+
+        for row in rows:
+            kind = str(row.get("kind") or "")
+            row_id = str(row.get("id") or "")
+            if not row_id:
+                continue
+            if kind == "episode":
+                episode_id = f"episode:{row_id}"
+                episode_nodes.add(episode_id)
+                self._add_node(
+                    DashboardNode(
+                        id=episode_id,
+                        type="episode",
+                        label=_clip(row_id.replace("episode:", "") or "episode", 48),
+                        stale=bool(row.get("is_stale")),
+                        summary=str(row.get("visible_reason") or "Prior task episode."),
+                        metadata=_metadata(row, "timestamp", "version", "task_id", "record_hash"),
+                        evidence=[
+                            DashboardEvidence(
+                                kind="memory",
+                                ref=row_id,
+                                summary=str(row.get("visible_reason") or "Prior task episode."),
+                            )
+                        ],
+                    )
+                )
+            elif kind == "procedure":
+                procedure_id = f"procedure:{row_id}"
+                procedure_nodes.add(procedure_id)
+                self._add_node(
+                    DashboardNode(
+                        id=procedure_id,
+                        type="procedure",
+                        label=_clip(row_id.replace("procedure:", "") or "procedure", 48),
+                        stale=bool(row.get("is_stale")),
+                        summary=str(row.get("visible_reason") or "Procedure memory."),
+                        metadata=_metadata(row, "timestamp", "version", "record_hash"),
+                        evidence=[
+                            DashboardEvidence(
+                                kind="procedure",
+                                ref=row_id,
+                                summary=str(row.get("visible_reason") or "Procedure memory."),
+                            )
+                        ],
+                    )
+                )
+                self._add_edge(
+                    DashboardEdge(
+                        id=f"edge:{procedure_id}:task",
+                        source=procedure_id,
+                        target="task:active",
+                        type="procedure_applies",
+                        label="procedure",
+                        confidence=_float(row.get("confidence")),
+                        reason=str(row.get("visible_reason") or "Procedure may apply to this task."),
+                        stale=bool(row.get("is_stale")),
+                    )
+                )
+
+        for row in rows:
+            if str(row.get("kind") or "") != "memory_edge":
+                continue
+            from_id = str(row.get("from_id") or "")
+            to_id = str(row.get("to_id") or "")
+            edge_type = str(row.get("edge_type") or "memory")
+            source = _known_memory_node(from_id, episode_nodes, procedure_nodes)
+            target = _known_memory_node(to_id, episode_nodes, procedure_nodes)
+            if source and target:
+                self._add_edge(
+                    DashboardEdge(
+                        id=f"edge:memory:{source}:{target}:{edge_type}",
+                        source=source,
+                        target=target,
+                        type="memory_influenced",
+                        label=edge_type,
+                        confidence=_float(row.get("confidence")),
+                        reason=str(row.get("visible_reason") or edge_type),
+                        stale=bool(row.get("is_stale")),
+                    )
+                )
+
+    def add_learning_memories(self) -> None:
+        file_node_ids = {node.path: node.id for node in self.nodes.values() if node.type == "file" and node.path}
+        for memory in self.snapshot.learning_memories[:20]:
+            memory_id = "episode:task-memory:" + _slug(memory.task or memory.git_sha or "memory")
+            self._add_node(
+                DashboardNode(
+                    id=memory_id,
+                    type="episode",
+                    label=_clip(memory.task or "Task memory", 56),
+                    status=memory.status,
+                    summary=memory.task,
+                    metadata={"stage": memory.stage, "branch": memory.branch, "git_sha": memory.git_sha},
+                    evidence=[DashboardEvidence(kind="task_memory", summary=memory.task)],
+                )
+            )
+            for path in [*memory.changed_files, *memory.selected_files]:
+                file_id = file_node_ids.get(path)
+                if file_id:
+                    self._add_edge(
+                        DashboardEdge(
+                            id=f"edge:{memory_id}:{file_id}",
+                            source=memory_id,
+                            target=file_id,
+                            type="memory_influenced",
+                            label="memory",
+                            confidence=0.7,
+                            reason=f"Recent task memory referenced {path}.",
+                            evidence=[DashboardEvidence(kind="task_memory", summary=memory.task, path=path)],
+                        )
+                    )
+
+    def graph(self) -> DashboardGraph:
+        nodes = list(self.nodes.values())
+        edges = [edge for edge in self.edges.values() if edge.source in self.nodes and edge.target in self.nodes]
+        selected_files = sum(1 for node in nodes if node.type == "file" and node.selected)
+        omitted_files = sum(1 for node in nodes if node.type == "file" and not node.selected)
+        memory_nodes = sum(1 for node in nodes if node.type in {"episode", "procedure"})
+        high_risk_files = sum(1 for node in nodes if node.type == "file" and node.risk == "high")
+        return DashboardGraph(
+            generated_at=datetime.now(timezone.utc).isoformat(),
+            summary=DashboardGraphSummary(
+                node_count=len(nodes),
+                edge_count=len(edges),
+                selected_files=selected_files,
+                omitted_files=omitted_files,
+                memory_nodes=memory_nodes,
+                high_risk_files=high_risk_files,
+                truncated=self.truncated,
+            ),
+            nodes=nodes,
+            edges=edges,
+        )
+
+    def _add_file_node(self, item: TaskMapFileRow, *, selected: bool) -> None:
+        file_id = "file:" + item.path
+        reasons = item.why_selected or item.risk_reasons
+        self._add_node(
+            DashboardNode(
+                id=file_id,
+                type="file",
+                label=_basename(item.path),
+                path=item.path,
+                status="selected" if selected else "omitted",
+                risk=item.risk_level,
+                selected=selected,
+                score=item.score,
+                summary="; ".join(reasons[:3]),
+                metadata={"kind": item.kind, "include_mode": item.include_mode, "retrieve_ref": item.retrieve_ref},
+                evidence=[
+                    DashboardEvidence(
+                        kind="task_map",
+                        ref=item.retrieve_ref,
+                        summary="; ".join(reasons[:3]) or f"{item.kind or 'candidate'} context file.",
+                        path=item.path,
+                    )
+                ],
+                actions=_file_actions(item),
+            )
+        )
+        self._add_edge(
+            DashboardEdge(
+                id=f"edge:task:{file_id}",
+                source="task:active",
+                target=file_id,
+                type="selected_because" if selected else "omitted_because",
+                label="selected" if selected else "omitted",
+                confidence=_confidence(item.score),
+                reason="; ".join(reasons[:3]) or f"{item.kind or 'candidate'} context file.",
+                evidence=[DashboardEvidence(kind="task_map", ref=item.retrieve_ref, path=item.path)],
+            )
+        )
+        for index, test in enumerate(item.tests_to_run[:4], start=1):
+            test_id = "test:" + test
+            self._add_node(
+                DashboardNode(
+                    id=test_id,
+                    type="test",
+                    label=_basename(test),
+                    path=test,
+                    summary=f"Suggested validation for {item.path}.",
+                    actions=[DashboardAction(label="Run test", command=_test_command(test))],
+                    evidence=[DashboardEvidence(kind="task_map", summary=f"tests_to_run for {item.path}", path=item.path)],
+                )
+            )
+            self._add_edge(
+                DashboardEdge(
+                    id=f"edge:{file_id}:test:{index}:{test}",
+                    source=file_id,
+                    target=test_id,
+                    type="tested_by",
+                    label="tested by",
+                    confidence=0.8,
+                    reason=f"Task map suggests running {test}.",
+                )
+            )
+        for index, impact in enumerate(item.may_break[:3], start=1):
+            impact_id = f"action:impact:{item.path}:{index}"
+            self._add_node(
+                DashboardNode(
+                    id=impact_id,
+                    type="action",
+                    label=_clip(impact, 64),
+                    risk=item.risk_level,
+                    summary=impact,
+                    evidence=[DashboardEvidence(kind="risk", summary=impact, path=item.path)],
+                )
+            )
+            self._add_edge(
+                DashboardEdge(
+                    id=f"edge:{file_id}:impact:{index}",
+                    source=file_id,
+                    target=impact_id,
+                    type="may_break",
+                    label="may break",
+                    confidence=0.6,
+                    reason=impact,
+                )
+            )
+
+    def _add_node(self, node: DashboardNode) -> None:
+        if node.id in self.nodes:
+            existing = self.nodes[node.id]
+            if node.evidence:
+                existing.evidence.extend(node.evidence)
+            if node.actions:
+                existing.actions.extend(node.actions)
+            return
+        if len(self.nodes) >= self.max_nodes:
+            self.truncated = True
+            return
+        self.nodes[node.id] = node
+
+    def _add_edge(self, edge: DashboardEdge) -> None:
+        if edge.id not in self.edges:
+            self.edges[edge.id] = edge
+
+
+def _known_memory_node(value: str, episodes: set[str], procedures: set[str]) -> str:
+    candidates = [value, f"episode:{value}", f"procedure:{value}"]
+    for candidate in candidates:
+        if candidate in episodes or candidate in procedures:
+            return candidate
+    return ""
+
+
+def _file_actions(item: TaskMapFileRow) -> list[DashboardAction]:
+    actions = [DashboardAction(label="Open file", command=item.path, kind="path")]
+    if item.retrieve_ref:
+        actions.append(
+            DashboardAction(
+                label="Retrieve context",
+                command=f'agentpack retrieve --block-id "{item.retrieve_ref}"',
+                kind="command",
+            )
+        )
+    for test in item.tests_to_run[:2]:
+        actions.append(DashboardAction(label=f"Run {_basename(test)}", command=_test_command(test)))
+    return actions
+
+
+def _test_command(path: str) -> str:
+    return f"pytest {path}" if path.endswith(".py") or "/test" in path else path
+
+
+def _metadata(row: dict[str, Any], *keys: str) -> dict[str, Any]:
+    return {key: row.get(key) for key in keys if row.get(key) not in (None, "")}
+
+
+def _confidence(score: float) -> float:
+    if score <= 0:
+        return 0.0
+    return min(1.0, max(0.05, score / 100.0))
+
+
+def _float(value: object) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _slug(value: str) -> str:
+    clean = "".join(ch.lower() if ch.isalnum() else "-" for ch in value).strip("-")
+    return "-".join(part for part in clean.split("-") if part)[:80] or "memory"
+
+
+def _basename(path: str) -> str:
+    return path.rstrip("/").split("/")[-1] or path
+
+
+def _clip(value: object, limit: int) -> str:
+    text = " ".join(str(value or "").split())
+    return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "..."

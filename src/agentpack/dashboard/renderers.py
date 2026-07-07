@@ -11,6 +11,11 @@ MAX_RENDERED_MISSES = 20
 
 
 def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
+    """Render the legacy static dashboard fallback.
+
+    New dashboard features should target the bundled React/Vite cockpit under
+    ``frontend/dashboard`` and the JSON contracts in ``dashboard.graph``.
+    """
     files = _selected_file_rows(snapshot)
     task_map = _task_map_rows(snapshot)
     skills = _skill_rows(snapshot.skills.task_specific, "task-specific") + _skill_rows(snapshot.skills.baseline, "baseline")

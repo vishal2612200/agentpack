@@ -20,8 +20,12 @@ def test_dashboard_writes_project_html(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     html = (tmp_path / ".agentpack" / "dashboard.html").read_text(encoding="utf-8")
-    assert "AgentPack Dashboard" in html
+    assert "AgentPack Cockpit" in html or "AgentPack Dashboard" in html
     assert "fix auth" in html
+    data = json.loads((tmp_path / ".agentpack" / "dashboard-data.json").read_text(encoding="utf-8"))
+    graph = json.loads((tmp_path / ".agentpack" / "dashboard-graph.json").read_text(encoding="utf-8"))
+    assert data["task"]["text"] == "fix auth"
+    assert graph["root_id"] == "task:active"
 
 
 def test_dashboard_json_outputs_snapshot(tmp_path, monkeypatch) -> None:
@@ -43,6 +47,8 @@ def test_dashboard_writes_custom_output(tmp_path, monkeypatch) -> None:
 
     assert result.exit_code == 0, result.output
     assert (tmp_path / "out" / "dashboard.html").exists()
+    assert (tmp_path / "out" / "dashboard-data.json").exists()
+    assert (tmp_path / "out" / "dashboard-graph.json").exists()
 
 
 def test_dashboard_open_writes_and_opens_file(tmp_path, monkeypatch) -> None:
