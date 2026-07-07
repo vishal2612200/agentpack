@@ -265,6 +265,8 @@ class DashboardGraphSummary(BaseModel):
     omitted_files: int = 0
     memory_nodes: int = 0
     high_risk_files: int = 0
+    max_nodes: int = 0
+    truncated_reason: str = ""
     truncated: bool = False
 
 

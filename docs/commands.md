@@ -1516,6 +1516,9 @@ risk, tests, memory influence, observer signals from
 `.agentpack/observer-events.jsonl`, and loop/action state. Use `--legacy` only
 for the old static HTML fallback.
 
+The emitted JSON contracts are documented in
+[`docs/dashboard-schema.md`](dashboard-schema.md).
+
 `--json` prints the normalized dashboard snapshot to stdout instead of writing
 HTML. Use it when you want to inspect the underlying project, context, selected
 files, skill feedback, learning artifacts, observer signals, benchmark metrics,

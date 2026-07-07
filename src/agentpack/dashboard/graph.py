@@ -228,8 +228,9 @@ class _GraphBuilder:
                     )
 
     def graph(self) -> DashboardGraph:
-        nodes = list(self.nodes.values())
+        nodes = sorted(self.nodes.values(), key=_node_sort_key)
         edges = [edge for edge in self.edges.values() if edge.source in self.nodes and edge.target in self.nodes]
+        edges = sorted(edges, key=lambda edge: (edge.source, edge.target, edge.type, edge.id))
         selected_files = sum(1 for node in nodes if node.type == "file" and node.selected)
         omitted_files = sum(1 for node in nodes if node.type == "file" and not node.selected)
         memory_nodes = sum(1 for node in nodes if node.type in {"episode", "procedure"})
@@ -243,6 +244,8 @@ class _GraphBuilder:
                 omitted_files=omitted_files,
                 memory_nodes=memory_nodes,
                 high_risk_files=high_risk_files,
+                max_nodes=self.max_nodes,
+                truncated_reason="node limit reached" if self.truncated else "",
                 truncated=self.truncated,
             ),
             nodes=nodes,
@@ -359,6 +362,21 @@ def _known_memory_node(value: str, episodes: set[str], procedures: set[str]) -> 
         if candidate in episodes or candidate in procedures:
             return candidate
     return ""
+
+
+def _node_sort_key(node: DashboardNode) -> tuple[int, str, str]:
+    order = {
+        "task": 0,
+        "file": 1,
+        "test": 2,
+        "episode": 3,
+        "procedure": 4,
+        "action": 5,
+        "symbol": 6,
+    }
+    selected_rank = 0 if node.selected else 1
+    risk_rank = {"high": 0, "medium": 1, "low": 2}.get(node.risk, 3)
+    return (order.get(node.type, 99), f"{selected_rank}:{risk_rank}", node.path or node.label or node.id)
 
 
 def _file_actions(item: TaskMapFileRow) -> list[DashboardAction]:

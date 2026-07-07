@@ -120,4 +120,6 @@ def test_dashboard_graph_caps_nodes_deterministically() -> None:
 
     assert len(graph.nodes) == 12
     assert graph.summary.truncated is True
+    assert graph.summary.max_nodes == 12
+    assert graph.summary.truncated_reason == "node limit reached"
     assert graph.model_dump(mode="json")["schema_version"] == 1

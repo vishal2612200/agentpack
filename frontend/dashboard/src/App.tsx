@@ -7,6 +7,7 @@ import {
   CircleDot,
   ClipboardList,
   Code2,
+  Copy,
   FileText,
   GitBranch,
   ListFilter,
@@ -29,6 +30,7 @@ import { loadDashboardPayload, type DashboardPayload } from "./data/loadDashboar
 import type { DashboardEdge, DashboardGraph, DashboardNode, DashboardSnapshot } from "./data/schema";
 
 type View = "cockpit" | "graph" | "memory" | "risk" | "replay" | "raw";
+type GraphFilter = "all" | "selected" | "risk" | "memory" | "tests";
 
 const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "cockpit", label: "Cockpit", icon: Activity },
@@ -45,6 +47,8 @@ export function App() {
   const [view, setView] = useState<View>("cockpit");
   const [selectedId, setSelectedId] = useState<string>("task:active");
   const [query, setQuery] = useState("");
+  const [graphFilter, setGraphFilter] = useState<GraphFilter>("all");
+  const [copyMessage, setCopyMessage] = useState("");
 
   useEffect(() => {
     loadDashboardPayload()
@@ -55,8 +59,26 @@ export function App() {
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
   }, []);
 
+  const loadSample = () => {
+    const sample = samplePayload();
+    setPayload(sample);
+    setSelectedId(sample.graph.root_id || "task:active");
+    setError("");
+  };
+
+  const copyText = async (value: string, label = "Command") => {
+    if (!value) return;
+    try {
+      await navigator.clipboard?.writeText(value);
+      setCopyMessage(`${label} copied`);
+    } catch {
+      setCopyMessage(value);
+    }
+    window.setTimeout(() => setCopyMessage(""), 1800);
+  };
+
   if (error) {
-    return <ErrorState message={error} />;
+    return <ErrorState message={error} onLoadSample={loadSample} />;
   }
   if (!payload) {
     return <LoadingState />;
@@ -96,10 +118,26 @@ export function App() {
         <TopBar snapshot={payload.snapshot} query={query} onQueryChange={setQuery} />
         <section className="main-panel" aria-label={`${view} view`}>
           {view === "cockpit" && (
-            <CockpitView payload={payload} onSelect={setSelectedId} onOpenGraph={() => setView("graph")} />
+            <CockpitView
+              payload={payload}
+              onSelect={setSelectedId}
+              onOpenGraph={(filter = "all") => {
+                setGraphFilter(filter);
+                setView("graph");
+              }}
+              onCopy={copyText}
+              onLoadSample={loadSample}
+            />
           )}
           {view === "graph" && (
-            <TaskGraph graph={payload.graph} query={query} selectedId={selectedId} onSelect={setSelectedId} />
+            <TaskGraph
+              graph={payload.graph}
+              query={query}
+              filter={graphFilter}
+              selectedId={selectedId}
+              onFilterChange={setGraphFilter}
+              onSelect={setSelectedId}
+            />
           )}
           {view === "memory" && <MemoryView snapshot={payload.snapshot} graph={payload.graph} onSelect={setSelectedId} />}
           {view === "risk" && <RiskTestsView snapshot={payload.snapshot} onSelect={(id) => setSelectedId(id)} />}
@@ -108,7 +146,7 @@ export function App() {
         </section>
       </main>
 
-      <Inspector selected={selected} />
+      <Inspector selected={selected} onCopy={copyText} copyMessage={copyMessage} />
     </div>
   );
 }
@@ -142,17 +180,24 @@ function TopBar({
 function CockpitView({
   payload,
   onSelect,
-  onOpenGraph
+  onOpenGraph,
+  onCopy,
+  onLoadSample
 }: {
   payload: DashboardPayload;
   onSelect: (id: string) => void;
-  onOpenGraph: () => void;
+  onOpenGraph: (filter?: GraphFilter) => void;
+  onCopy: (value: string, label?: string) => void;
+  onLoadSample: () => void;
 }) {
   const { snapshot, graph } = payload;
   const highRisk = snapshot.task_map.filter((item) => item.risk_level === "high");
   const tests = unique(snapshot.task_map.flatMap((item) => item.tests_to_run || []));
   const selectedFiles = graph.nodes.filter((node) => node.type === "file" && node.selected);
   const omittedFiles = graph.nodes.filter((node) => node.type === "file" && !node.selected);
+  const memoryNodes = graph.nodes.filter((node) => node.type === "episode" || node.type === "procedure");
+  const decision = nextDecision(payload);
+  const sparse = !snapshot.task.text && !snapshot.selected_files.length && !snapshot.task_map.length;
 
   return (
     <div className="view-stack">
@@ -164,17 +209,47 @@ function CockpitView({
             AgentPack selected context, memory, risk, and next actions for this local run.
           </p>
         </div>
-        <button className="primary-action" type="button" onClick={onOpenGraph}>
+        <button className="primary-action" type="button" onClick={() => onOpenGraph()}>
           <Network size={17} aria-hidden="true" />
           Open graph
         </button>
       </section>
 
+      {sparse ? <EmptyDecisionState onLoadSample={onLoadSample} /> : null}
+
+      <section className={`decision-card ${decision.tone}`} aria-labelledby="decision-title">
+        <div>
+          <p className="eyebrow">Decision summary</p>
+          <h2 id="decision-title">{decision.title}</h2>
+          <p>{decision.detail}</p>
+        </div>
+        <div className="decision-actions">
+          {decision.command ? (
+            <button type="button" className="primary-action" onClick={() => onCopy(decision.command, "Next action")}>
+              <Copy size={16} aria-hidden="true" />
+              Copy command
+            </button>
+          ) : null}
+          <button type="button" className="secondary-action" onClick={() => onOpenGraph(decision.filter)}>
+            <Network size={16} aria-hidden="true" />
+            Show path
+          </button>
+        </div>
+      </section>
+
       <div className="metric-grid">
-        <Metric label="Selected" value={graph.summary.selected_files} tone="good" />
-        <Metric label="Omitted" value={graph.summary.omitted_files} tone="muted" />
-        <Metric label="Memory" value={graph.summary.memory_nodes} tone="memory" />
-        <Metric label="High risk" value={graph.summary.high_risk_files} tone="risk" />
+        <button type="button" className="metric-button" onClick={() => onOpenGraph("selected")}>
+          <Metric label="Selected" value={graph.summary.selected_files} tone="good" />
+        </button>
+        <button type="button" className="metric-button" onClick={() => onOpenGraph()}>
+          <Metric label="Omitted" value={graph.summary.omitted_files} tone="muted" />
+        </button>
+        <button type="button" className="metric-button" onClick={() => onOpenGraph("memory")}>
+          <Metric label="Memory" value={graph.summary.memory_nodes} tone="memory" />
+        </button>
+        <button type="button" className="metric-button" onClick={() => onOpenGraph("risk")}>
+          <Metric label="High risk" value={graph.summary.high_risk_files} tone="risk" />
+        </button>
         <Metric label="Tokens" value={formatNumber(snapshot.context.packed_tokens || 0)} tone="neutral" />
       </div>
 
@@ -218,6 +293,7 @@ function CockpitView({
               <div key={test} className="command-row">
                 <TerminalSquare size={16} aria-hidden="true" />
                 <code>{test.endsWith(".py") ? `pytest ${test}` : test}</code>
+                <CopyButton value={test.endsWith(".py") ? `pytest ${test}` : test} label="test command" onCopy={onCopy} />
               </div>
             ))}
             {!highRisk.length && !tests.length ? <p className="empty">No risk or test hints found.</p> : null}
@@ -232,9 +308,24 @@ function CockpitView({
                   <strong>{action.label}</strong>
                   {action.command ? <code>{action.command}</code> : null}
                 </span>
+                {action.command ? <CopyButton value={action.command} label={action.label} onCopy={onCopy} /> : null}
               </div>
             ))}
             {!snapshot.suggested_actions.length ? <p className="empty">No suggested actions found.</p> : null}
+          </div>
+        </Panel>
+        <Panel title="Memory Story" icon={Brain}>
+          <div className="stack-sm">
+            {memoryNodes.slice(0, 5).map((node) => (
+              <button key={node.id} type="button" className="list-row" onClick={() => onSelect(node.id)}>
+                <span>
+                  <strong>{node.label}</strong>
+                  <small>{node.summary || "Prior evidence connected to this task"}</small>
+                </span>
+                <span className={`badge ${node.stale ? "warn" : "memory"}`}>{node.stale ? "stale" : node.type}</span>
+              </button>
+            ))}
+            {!memoryNodes.length ? <p className="empty">No memory influence found for this task.</p> : null}
           </div>
         </Panel>
       </div>
@@ -245,16 +336,27 @@ function CockpitView({
 function TaskGraph({
   graph,
   query,
+  filter,
   selectedId,
+  onFilterChange,
   onSelect
 }: {
   graph: DashboardGraph;
   query: string;
+  filter: GraphFilter;
   selectedId: string;
+  onFilterChange: (filter: GraphFilter) => void;
   onSelect: (id: string) => void;
 }) {
-  const { nodes, edges } = useMemo(() => toFlowGraph(graph, query, selectedId), [graph, query, selectedId]);
+  const { nodes, edges } = useMemo(() => toFlowGraph(graph, query, filter, selectedId), [graph, query, filter, selectedId]);
   const handleClick: NodeMouseHandler = (_event, node) => onSelect(node.id);
+  const filterItems: Array<{ id: GraphFilter; label: string }> = [
+    { id: "all", label: "All" },
+    { id: "selected", label: "Selected" },
+    { id: "risk", label: "Risk" },
+    { id: "memory", label: "Memory" },
+    { id: "tests", label: "Tests" }
+  ];
 
   return (
     <div className="graph-shell">
@@ -262,12 +364,51 @@ function TaskGraph({
         <span><CircleDot size={14} aria-hidden="true" /> {graph.summary.node_count} nodes</span>
         <span>{graph.summary.edge_count} edges</span>
         {graph.summary.truncated ? <span className="badge warn">Truncated</span> : null}
+        <div className="segmented-control" role="group" aria-label="Graph filter">
+          {filterItems.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={filter === item.id ? "active" : ""}
+              onClick={() => onFilterChange(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <div className="graph-legend" aria-label="Graph legend">
+          <span><i className="legend-dot selected" />Selected</span>
+          <span><i className="legend-dot risk" />High risk</span>
+          <span><i className="legend-dot memory" />Memory</span>
+          <span><i className="legend-dot test" />Test</span>
+        </div>
       </div>
-      <ReactFlow nodes={nodes} edges={edges} fitView onNodeClick={handleClick} nodesDraggable={false}>
-        <Background />
-        <MiniMap pannable zoomable />
-        <Controls />
-      </ReactFlow>
+      {nodes.length ? (
+        <ReactFlow nodes={nodes} edges={edges} fitView onNodeClick={handleClick} nodesDraggable={false}>
+          <Background />
+          <MiniMap pannable zoomable />
+          <Controls />
+        </ReactFlow>
+      ) : (
+        <div className="center-state compact">
+          <Search size={24} aria-hidden="true" />
+          <h2>No graph matches</h2>
+          <p>Clear search or switch filters to inspect the full context graph.</p>
+        </div>
+      )}
+      <div className="graph-table-fallback" aria-label="Accessible graph node list">
+        <h2>Graph nodes</h2>
+        <ItemList
+          items={graph.nodes.slice(0, 24).map((node) => ({
+            id: node.id,
+            title: node.path || node.label,
+            detail: `${node.type}${node.summary ? `: ${node.summary}` : ""}`,
+            tone: node.risk || node.type
+          }))}
+          empty="No graph nodes found."
+          onSelect={onSelect}
+        />
+      </div>
     </div>
   );
 }
@@ -334,8 +475,12 @@ function RiskTestsView({ snapshot, onSelect }: { snapshot: DashboardSnapshot; on
           </thead>
           <tbody>
             {snapshot.task_map.map((item) => (
-              <tr key={`${item.kind}:${item.path}`} onClick={() => onSelect(`file:${item.path}`)}>
-                <td><code>{item.path}</code></td>
+              <tr key={`${item.kind}:${item.path}`}>
+                <td>
+                  <button type="button" className="link-button" onClick={() => onSelect(`file:${item.path}`)}>
+                    <code>{item.path}</code>
+                  </button>
+                </td>
                 <td><span className={`badge ${riskTone(item.risk_level)}`}>{item.risk_level || "low"}</span></td>
                 <td>{(item.why_selected || item.risk_reasons || []).slice(0, 2).join("; ")}</td>
                 <td>{(item.tests_to_run || []).slice(0, 3).map((test) => <code key={test}>{test}</code>)}</td>
@@ -392,7 +537,15 @@ function RawDataView({ payload }: { payload: DashboardPayload }) {
   );
 }
 
-function Inspector({ selected }: { selected: DashboardNode | DashboardEdge | null }) {
+function Inspector({
+  selected,
+  onCopy,
+  copyMessage
+}: {
+  selected: DashboardNode | DashboardEdge | null;
+  onCopy: (value: string, label?: string) => void;
+  copyMessage: string;
+}) {
   return (
     <aside className="inspector" aria-label="Selection inspector">
       <div className="inspector-header">
@@ -409,7 +562,8 @@ function Inspector({ selected }: { selected: DashboardNode | DashboardEdge | nul
           {"reason" in selected && selected.reason ? <p>{selected.reason}</p> : null}
           {"path" in selected && selected.path ? <code>{selected.path}</code> : null}
           <InspectorList title="Evidence" items={selected.evidence || []} />
-          <ActionList actions={selected.actions || []} />
+          <ActionList actions={selected.actions || []} onCopy={onCopy} />
+          <p className="sr-only" aria-live="polite">{copyMessage}</p>
         </div>
       )}
     </aside>
@@ -436,7 +590,13 @@ function InspectorList({ title, items }: { title: string; items: Array<{ kind?: 
   );
 }
 
-function ActionList({ actions }: { actions: Array<{ label: string; command?: string }> }) {
+function ActionList({
+  actions,
+  onCopy
+}: {
+  actions: Array<{ label: string; command?: string }>;
+  onCopy: (value: string, label?: string) => void;
+}) {
   return (
     <section className="inspector-section">
       <h3>Actions</h3>
@@ -449,6 +609,7 @@ function ActionList({ actions }: { actions: Array<{ label: string; command?: str
                 <strong>{action.label}</strong>
                 {action.command ? <code>{action.command}</code> : null}
               </span>
+              {action.command ? <CopyButton value={action.command} label={action.label} onCopy={onCopy} /> : null}
             </div>
           ))}
         </div>
@@ -520,12 +681,15 @@ function StatusPill({ status }: { status: string }) {
   return <span className={`status-pill ${status}`}>{status || "unknown"}</span>;
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({ message, onLoadSample }: { message: string; onLoadSample: () => void }) {
   return (
     <div className="center-state">
       <AlertTriangle size={28} aria-hidden="true" />
       <h1>Dashboard failed to load</h1>
       <p>{message}</p>
+      <button type="button" className="secondary-action" onClick={onLoadSample}>
+        Show sample cockpit
+      </button>
     </div>
   );
 }
@@ -533,18 +697,99 @@ function ErrorState({ message }: { message: string }) {
 function LoadingState() {
   return (
     <div className="center-state">
-      <Activity size={28} aria-hidden="true" />
+      <div className="skeleton-card" aria-hidden="true">
+        <span />
+        <span />
+        <span />
+      </div>
       <h1>Loading AgentPack cockpit</h1>
       <p>Reading local dashboard data.</p>
     </div>
   );
 }
 
-function toFlowGraph(graph: DashboardGraph, query: string, selectedId: string): { nodes: Node[]; edges: Edge[] } {
+function EmptyDecisionState({ onLoadSample }: { onLoadSample: () => void }) {
+  return (
+    <section className="empty-decision" aria-labelledby="empty-title">
+      <div>
+        <p className="eyebrow">No context yet</p>
+        <h2 id="empty-title">Start with a task or inspect a sample cockpit.</h2>
+        <p>
+          Run <code>agentpack start "your task"</code> or <code>agentpack pack --task auto</code> to populate selected files,
+          risk, tests, and memory.
+        </p>
+      </div>
+      <button type="button" className="secondary-action" onClick={onLoadSample}>
+        Show sample decision
+      </button>
+    </section>
+  );
+}
+
+function CopyButton({
+  value,
+  label,
+  onCopy
+}: {
+  value: string;
+  label: string;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  return (
+    <button type="button" className="icon-button" aria-label={`Copy ${label}`} onClick={() => onCopy(value, label)}>
+      <Copy size={15} aria-hidden="true" />
+    </button>
+  );
+}
+
+function nextDecision(payload: DashboardPayload): { title: string; detail: string; command: string; tone: string; filter: GraphFilter } {
+  const highRisk = payload.snapshot.task_map.find((item) => item.risk_level === "high");
+  const firstTest = highRisk?.tests_to_run?.[0] || payload.snapshot.task_map.flatMap((item) => item.tests_to_run || [])[0] || "";
+  if (highRisk && firstTest) {
+    const command = firstTest.endsWith(".py") ? `pytest ${firstTest}` : firstTest;
+    return {
+      title: `Validate high-risk file ${highRisk.path}`,
+      detail: highRisk.may_break?.[0] || highRisk.risk_reasons?.[0] || "Run the closest validation before editing more context.",
+      command,
+      tone: "risk",
+      filter: "risk"
+    };
+  }
+  if (payload.snapshot.context.status !== "fresh") {
+    return {
+      title: "Refresh context before trusting the pack",
+      detail: payload.snapshot.context.stale_reason || "The current context state is not fresh.",
+      command: "agentpack guard --agent codex --refresh-context",
+      tone: "warn",
+      filter: "all"
+    };
+  }
+  const omitted = payload.snapshot.task_map.find((item) => item.kind === "omitted" && item.retrieve_ref);
+  if (omitted) {
+    return {
+      title: `Inspect omitted context ${omitted.path}`,
+      detail: omitted.why_selected?.[0] || "A relevant file was omitted from the selected pack.",
+      command: `agentpack retrieve --block-id "${omitted.retrieve_ref}"`,
+      tone: "warn",
+      filter: "all"
+    };
+  }
+  const action = payload.snapshot.suggested_actions.find((item) => item.command);
+  return {
+    title: action?.label || "Inspect the selected context path",
+    detail: action?.reason || "Review selected files, memory influence, and suggested tests before editing.",
+    command: action?.command || "",
+    tone: "good",
+    filter: "selected"
+  };
+}
+
+function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, selectedId: string): { nodes: Node[]; edges: Edge[] } {
   const lower = query.trim().toLowerCase();
   const visible = new Set(
     graph.nodes
       .filter((node) => {
+        if (!matchesGraphFilter(node, filter)) return false;
         if (!lower) return true;
         return [node.label, node.path, node.summary, node.type].some((value) => String(value || "").toLowerCase().includes(lower));
       })
@@ -571,6 +816,14 @@ function toFlowGraph(graph: DashboardGraph, query: string, selectedId: string): 
       animated: edge.type === "memory_influenced"
     }));
   return { nodes, edges };
+}
+
+function matchesGraphFilter(node: DashboardNode, filter: GraphFilter) {
+  if (filter === "selected") return node.type === "task" || (node.type === "file" && Boolean(node.selected));
+  if (filter === "risk") return node.type === "task" || node.risk === "high" || node.risk === "medium" || node.type === "action";
+  if (filter === "memory") return node.type === "task" || node.type === "episode" || node.type === "procedure";
+  if (filter === "tests") return node.type === "task" || node.type === "test" || node.actions?.some((action) => action.command?.includes("pytest"));
+  return true;
 }
 
 function nodeLabel(node: DashboardNode) {
@@ -608,4 +861,141 @@ function unique(values: string[]) {
 
 function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
+}
+
+function samplePayload(): DashboardPayload {
+  const snapshot: DashboardSnapshot = {
+    schema_version: 1,
+    generated_at: new Date().toISOString(),
+    project: {
+      name: "sample-repo",
+      path: "/local/sample-repo",
+      branch: "feature/auth-hardening",
+      git_sha: "sample"
+    },
+    task: {
+      text: "Fix auth token expiry without breaking session refresh",
+      state: "sample"
+    },
+    context: {
+      status: "fresh",
+      mode: "balanced",
+      packed_tokens: 1240,
+      raw_tokens: 42000,
+      selected_files_count: 2
+    },
+    selected_files: [
+      { path: "src/auth/token.py", include_mode: "full", score: 220, reasons: ["task keyword match", "changed file"] },
+      { path: "tests/test_auth_token.py", include_mode: "full", score: 160, reasons: ["related test"] }
+    ],
+    task_map: [
+      {
+        path: "src/auth/token.py",
+        kind: "selected",
+        include_mode: "full",
+        score: 220,
+        risk_level: "high",
+        why_selected: ["task keyword match", "changed file"],
+        risk_reasons: ["touches authentication contract", "reverse dependents found"],
+        tests_to_run: ["tests/test_auth_token.py"],
+        may_break: ["reverse dependents: src/api/session.py, src/ws/auth.py"],
+        retrieve_ref: "src__auth__token.py:sample"
+      },
+      {
+        path: "src/auth/session.py",
+        kind: "omitted",
+        include_mode: "summary",
+        score: 96,
+        risk_level: "medium",
+        why_selected: ["related import"],
+        tests_to_run: ["tests/test_session.py"],
+        may_break: ["selected change may depend on this omitted file"],
+        retrieve_ref: "src__auth__session.py:sample"
+      }
+    ],
+    learning_memories: [
+      {
+        task: "Fixed session refresh regression",
+        stage: "completed",
+        status: "done",
+        branch: "fix/session-refresh",
+        git_sha: "abc123",
+        concepts: ["auth", "session"],
+        changed_files: ["src/auth/token.py"],
+        selected_files: ["src/auth/session.py"]
+      }
+    ],
+    learning_weak_spots: [],
+    observer: {
+      events: 1,
+      insights: [
+        {
+          kind: "similar_task",
+          title: "Prior auth work touched session refresh",
+          detail: "Inspect omitted session context before changing token TTL.",
+          confidence: 0.7,
+          related_files: ["src/auth/session.py"]
+        }
+      ]
+    },
+    benchmarks: { averages: {}, misses: [] },
+    loop: {},
+    suggested_actions: [
+      { label: "Run auth token tests", command: "pytest tests/test_auth_token.py", kind: "command" },
+      { label: "Retrieve omitted session context", command: "agentpack retrieve --block-id \"src__auth__session.py:sample\"", kind: "command" }
+    ]
+  };
+  const graph: DashboardGraph = {
+    schema_version: 1,
+    generated_at: snapshot.generated_at,
+    root_id: "task:active",
+    summary: {
+      node_count: 6,
+      edge_count: 5,
+      selected_files: 2,
+      omitted_files: 1,
+      memory_nodes: 1,
+      high_risk_files: 1,
+      max_nodes: 80,
+      truncated_reason: "",
+      truncated: false
+    },
+    nodes: [
+      { id: "task:active", type: "task", label: snapshot.task.text || "Sample task", summary: snapshot.task.text },
+      {
+        id: "file:src/auth/token.py",
+        type: "file",
+        label: "token.py",
+        path: "src/auth/token.py",
+        selected: true,
+        risk: "high",
+        summary: "Authentication contract and reverse dependents.",
+        actions: [
+          { label: "Open file", command: "src/auth/token.py", kind: "path" },
+          { label: "Run tests", command: "pytest tests/test_auth_token.py", kind: "command" }
+        ]
+      },
+      {
+        id: "file:src/auth/session.py",
+        type: "file",
+        label: "session.py",
+        path: "src/auth/session.py",
+        selected: false,
+        risk: "medium",
+        summary: "Omitted related session context.",
+        actions: [{ label: "Retrieve context", command: "agentpack retrieve --block-id \"src__auth__session.py:sample\"" }]
+      },
+      { id: "test:tests/test_auth_token.py", type: "test", label: "test_auth_token.py", path: "tests/test_auth_token.py", summary: "Suggested validation." },
+      { id: "episode:task-memory:session-refresh", type: "episode", label: "Fixed session refresh regression", summary: "Prior auth episode referenced token and session files." },
+      { id: "action:impact:auth", type: "action", label: "Session refresh may break", risk: "high", summary: "Reverse dependents use token expiry." }
+    ],
+    edges: [
+      { id: "edge:task:file:token", source: "task:active", target: "file:src/auth/token.py", type: "selected_because", label: "selected", confidence: 0.9 },
+      { id: "edge:task:file:session", source: "task:active", target: "file:src/auth/session.py", type: "omitted_because", label: "omitted", confidence: 0.6 },
+      { id: "edge:file:test", source: "file:src/auth/token.py", target: "test:tests/test_auth_token.py", type: "tested_by", label: "tested by", confidence: 0.8 },
+      { id: "edge:memory:file", source: "episode:task-memory:session-refresh", target: "file:src/auth/token.py", type: "memory_influenced", label: "memory", confidence: 0.7 },
+      { id: "edge:file:impact", source: "file:src/auth/token.py", target: "action:impact:auth", type: "may_break", label: "may break", confidence: 0.6 }
+    ]
+  };
+  return { snapshot, graph };
 }

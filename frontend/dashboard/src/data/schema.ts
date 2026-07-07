@@ -22,6 +22,7 @@ export interface DashboardAction {
   label: string;
   command?: string;
   kind?: string;
+  reason?: string;
 }
 
 export interface DashboardNode {
@@ -64,6 +65,8 @@ export interface DashboardGraph {
     omitted_files: number;
     memory_nodes: number;
     high_risk_files: number;
+    max_nodes?: number;
+    truncated_reason?: string;
     truncated: boolean;
   };
   nodes: DashboardNode[];
