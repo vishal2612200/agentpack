@@ -552,12 +552,19 @@ agentpack guard --refresh-context                   # refresh stale/missing cont
 agentpack guard --agent codex --repair-stale        # repair stale Codex rules/hooks
 agentpack guard --agent auto --repair-stale --refresh-context
 agentpack guard --thread codex-local --refresh-context
+agentpack guard --refresh-context --allow-dirty-targets
 ```
 
 This is the strongest non-native enforcement AgentPack can provide: tools that run commands get a failing exit code when context is unsafe, and an automatic repair/refresh path when allowed.
 Failures print what failed, why it matters, the exact repair command, and whether
 it is safe to continue. When unsafe, treat direct `rg`, `git diff`, and targeted
 file reads as the source of truth until the guard passes.
+
+By default, tracked local changes block refresh because AgentPack should not
+pull or trust stale context over an unclear worktree. Use
+`--allow-dirty-targets` only after confirming the tracked changes are part of
+the current task. It lets guard refresh context from the dirty tree, but still
+does not attempt a git sync.
 
 ---
 

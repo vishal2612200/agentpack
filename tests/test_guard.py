@@ -1,11 +1,16 @@
 from __future__ import annotations
 
+import re
 import subprocess
 
 from typer.testing import CliRunner
 
 from agentpack.cli import app
 from agentpack.integrations.agents import check_agent_integration
+
+
+def _normalized_output(output: str) -> str:
+    return re.sub(r"\s+", " ", output)
 
 
 def test_guard_fails_without_context_pack(tmp_path, monkeypatch) -> None:
@@ -52,6 +57,53 @@ def test_guard_blocks_refresh_when_tracked_tree_is_dirty(tmp_path, monkeypatch) 
     assert "tracked local changes present" in result.output
     assert "Safe to continue: no; resolve git state" in result.output
     assert not (tmp_path / ".agentpack" / "context.md").exists()
+
+
+def test_guard_refreshes_dirty_tree_when_targets_are_confirmed(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Fix guard git preflight\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("print('changed')\n", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["guard", "--agent", "generic", "--refresh-context", "--allow-dirty-targets"])
+
+    assert result.exit_code == 0, result.output
+    output = _normalized_output(result.output)
+    assert "Dirty tracked files confirmed by --allow-dirty-targets" in output
+    assert "context refresh may proceed" in output
+    assert "without git sync" in output
+    assert "Refreshing context" in result.output
+    assert "Context pack fresh" in result.output
+    assert (tmp_path / ".agentpack" / "context.md").exists()
+
+
+def test_guard_explains_dirty_target_confirmation_without_refresh(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Fix guard git preflight\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("print('changed')\n", encoding="utf-8")
+    refresh_result = CliRunner().invoke(app, ["guard", "--agent", "generic", "--refresh-context", "--allow-dirty-targets"])
+    assert refresh_result.exit_code == 0, refresh_result.output
+
+    result = CliRunner().invoke(app, ["guard", "--agent", "generic", "--allow-dirty-targets"])
+
+    assert result.exit_code == 0, result.output
+    output = _normalized_output(result.output).lower()
+    assert "git preflight will not block" in output
+    assert "pass --refresh-context to refresh stale context" in output
+    assert "Refreshing context" not in result.output
 
 
 def test_guard_plain_uses_global_task_even_with_ambient_thread_env(tmp_path, monkeypatch) -> None:

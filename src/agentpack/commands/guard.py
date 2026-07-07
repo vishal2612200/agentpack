@@ -33,6 +33,11 @@ def register(app: typer.Typer) -> None:
             "--refresh-context",
             help="Refresh the context pack when it is missing or stale.",
         ),
+        allow_dirty_targets: bool = typer.Option(
+            False,
+            "--allow-dirty-targets",
+            help="Continue when tracked local changes are confirmed to be part of the current task.",
+        ),
         mode: str = typer.Option("balanced", "--mode", help=f"Refresh mode ({MODE_HELP})."),
         budget: int = typer.Option(0, "--budget", help="Refresh token budget (0 = config default)."),
         thread: str = typer.Option("global", "--thread", help="Use thread-scoped context state ('auto' uses the current agent session; default is legacy global state)."),
@@ -52,7 +57,10 @@ def register(app: typer.Typer) -> None:
 
         git_preflight = run_git_preflight(root, allow_ff_pull=refresh_context)
         _print_git_preflight(git_preflight)
-        git_gate_ok = not _git_preflight_blocks(git_preflight)
+        dirty_confirmed = _dirty_targets_confirmed(git_preflight, allow_dirty_targets)
+        git_gate_ok = dirty_confirmed or not _git_preflight_blocks(git_preflight)
+        if dirty_confirmed:
+            console.print(f"[yellow]![/] {_dirty_targets_message(refresh_context)}")
         if not git_gate_ok:
             ok = False
             _print_action(
@@ -150,9 +158,24 @@ def _git_preflight_blocks(preflight: GitPreflight) -> bool:
     return preflight.action.startswith("blocked") or preflight.action == "fetch_failed"
 
 
+def _dirty_targets_confirmed(preflight: GitPreflight, allow_dirty_targets: bool) -> bool:
+    return bool(allow_dirty_targets and preflight.action == "blocked_dirty" and preflight.behind == 0)
+
+
+def _dirty_targets_message(refresh_context: bool) -> str:
+    if refresh_context:
+        return "Dirty tracked files confirmed by --allow-dirty-targets; context refresh may proceed without git sync."
+    return (
+        "Dirty tracked files confirmed by --allow-dirty-targets; git preflight will not block. "
+        "Pass --refresh-context to refresh stale context. No git sync attempted."
+    )
+
+
 def _git_preflight_repair_command(preflight: GitPreflight) -> str:
     if preflight.action == "blocked_dirty":
-        return "commit/stash/revert tracked changes, or rerun after confirming they are the task target"
+        if preflight.behind:
+            return "commit/stash/revert tracked changes, then fast-forward or rebase before rerunning guard"
+        return "commit/stash/revert tracked changes, or rerun with --allow-dirty-targets after confirming they are the task target"
     if preflight.action == "blocked_diverged":
         return "choose git rebase or merge, then rerun guard"
     if preflight.action == "blocked_behind":
