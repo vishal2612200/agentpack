@@ -30,7 +30,7 @@ def register(app: typer.Typer) -> None:
             typer.echo(json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True))
             return
 
-        out = root / (output or ".agentpack/dashboard.html")
+        out = root / (output or ".agentpack/index.html")
         out.parent.mkdir(parents=True, exist_ok=True)
         data_out = out.parent / "dashboard-data.json"
         graph_out = out.parent / "dashboard-graph.json"

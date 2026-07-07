@@ -1500,10 +1500,11 @@ agentpack dashboard --json
 agentpack dashboard --legacy
 ```
 
-The dashboard writes `.agentpack/dashboard.html` by default. The default output
-is a bundled React/Vite cockpit that runs locally from packaged assets, embeds
-the current snapshot for `file://` browser use, and also writes the explicit data
-contracts beside the HTML:
+The dashboard writes `.agentpack/index.html` by default so local static serving
+can use the clean root URL, for example `http://127.0.0.1:8765/`. The default
+output is a bundled React/Vite cockpit that runs locally from packaged assets,
+embeds the current snapshot for `file://` browser use, and also writes the
+explicit data contracts beside the HTML:
 
 - `.agentpack/dashboard-data.json` - normalized project/context/task snapshot
 - `.agentpack/dashboard-graph.json` - task-scoped context decision graph

@@ -19,7 +19,7 @@ def test_dashboard_writes_project_html(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["dashboard"])
 
     assert result.exit_code == 0, result.output
-    html = (tmp_path / ".agentpack" / "dashboard.html").read_text(encoding="utf-8")
+    html = (tmp_path / ".agentpack" / "index.html").read_text(encoding="utf-8")
     assert "AgentPack Cockpit" in html or "AgentPack Dashboard" in html
     assert "fix auth" in html
     data = json.loads((tmp_path / ".agentpack" / "dashboard-data.json").read_text(encoding="utf-8"))
@@ -59,6 +59,6 @@ def test_dashboard_open_writes_and_opens_file(tmp_path, monkeypatch) -> None:
     result = runner.invoke(app, ["dashboard", "--open"])
 
     assert result.exit_code == 0, result.output
-    dashboard = tmp_path / ".agentpack" / "dashboard.html"
+    dashboard = tmp_path / ".agentpack" / "index.html"
     assert dashboard.exists()
     assert [str(Path(path).resolve()) for path in opened] == [str(dashboard)]

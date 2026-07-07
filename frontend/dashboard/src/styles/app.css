@@ -628,6 +628,30 @@ code {
 
 .react-flow {
   background: var(--surface-soft);
+  --xy-node-color-default: var(--text);
+  --xy-node-border-default: 1px solid var(--border-strong);
+  --xy-node-background-color-default: var(--surface);
+  --xy-node-border-radius-default: var(--radius-md);
+  --xy-node-boxshadow-hover-default: var(--shadow);
+  --xy-node-boxshadow-selected-default: 0 0 0 3px color-mix(in srgb, var(--primary) 26%, transparent);
+  --xy-edge-stroke-default: var(--border-strong);
+  --xy-edge-stroke-selected-default: var(--primary);
+  --xy-connectionline-stroke-default: var(--primary);
+  --xy-background-pattern-dots-color-default: color-mix(in srgb, var(--border-strong) 54%, transparent);
+  --xy-controls-button-background-color-default: var(--surface);
+  --xy-controls-button-background-color-hover-default: var(--surface-strong);
+  --xy-controls-button-color-default: var(--text-muted);
+  --xy-controls-button-color-hover-default: var(--text);
+  --xy-controls-button-border-color-default: var(--border);
+  --xy-controls-box-shadow-default: var(--shadow);
+  --xy-minimap-background-color-default: var(--surface);
+  --xy-minimap-mask-background-color-default: color-mix(in srgb, var(--surface-soft) 72%, transparent);
+  --xy-minimap-node-background-color-default: var(--surface-strong);
+  --xy-minimap-node-stroke-color-default: var(--border-strong);
+  --xy-handle-background-color-default: var(--surface);
+  --xy-handle-border-color-default: var(--border-strong);
+  --xy-selection-background-color-default: color-mix(in srgb, var(--primary) 14%, transparent);
+  --xy-selection-border-default: 1px dotted var(--primary);
 }
 
 .flow-node {
@@ -637,6 +661,13 @@ code {
   background: var(--surface);
   color: var(--text);
   box-shadow: var(--shadow);
+}
+
+.react-flow__node.flow-node {
+  padding: 10px;
+  text-align: left;
+  background: var(--surface);
+  color: var(--text);
 }
 
 .flow-node.selected {
@@ -681,11 +712,16 @@ code {
   gap: 2px;
   text-align: left;
   font-size: 12px;
+  color: var(--text);
 }
 
 .node-label span,
 .node-label small {
   overflow-wrap: anywhere;
+}
+
+.node-label small {
+  color: var(--text-muted);
 }
 
 .graph-table-fallback {

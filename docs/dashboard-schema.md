@@ -2,7 +2,7 @@
 
 `agentpack dashboard` writes three local artifacts:
 
-- `.agentpack/dashboard.html` - bundled cockpit shell with embedded data for `file://` use.
+- `.agentpack/index.html` - bundled cockpit shell with embedded data for `file://` use and clean local serving at `/`.
 - `.agentpack/dashboard-data.json` - normalized project, context, task-map, learning, observer, loop, and action snapshot.
 - `.agentpack/dashboard-graph.json` - task-scoped decision graph consumed by the cockpit.
 
