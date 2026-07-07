@@ -17,6 +17,7 @@ SkillFeedbackStatus = Literal[
 ]
 DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "action"]
 DashboardEdgeType = Literal[
+    "contains",
     "selected_because",
     "omitted_because",
     "imports",
@@ -52,12 +53,25 @@ class ContextHealth(BaseModel):
     stale_reason: str = ""
 
 
+class SelectedSymbolRow(BaseModel):
+    name: str
+    kind: str = ""
+    start_line: int = 0
+    end_line: int = 0
+    signature: str = ""
+    summary: str = ""
+    node_id: str = ""
+    signature_hash: str = ""
+    source_hash: str = ""
+
+
 class SelectedFileRow(BaseModel):
     path: str
     include_mode: str = ""
     score: float = 0.0
     tokens: int = 0
     reasons: list[str] = Field(default_factory=list)
+    symbols: list[SelectedSymbolRow] = Field(default_factory=list)
 
 
 class TaskMapFileRow(BaseModel):

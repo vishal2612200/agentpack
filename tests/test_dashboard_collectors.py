@@ -96,6 +96,19 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
                         "score": 120,
                         "tokens": 450,
                         "reasons": ["task keyword match", "related test"],
+                        "symbols": [
+                            {
+                                "name": "refresh_token",
+                                "kind": "function",
+                                "start_line": 12,
+                                "end_line": 24,
+                                "signature": "def refresh_token(user_id: str) -> Token",
+                                "summary": "Refreshes an expired auth token.",
+                                "node_id": "node:refresh-token",
+                                "signature_hash": "sig123",
+                                "source_hash": "filehash",
+                            }
+                        ],
                     }
                 ],
                 "task_map": {
@@ -128,6 +141,8 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
     assert snapshot.context.packed_tokens == 1450
     assert snapshot.context.raw_tokens == 40000
     assert snapshot.selected_files[0].path == "src/auth/token.py"
+    assert snapshot.selected_files[0].symbols[0].name == "refresh_token"
+    assert snapshot.selected_files[0].symbols[0].start_line == 12
     assert snapshot.task_map[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].risk_level == "high"
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8

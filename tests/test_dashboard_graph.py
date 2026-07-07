@@ -8,6 +8,7 @@ from agentpack.dashboard.models import (
     DashboardSnapshot,
     ProjectInfo,
     SelectedFileRow,
+    SelectedSymbolRow,
     SuggestedAction,
     TaskInfo,
     TaskMapFileRow,
@@ -80,6 +81,45 @@ def test_dashboard_graph_links_task_memory_to_files() -> None:
     assert any(node.type == "episode" and node.label == "Fix cache invalidation" for node in graph.nodes)
     assert any(edge.type == "memory_influenced" and edge.target == "file:src/cache.py" for edge in graph.edges)
     assert graph.summary.memory_nodes == 1
+
+
+def test_dashboard_graph_builds_symbol_nodes_for_selected_files() -> None:
+    snapshot = DashboardSnapshot(
+        project=ProjectInfo(name="repo", path="/tmp/repo"),
+        task=TaskInfo(text="fix token refresh"),
+        selected_files=[
+            SelectedFileRow(
+                path="src/auth.py",
+                include_mode="symbols",
+                score=130,
+                reasons=["symbol keyword match"],
+                symbols=[
+                    SelectedSymbolRow(
+                        name="refresh_token",
+                        kind="function",
+                        start_line=12,
+                        end_line=24,
+                        signature="def refresh_token(user_id: str) -> Token",
+                        summary="Refreshes an expired auth token.",
+                        node_id="node:refresh-token",
+                        signature_hash="sig123",
+                        source_hash="filehash",
+                    )
+                ],
+            )
+        ],
+        task_map=[TaskMapFileRow(path="src/auth.py", kind="selected", include_mode="symbols")],
+    )
+
+    graph = build_dashboard_graph(snapshot)
+    nodes = {node.id: node for node in graph.nodes}
+    symbol = nodes["symbol:node:refresh-token"]
+
+    assert symbol.type == "symbol"
+    assert symbol.path == "src/auth.py"
+    assert symbol.metadata["symbol"] == "refresh_token"
+    assert symbol.evidence[0].line == 12
+    assert any(edge.type == "contains" and edge.source == "file:src/auth.py" and edge.target == symbol.id for edge in graph.edges)
 
 
 def test_dashboard_graph_reads_timeline_memory_and_marks_stale(tmp_path) -> None:

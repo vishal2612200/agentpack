@@ -26,6 +26,7 @@ from agentpack.dashboard.models import (
     LoopSummary,
     ProjectInfo,
     SelectedFileRow,
+    SelectedSymbolRow,
     SkillFeedbackStatus,
     SkillDomainSummary,
     SkillInventoryRow,
@@ -229,9 +230,33 @@ def _selected_files(meta: dict[str, Any] | None) -> list[SelectedFileRow]:
                 score=_as_float(item.get("score"), 0.0),
                 tokens=_as_int(item.get("tokens"), _as_int(item.get("estimated_tokens"), 0)),
                 reasons=_string_list(item.get("reasons"))[:MAX_REASONS],
+                symbols=_selected_symbols(item.get("symbols")),
             )
         )
     return rows
+
+
+def _selected_symbols(value: object) -> list[SelectedSymbolRow]:
+    rows: list[SelectedSymbolRow] = []
+    if not isinstance(value, list):
+        return rows
+    for item in value[:20]:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            SelectedSymbolRow(
+                name=str(item.get("name") or item.get("symbol") or ""),
+                kind=str(item.get("kind") or ""),
+                start_line=_as_int(item.get("start_line"), 0),
+                end_line=_as_int(item.get("end_line"), 0),
+                signature=str(item.get("signature") or ""),
+                summary=str(item.get("summary") or ""),
+                node_id=str(item.get("node_id") or ""),
+                signature_hash=str(item.get("signature_hash") or ""),
+                source_hash=str(item.get("source_hash") or ""),
+            )
+        )
+    return [row for row in rows if row.name]
 
 
 def _task_map_files(meta: dict[str, Any] | None) -> list[TaskMapFileRow]:

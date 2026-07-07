@@ -1,6 +1,7 @@
 export type ContextStatus = "fresh" | "stale" | "missing" | "unknown";
 export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "action";
 export type EdgeType =
+  | "contains"
   | "selected_because"
   | "omitted_because"
   | "imports"
@@ -103,6 +104,17 @@ export interface DashboardSnapshot {
     score?: number;
     tokens?: number;
     reasons?: string[];
+    symbols?: Array<{
+      name: string;
+      kind?: string;
+      start_line?: number;
+      end_line?: number;
+      signature?: string;
+      summary?: string;
+      node_id?: string;
+      signature_hash?: string;
+      source_hash?: string;
+    }>;
   }>;
   task_map: Array<{
     path: string;

@@ -12,6 +12,8 @@ from agentpack.dashboard.models import (
     DashboardGraphSummary,
     DashboardNode,
     DashboardSnapshot,
+    SelectedFileRow,
+    SelectedSymbolRow,
     TaskMapFileRow,
 )
 from agentpack.learning.memory_timeline import build_memory_timeline
@@ -78,6 +80,7 @@ class _GraphBuilder:
                     why_selected=selected.reasons,
                 )
             self._add_file_node(item, selected=True)
+            self._add_symbol_nodes(selected)
 
         for item in self.snapshot.task_map:
             if item.path and item.path not in {selected.path for selected in self.snapshot.selected_files}:
@@ -338,6 +341,71 @@ class _GraphBuilder:
                 )
             )
 
+    def _add_symbol_nodes(self, selected: SelectedFileRow) -> None:
+        if not selected.symbols:
+            return
+        file_id = "file:" + selected.path
+        for symbol in selected.symbols:
+            symbol_id = _symbol_node_id(selected.path, symbol)
+            line_label = _line_label(symbol)
+            self._add_node(
+                DashboardNode(
+                    id=symbol_id,
+                    type="symbol",
+                    label=_clip(symbol.signature or symbol.name, 72),
+                    path=selected.path,
+                    status=selected.include_mode,
+                    selected=True,
+                    score=selected.score,
+                    summary=symbol.summary or symbol.signature or symbol.name,
+                    metadata={
+                        "file": selected.path,
+                        "symbol": symbol.name,
+                        "kind": symbol.kind,
+                        "start_line": symbol.start_line,
+                        "end_line": symbol.end_line,
+                        "signature_hash": symbol.signature_hash,
+                        "source_hash": symbol.source_hash,
+                    },
+                    evidence=[
+                        DashboardEvidence(
+                            kind="symbol",
+                            ref=line_label,
+                            summary=symbol.signature or symbol.summary or f"{symbol.kind or 'symbol'} {symbol.name}",
+                            path=selected.path,
+                            line=symbol.start_line or None,
+                        )
+                    ],
+                    actions=[
+                        DashboardAction(
+                            label="Open symbol",
+                            command=f"{selected.path}:{symbol.start_line}" if symbol.start_line else selected.path,
+                            kind="path",
+                        )
+                    ],
+                )
+            )
+            self._add_edge(
+                DashboardEdge(
+                    id=f"edge:{file_id}:{symbol_id}:contains",
+                    source=file_id,
+                    target=symbol_id,
+                    type="contains",
+                    label="contains",
+                    confidence=0.9,
+                    reason=f"{selected.path} contains {symbol.kind or 'symbol'} {symbol.name}.",
+                    evidence=[
+                        DashboardEvidence(
+                            kind="symbol",
+                            ref=line_label,
+                            summary=symbol.signature or symbol.summary or symbol.name,
+                            path=selected.path,
+                            line=symbol.start_line or None,
+                        )
+                    ],
+                )
+            )
+
     def _add_node(self, node: DashboardNode) -> None:
         if node.id in self.nodes:
             existing = self.nodes[node.id]
@@ -368,11 +436,11 @@ def _node_sort_key(node: DashboardNode) -> tuple[int, str, str]:
     order = {
         "task": 0,
         "file": 1,
-        "test": 2,
-        "episode": 3,
-        "procedure": 4,
-        "action": 5,
-        "symbol": 6,
+        "symbol": 2,
+        "test": 3,
+        "episode": 4,
+        "procedure": 5,
+        "action": 6,
     }
     selected_rank = 0 if node.selected else 1
     risk_rank = {"high": 0, "medium": 1, "low": 2}.get(node.risk, 3)
@@ -392,6 +460,20 @@ def _file_actions(item: TaskMapFileRow) -> list[DashboardAction]:
     for test in item.tests_to_run[:2]:
         actions.append(DashboardAction(label=f"Run {_basename(test)}", command=_test_command(test)))
     return actions
+
+
+def _symbol_node_id(path: str, symbol: SelectedSymbolRow) -> str:
+    if symbol.node_id:
+        return "symbol:" + symbol.node_id
+    return f"symbol:{path}:{symbol.name}:{symbol.start_line}:{symbol.end_line}"
+
+
+def _line_label(symbol: SelectedSymbolRow) -> str:
+    if symbol.start_line and symbol.end_line and symbol.end_line != symbol.start_line:
+        return f"L{symbol.start_line}-L{symbol.end_line}"
+    if symbol.start_line:
+        return f"L{symbol.start_line}"
+    return ""
 
 
 def _test_command(path: str) -> str:
