@@ -67,6 +67,7 @@ def _inline_built_assets(html: str) -> str:
             html,
             pattern=r"<link\b(?=[^>]*\bhref=[\"']\./assets/index\.css[\"'])(?=[^>]*\brel=[\"']stylesheet[\"'])[^>]*>\s*",
             replacement=f"<style>{css_text}</style>\n",
+            asset_label="./assets/index.css",
         )
     if js.exists():
         js_text = js.read_text(encoding="utf-8").replace("</script", "<\\/script")
@@ -74,10 +75,13 @@ def _inline_built_assets(html: str) -> str:
             html,
             pattern=r"<script\b(?=[^>]*\bsrc=[\"']\./assets/index\.js[\"'])[^>]*>\s*</script>\s*",
             replacement=f"<script type=\"module\">{js_text}</script>\n",
+            asset_label="./assets/index.js",
         )
     return html
 
 
-def _replace_asset_tag(html: str, *, pattern: str, replacement: str) -> str:
+def _replace_asset_tag(html: str, *, pattern: str, replacement: str, asset_label: str) -> str:
     updated, count = re.subn(pattern, lambda _match: replacement, html, count=1, flags=re.IGNORECASE)
-    return updated if count else html
+    if not count:
+        raise RuntimeError(f"Dashboard bundle asset tag not found: {asset_label}")
+    return updated
