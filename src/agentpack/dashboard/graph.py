@@ -20,6 +20,7 @@ from agentpack.learning.memory_timeline import build_memory_timeline
 
 MAX_GRAPH_NODES = 80
 MAX_MEMORY_ROWS = 200
+MAX_SYMBOL_NODES = 36
 
 
 def build_dashboard_graph(
@@ -32,6 +33,7 @@ def build_dashboard_graph(
 
     builder = _GraphBuilder(snapshot, max_nodes=max_nodes)
     builder.add_task()
+    builder.add_review_runs()
     builder.add_files()
     builder.add_suggested_actions()
     builder.add_learning_memories()
@@ -47,6 +49,7 @@ class _GraphBuilder:
         self.nodes: dict[str, DashboardNode] = {}
         self.edges: dict[str, DashboardEdge] = {}
         self.truncated = False
+        self.symbol_nodes_added = 0
 
     def add_task(self) -> None:
         task = self.snapshot.task.text or "No active task"
@@ -108,6 +111,65 @@ class _GraphBuilder:
                     label="next action",
                     reason=action.reason,
                     actions=[DashboardAction(label=action.label, command=action.command)],
+                )
+            )
+
+    def add_review_runs(self) -> None:
+        for index, run in enumerate(self.snapshot.review_runs[:8], start=1):
+            node_id = f"review:{_slug(run.run_id or str(index))}"
+            target = f"PR #{run.target_number}" if run.target_number else run.branch_prefix or "local diff"
+            title = target if target != "local diff" else run.review_context or run.run_id
+            summary_parts = [
+                run.status or "prepared",
+                f"{run.changed_files_count} changed files" if run.changed_files_count else "",
+                run.diff_source,
+            ]
+            summary = " · ".join(part for part in summary_parts if part)
+            actions = [
+                DashboardAction(label="Resume review", command=run.resume_command),
+                DashboardAction(label="Check review", command=run.check_command),
+                DashboardAction(label="Post comments", command=run.post_command),
+            ]
+            evidence = [
+                DashboardEvidence(
+                    kind="review",
+                    ref=run.preflight_path or run.run_id,
+                    summary=summary or "AgentPack PR review run.",
+                    path=run.preflight_path,
+                )
+            ]
+            if run.understanding_path:
+                evidence.append(DashboardEvidence(kind="understanding", path=run.understanding_path, summary="Review understanding artifact."))
+            if run.findings_path:
+                evidence.append(DashboardEvidence(kind="findings", path=run.findings_path, summary="Review findings artifact."))
+            self._add_node(
+                DashboardNode(
+                    id=node_id,
+                    type="review",
+                    label=_clip(title, 64),
+                    status=run.status,
+                    summary=summary or run.review_context,
+                    metadata={
+                        "run_id": run.run_id,
+                        "target_number": run.target_number,
+                        "target_url": run.target_url,
+                        "branch_prefix": run.branch_prefix,
+                        "generated_at": run.generated_at,
+                    },
+                    evidence=evidence,
+                    actions=[action for action in actions if action.command],
+                )
+            )
+            self._add_edge(
+                DashboardEdge(
+                    id=f"edge:task:{node_id}:review",
+                    source="task:active",
+                    target=node_id,
+                    type="reviewed_by",
+                    label="review",
+                    confidence=0.85,
+                    reason=summary or "AgentPack review is associated with this task context.",
+                    evidence=evidence[:1],
                 )
             )
 
@@ -377,8 +439,12 @@ class _GraphBuilder:
             return
         file_id = "file:" + selected.path
         for symbol in selected.symbols:
+            if self.symbol_nodes_added >= MAX_SYMBOL_NODES:
+                self.truncated = True
+                break
             symbol_id = _symbol_node_id(selected.path, symbol)
             line_label = _line_label(symbol)
+            already_present = symbol_id in self.nodes
             self._add_node(
                 DashboardNode(
                     id=symbol_id,
@@ -416,6 +482,8 @@ class _GraphBuilder:
                     ],
                 )
             )
+            if symbol_id in self.nodes and not already_present:
+                self.symbol_nodes_added += 1
             self._add_edge(
                 DashboardEdge(
                     id=f"edge:{file_id}:{symbol_id}:contains",
@@ -468,10 +536,11 @@ def _node_sort_key(node: DashboardNode) -> tuple[int, str, str]:
         "task": 0,
         "file": 1,
         "symbol": 2,
-        "test": 3,
-        "episode": 4,
-        "procedure": 5,
-        "action": 6,
+        "episode": 3,
+        "procedure": 4,
+        "review": 5,
+        "test": 6,
+        "action": 7,
     }
     selected_rank = 0 if node.selected else 1
     risk_rank = {"high": 0, "medium": 1, "low": 2}.get(node.risk, 3)

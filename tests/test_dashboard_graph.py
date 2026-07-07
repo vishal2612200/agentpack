@@ -7,6 +7,7 @@ from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
     ProjectInfo,
+    ReviewRunRow,
     SelectedFileRow,
     SelectedSymbolRow,
     SuggestedAction,
@@ -173,6 +174,39 @@ def test_dashboard_graph_links_task_memory_to_matching_symbols() -> None:
     assert symbol_edges[0].target == "symbol:node:refresh-cache"
     assert "concept:caching" in symbol_edges[0].evidence[0].ref
     assert symbol_edges[0].evidence[0].line == 10
+
+
+def test_dashboard_graph_builds_review_nodes() -> None:
+    snapshot = DashboardSnapshot(
+        project=ProjectInfo(name="repo", path="/tmp/repo"),
+        task=TaskInfo(text="review auth change"),
+        review_runs=[
+            ReviewRunRow(
+                run_id="run-123",
+                branch_prefix="feature/auth",
+                generated_at="2026-07-07T10:00:00Z",
+                target_number=42,
+                diff_source="github",
+                changed_files_count=3,
+                status="findings_ready",
+                preflight_path=".agentpack/reviews/feature/auth/run-123/preflight.json",
+                understanding_path=".agentpack/reviews/feature/auth/run-123/understanding.md",
+                findings_path=".agentpack/reviews/feature/auth/run-123/findings.json",
+                resume_command="agentpack review --resume run-123",
+            )
+        ],
+    )
+
+    graph = build_dashboard_graph(snapshot)
+    nodes = {node.id: node for node in graph.nodes}
+    review = nodes["review:run-123"]
+
+    assert review.type == "review"
+    assert review.label == "PR #42"
+    assert review.status == "findings_ready"
+    assert review.metadata["run_id"] == "run-123"
+    assert any(action.command == "agentpack review --resume run-123" for action in review.actions)
+    assert any(edge.type == "reviewed_by" and edge.target == review.id for edge in graph.edges)
 
 
 def test_dashboard_graph_reads_timeline_memory_and_marks_stale(tmp_path) -> None:

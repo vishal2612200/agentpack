@@ -15,7 +15,7 @@ SkillFeedbackStatus = Literal[
     "ignored",
     "bad_recommendation",
 ]
-DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "action"]
+DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "review", "action"]
 DashboardEdgeType = Literal[
     "contains",
     "selected_because",
@@ -24,6 +24,7 @@ DashboardEdgeType = Literal[
     "tested_by",
     "memory_influenced",
     "procedure_applies",
+    "reviewed_by",
     "may_break",
     "retrieve_ref",
 ]

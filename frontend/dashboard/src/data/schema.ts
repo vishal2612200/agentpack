@@ -1,5 +1,5 @@
 export type ContextStatus = "fresh" | "stale" | "missing" | "unknown";
-export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "action";
+export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "review" | "action";
 export type EdgeType =
   | "contains"
   | "selected_because"
@@ -8,6 +8,7 @@ export type EdgeType =
   | "tested_by"
   | "memory_influenced"
   | "procedure_applies"
+  | "reviewed_by"
   | "may_break"
   | "retrieve_ref";
 

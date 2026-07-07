@@ -39,7 +39,7 @@ import { Input } from "./components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 
 type View = "cockpit" | "projects" | "graph" | "memory" | "learning" | "risk" | "reviews" | "replay" | "raw";
-type GraphFilter = "all" | "selected" | "risk" | "memory" | "tests";
+type GraphFilter = "all" | "selected" | "risk" | "memory" | "reviews" | "tests";
 type ProjectRow = NonNullable<DashboardSnapshot["project_index"]["projects"]>[number];
 type LearningSessionRow = NonNullable<DashboardSnapshot["learning_prep"]["sessions"]>[number];
 type TaskMapRow = DashboardSnapshot["task_map"][number];
@@ -349,6 +349,7 @@ function TaskGraph({
     { id: "selected", label: "Selected" },
     { id: "risk", label: "Risk" },
     { id: "memory", label: "Memory" },
+    { id: "reviews", label: "Reviews" },
     { id: "tests", label: "Tests" }
   ];
 
@@ -374,6 +375,8 @@ function TaskGraph({
           <span><i className="legend-dot selected" />Selected</span>
           <span><i className="legend-dot risk" />High risk</span>
           <span><i className="legend-dot memory" />Memory</span>
+          <span><i className="legend-dot review" />Review</span>
+          <span><i className="legend-dot ast" />AST</span>
           <span><i className="legend-dot test" />Test</span>
         </div>
       </div>
@@ -1164,25 +1167,50 @@ function matchesGraphFilter(node: DashboardNode, filter: GraphFilter, memoryTarg
   if (filter === "selected") return node.type === "task" || ((node.type === "file" || node.type === "symbol") && Boolean(node.selected));
   if (filter === "risk") return node.type === "task" || node.risk === "high" || node.risk === "medium" || node.type === "action";
   if (filter === "memory") return node.type === "task" || node.type === "episode" || node.type === "procedure" || memoryTargets.has(node.id);
+  if (filter === "reviews") return node.type === "task" || node.type === "review";
   if (filter === "tests") return node.type === "task" || node.type === "test" || node.actions?.some((action) => action.command?.includes("pytest"));
   return true;
 }
 
 function nodeLabel(node: DashboardNode) {
+  const family = nodeFamily(node);
+  const detail = node.type === "symbol"
+    ? String(node.metadata?.kind || "symbol")
+    : node.status || node.risk || node.type;
   return (
     <div className="node-label">
+      <small className={`node-family ${family.tone}`}>{family.label}</small>
       <span>{node.label}</span>
-      {node.risk ? <small>{node.risk}</small> : null}
+      {detail ? <small>{detail}</small> : null}
     </div>
   );
 }
 
 function positionFor(index: number, type: string) {
-  const lane = type === "task" ? 0 : type === "episode" || type === "procedure" ? -1 : type === "test" || type === "action" ? 1 : 0;
+  const lane = type === "task"
+    ? 0
+    : type === "episode" || type === "procedure"
+      ? -1
+      : type === "review"
+        ? 1
+        : type === "test" || type === "action"
+          ? 2
+          : 0;
   return {
     x: 120 + (index % 6) * 190,
     y: 120 + lane * 140 + Math.floor(index / 6) * 170
   };
+}
+
+function nodeFamily(node: DashboardNode): { label: string; tone: string } {
+  if (node.type === "symbol") return { label: "AST", tone: "ast" };
+  if (node.type === "episode") return { label: "Episode", tone: "memory" };
+  if (node.type === "procedure") return { label: "Procedure", tone: "memory" };
+  if (node.type === "review") return { label: "Review", tone: "review" };
+  if (node.type === "test") return { label: "Test", tone: "test" };
+  if (node.type === "file") return { label: node.selected ? "Selected file" : "Candidate file", tone: node.selected ? "selected" : "file" };
+  if (node.type === "action") return { label: "Action", tone: "action" };
+  return { label: "Task", tone: "task" };
 }
 
 function findSelected(graph: DashboardGraph, selectedId: string): DashboardNode | DashboardEdge | null {
