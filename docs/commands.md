@@ -43,7 +43,7 @@ Advanced command map:
 | `agentpack learn` | Generate developer learning notes, skill progress, and future-agent lessons from task context and git changes |
 | `agentpack task` | Show, set, or clear global/thread-scoped task files |
 | `agentpack next` | Recommend the next AgentPack action from repo/task/context state |
-| `agentpack retrieve` | Retrieve file or symbol context from the latest pack registry |
+| `agentpack retrieve` | Retrieve selected, omitted, file, or symbol context from the latest pack registry |
 | `agentpack toon-validate` | Validate TOON syntax for agent-facing artifacts |
 | `agentpack learn` | Generate local learning notes, skill evidence, future-agent lessons, selected-file miss feedback, and local feedback signals |
 | `agentpack perf` | Show runtime scorecard and optional recent history from pack, retrieval, and output-compression events |
@@ -107,12 +107,15 @@ Retrieve content from the latest `.agentpack/pack-registry.json`.
 agentpack retrieve src/app.py
 agentpack retrieve --block-id src__app.py__run:abc123def456
 agentpack retrieve src/app.py --mode skeleton
+agentpack retrieve src/app.py --kind omitted --mode full
 agentpack retrieve src/app.py --mode full --allow-stale
 ```
 
 Use `--block-id` for exact file or symbol blocks printed by pack-registry
-retrieval output. Full-file retrieval refuses stale hashes unless
-`--allow-stale` is passed.
+retrieval output. Use `--kind selected|omitted` when selected and omitted
+records share a path. Full-file retrieval refuses stale hashes unless
+`--allow-stale` is passed. MCP agents can use `get_task_map()` to discover
+retrieve refs and then call `retrieve_context(block_id="...")`.
 
 ### `agentpack perf`
 

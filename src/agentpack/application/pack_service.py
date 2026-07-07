@@ -46,7 +46,8 @@ from agentpack.core.models import (
     SelectedFile,
 )
 from agentpack.core.modes import normalize_mode
-from agentpack.core.pack_registry import save_pack_registry
+from agentpack.core.pack_registry import build_pack_registry, write_pack_registry
+from agentpack.core.task_map import build_task_map, task_map_for_path
 from agentpack.core.task_freshness import normalize_task_text, read_task_md, task_hash, task_metadata
 from agentpack.core.thread_context import (
     append_thread_index,
@@ -849,11 +850,26 @@ class PackService:
             execution_state=execution_state,
             concurrent_context=concurrent_context,
         )
+        registry = build_pack_registry(
+            pack_obj,
+            packable,
+            max_records=cfg.runtime.max_registry_records,
+        )
+        pack_obj.task_map = build_task_map(pack_obj, plan.dep_graph, registry).model_dump(mode="json")
 
         adapter = AdapterRegistry.get(request.agent, cfg)
         packed_tokens = _fit_rendered_budget(pack_obj, adapter)
         saving_pct = max(0.0, (1 - packed_tokens / all_tokens) * 100) if all_tokens > 0 else 0.0
         pack_obj.estimated_savings_percent = saving_pct
+        registry = build_pack_registry(
+            pack_obj,
+            packable,
+            max_records=cfg.runtime.max_registry_records,
+        )
+        pack_obj.task_map = build_task_map(pack_obj, plan.dep_graph, registry).model_dump(mode="json")
+        packed_tokens = _settle_rendered_token_estimate(pack_obj, adapter)
+        pack_obj.estimated_savings_percent = max(0.0, (1 - packed_tokens / all_tokens) * 100) if all_tokens > 0 else 0.0
+        saving_pct = pack_obj.estimated_savings_percent
 
         t0 = time.perf_counter()
         if scoped_paths:
@@ -888,7 +904,7 @@ class PackService:
             "selected_files_with_citations": sum(1 for sf in pack_obj.selected_files if sf.citations),
             "manifest_path": citation_manifest_path,
         }
-        selected_files_meta = _selected_file_metadata(pack_obj.selected_files)
+        selected_files_meta = _selected_file_metadata(pack_obj.selected_files, pack_obj.task_map)
         token_contract = build_token_contract(
             budget=plan.budget,
             token_estimate=packed_tokens,
@@ -922,14 +938,13 @@ class PackService:
             citation_manifest_path=citation_manifest_path,
             citation_summary=citation_summary,
             token_contract=token_contract,
+            task_map=pack_obj.task_map,
             metadata_path=scoped_paths.metadata if scoped_paths else None,
         )
-        save_pack_registry(
+        write_pack_registry(
             root,
-            pack_obj,
-            packable,
+            registry,
             output_path=cfg.runtime.pack_registry_output,
-            max_records=cfg.runtime.max_registry_records,
         )
         issue_reference_details = collect_repo_issue_references(root, request.task)
         record_event(
@@ -1039,7 +1054,7 @@ def _workspace_include_globs(workspace: str | None, configured: list[str]) -> li
     return [f"{workspace}/**"]
 
 
-def _selected_file_metadata(selected: list[SelectedFile]) -> list[dict[str, Any]]:
+def _selected_file_metadata(selected: list[SelectedFile], task_map: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     return [
         {
             "path": sf.path,
@@ -1048,9 +1063,23 @@ def _selected_file_metadata(selected: list[SelectedFile]) -> list[dict[str, Any]
             "why": sf.reasons[0] if sf.reasons else "",
             "reasons": sf.reasons,
             "tokens": _sf_tokens(sf),
+            **_selected_task_map_metadata(task_map or {}, sf.path),
         }
         for sf in selected
     ]
+
+
+def _selected_task_map_metadata(task_map: dict[str, Any], path: str) -> dict[str, Any]:
+    item = task_map_for_path(task_map, path, "selected")
+    if not item:
+        return {}
+    return {
+        "risk_level": item.get("risk_level", ""),
+        "risk_reasons": item.get("risk_reasons", []),
+        "tests_to_run": item.get("tests_to_run", []),
+        "may_break": item.get("may_break", []),
+        "retrieve_ref": item.get("retrieve_ref", ""),
+    }
 
 
 def _sf_tokens(sf: SelectedFile) -> int:

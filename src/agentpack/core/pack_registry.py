@@ -16,6 +16,7 @@ from agentpack.core.token_estimator import estimate_tokens
 
 
 RegistryKind = Literal["selected", "omitted"]
+RegistryKindFilter = Literal["selected", "omitted", "any"]
 
 
 class PackRegistryRecord(BaseModel):
@@ -54,6 +55,17 @@ def save_pack_registry(
     output_path: str = ".agentpack/pack-registry.json",
     max_records: int = 200,
 ) -> PackRegistry:
+    registry = build_pack_registry(pack, packable, max_records=max_records)
+    write_pack_registry(root, registry, output_path=output_path)
+    return registry
+
+
+def build_pack_registry(
+    pack: ContextPack,
+    packable: list[FileInfo],
+    *,
+    max_records: int = 200,
+) -> PackRegistry:
     info_by_path = {fi.path: fi for fi in packable}
     records: list[PackRegistryRecord] = []
     for sf in pack.selected_files:
@@ -74,10 +86,18 @@ def save_pack_registry(
         snapshot_root_hash=str(pack.freshness.get("snapshot_root_hash") or ""),
         records=records[:max_records],
     )
+    return registry
+
+
+def write_pack_registry(
+    root: Path,
+    registry: PackRegistry,
+    *,
+    output_path: str = ".agentpack/pack-registry.json",
+) -> None:
     path = registry_path(root, output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(registry.model_dump_json(indent=2), encoding="utf-8")
-    return registry
 
 
 def load_pack_registry(root: Path, path: Path | None = None) -> PackRegistry | None:
@@ -97,13 +117,14 @@ def retrieve_from_registry(
     block_id: str = "",
     mode: str = "as_stored",
     allow_stale: bool = False,
+    kind: RegistryKindFilter = "any",
     max_chars: int = 20000,
     registry_file: Path | None = None,
 ) -> str:
     registry = load_pack_registry(root, registry_file)
     if registry is None:
         return "No pack registry found. Run `agentpack pack` first."
-    record = _find_record(registry, path=path, block_id=block_id)
+    record = _find_record(registry, path=path, block_id=block_id, kind=kind)
     if record is None:
         target = block_id or path
         return f"No registry record found for `{target}`."
@@ -186,7 +207,8 @@ def _symbol_records(sf: SelectedFile, fi: FileInfo | None) -> list[PackRegistryR
 
 def _omitted_record(item: OmittedRelevantFile, fi: FileInfo | None) -> PackRegistryRecord:
     summary = item.omission_reason
-    content_hash = _hash_text(f"{item.path}:{fi.hash or item.score}:{summary}")
+    source_hash = fi.hash if fi and fi.hash else str(item.score)
+    content_hash = _hash_text(f"{item.path}:{source_hash}:{summary}")
     return PackRegistryRecord(
         block_id=_block_id(item.path, content_hash),
         path=item.path,
@@ -201,8 +223,16 @@ def _omitted_record(item: OmittedRelevantFile, fi: FileInfo | None) -> PackRegis
     )
 
 
-def _find_record(registry: PackRegistry, *, path: str, block_id: str) -> PackRegistryRecord | None:
+def _find_record(
+    registry: PackRegistry,
+    *,
+    path: str,
+    block_id: str,
+    kind: RegistryKindFilter = "any",
+) -> PackRegistryRecord | None:
     for record in registry.records:
+        if kind != "any" and record.kind != kind:
+            continue
         if block_id and record.block_id == block_id:
             return record
         if path and record.path == path:

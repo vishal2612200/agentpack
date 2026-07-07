@@ -35,6 +35,7 @@ from agentpack.dashboard.models import (
     SkillsInventorySummary,
     SuggestedAction,
     TaskInfo,
+    TaskMapFileRow,
     ThreadSummary,
 )
 from agentpack.learning.sessions import summarize_weak_spots
@@ -119,6 +120,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         ),
         context=context,
         selected_files=selected_files,
+        task_map=_task_map_files(meta),
         skills=skill_section,
         skills_inventory=skills_inventory,
         skill_feedback=_feedback_summary(feedback_rows),
@@ -227,6 +229,32 @@ def _selected_files(meta: dict[str, Any] | None) -> list[SelectedFileRow]:
                 score=_as_float(item.get("score"), 0.0),
                 tokens=_as_int(item.get("tokens"), _as_int(item.get("estimated_tokens"), 0)),
                 reasons=_string_list(item.get("reasons"))[:MAX_REASONS],
+            )
+        )
+    return rows
+
+
+def _task_map_files(meta: dict[str, Any] | None) -> list[TaskMapFileRow]:
+    task_map = (meta or {}).get("task_map") or {}
+    files = task_map.get("files") if isinstance(task_map, dict) else []
+    rows: list[TaskMapFileRow] = []
+    if not isinstance(files, list):
+        return rows
+    for item in files[:50]:
+        if not isinstance(item, dict):
+            continue
+        rows.append(
+            TaskMapFileRow(
+                path=str(item.get("path") or ""),
+                kind=str(item.get("kind") or ""),
+                include_mode=str(item.get("include_mode") or ""),
+                score=_as_float(item.get("score"), 0.0),
+                risk_level=str(item.get("risk_level") or "low"),
+                risk_reasons=_string_list(item.get("risk_reasons"))[:MAX_REASONS],
+                why_selected=_string_list(item.get("why_selected"))[:MAX_REASONS],
+                tests_to_run=_string_list(item.get("tests_to_run"))[:MAX_REASONS],
+                may_break=_string_list(item.get("may_break"))[:MAX_REASONS],
+                retrieve_ref=str(item.get("retrieve_ref") or ""),
             )
         )
     return rows

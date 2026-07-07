@@ -174,6 +174,7 @@ class ContextPack(BaseModel):
     freshness_warnings: list[str] = Field(default_factory=list)
     execution_state: dict[str, Any] = Field(default_factory=dict)
     concurrent_context: dict[str, Any] = Field(default_factory=dict)
+    task_map: dict[str, Any] = Field(default_factory=dict)
     agent_lessons: str = ""
 
 

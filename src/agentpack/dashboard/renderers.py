@@ -12,6 +12,7 @@ MAX_RENDERED_MISSES = 20
 
 def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     files = _selected_file_rows(snapshot)
+    task_map = _task_map_rows(snapshot)
     skills = _skill_rows(snapshot.skills.task_specific, "task-specific") + _skill_rows(snapshot.skills.baseline, "baseline")
     if not skills:
         skills = '<tr><td colspan="7">No skill recommendations found.</td></tr>'
@@ -185,6 +186,7 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     <nav aria-label="Dashboard sections">
       <a href="#health">Health</a>
       <a href="#files">Files</a>
+      <a href="#task-map">Task Map</a>
       <a href="#skills">Skills</a>
       <a href="#inventory">Inventory</a>
       <a href="#learning">Learning</a>
@@ -228,6 +230,11 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
   <section id="files" class="section">
     <div class="section-header"><h2>Selected Files</h2><small>Top {min(len(snapshot.selected_files), MAX_RENDERED_FILES)} files from the active context pack</small></div>
     <div class="section-body"><div class="table-wrap"><table><thead><tr><th class="path-col">Path</th><th>Mode</th><th>Score</th><th>Tokens</th><th class="reason-col">Reasons</th></tr></thead><tbody>{files}</tbody></table></div></div>
+  </section>
+
+  <section id="task-map" class="section">
+    <div class="section-header"><h2>Task Map</h2><small>Risk, tests, impact, and retrieve refs from the active pack</small></div>
+    <div class="section-body"><div class="table-wrap"><table><thead><tr><th class="path-col">Path</th><th>Kind</th><th>Risk</th><th class="reason-col">Why</th><th>Tests</th><th>May Break</th><th>Retrieve</th></tr></thead><tbody>{task_map}</tbody></table></div></div>
   </section>
 
   <section id="skills" class="section">
@@ -301,6 +308,30 @@ def _selected_file_rows(snapshot: DashboardSnapshot) -> str:
         for item in snapshot.selected_files[:MAX_RENDERED_FILES]
     )
     return rows or '<tr><td colspan="5">No selected files found.</td></tr>'
+
+
+def _task_map_rows(snapshot: DashboardSnapshot) -> str:
+    if not snapshot.task_map:
+        return '<tr><td colspan="7">No task map found. Run agentpack pack to generate one.</td></tr>'
+    rows: list[str] = []
+    for item in snapshot.task_map[:MAX_RENDERED_FILES]:
+        why = "; ".join(item.why_selected[:3])
+        tests = ", ".join(f"<code>{_e(test)}</code>" for test in item.tests_to_run[:3])
+        may_break = "; ".join(_e(value) for value in item.may_break[:2])
+        retrieve = f"<code>retrieve_context(block_id=&quot;{_e(item.retrieve_ref)}&quot;)</code>" if item.retrieve_ref else ""
+        risk_class = _status_class(item.risk_level)
+        rows.append(
+            "<tr>"
+            f"<td class=\"path-col\"><code>{_e(item.path)}</code></td>"
+            f"<td>{_e(item.kind)}</td>"
+            f"<td><span class=\"pill {risk_class}\">{_e(item.risk_level.upper())}</span></td>"
+            f"<td>{_e(why)}</td>"
+            f"<td>{tests}</td>"
+            f"<td>{may_break}</td>"
+            f"<td>{retrieve}</td>"
+            "</tr>"
+        )
+    return "".join(rows)
 
 
 def _skill_rows(items: Iterable[SkillRow], kind: str) -> str:
@@ -569,6 +600,9 @@ def _stale_reason(snapshot: DashboardSnapshot) -> str:
 
 def _status_class(value: object) -> str:
     text = str(value)
+    risk_map = {"low": "fresh", "medium": "stale", "high": "missing"}
+    if text in risk_map:
+        return risk_map[text]
     return text if text in {"fresh", "stale", "missing", "unknown"} else "unknown"
 
 
