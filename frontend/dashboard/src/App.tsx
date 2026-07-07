@@ -29,7 +29,7 @@ import {
 import { loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { DashboardEdge, DashboardGraph, DashboardNode, DashboardSnapshot } from "./data/schema";
 
-type View = "cockpit" | "projects" | "graph" | "memory" | "risk" | "reviews" | "replay" | "raw";
+type View = "cockpit" | "projects" | "graph" | "memory" | "learning" | "risk" | "reviews" | "replay" | "raw";
 type GraphFilter = "all" | "selected" | "risk" | "memory" | "tests";
 
 const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -37,6 +37,7 @@ const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "projects", label: "Projects", icon: GitBranch },
   { id: "graph", label: "Task Graph", icon: Network },
   { id: "memory", label: "Memory", icon: Brain },
+  { id: "learning", label: "Learning", icon: ClipboardList },
   { id: "risk", label: "Risk & Tests", icon: ShieldAlert },
   { id: "reviews", label: "PR Reviews", icon: GitBranch },
   { id: "replay", label: "Replay", icon: PlayCircle },
@@ -143,6 +144,7 @@ export function App() {
             />
           )}
           {view === "memory" && <MemoryView snapshot={payload.snapshot} graph={payload.graph} onSelect={setSelectedId} />}
+          {view === "learning" && <LearningPrepView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "risk" && <RiskTestsView snapshot={payload.snapshot} onSelect={(id) => setSelectedId(id)} />}
           {view === "reviews" && <ReviewsView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "replay" && <ReplayView snapshot={payload.snapshot} graph={payload.graph} />}
@@ -251,6 +253,7 @@ function CockpitView({
         <button type="button" className="metric-button" onClick={() => onOpenGraph("memory")}>
           <Metric label="Memory" value={graph.summary.memory_nodes} tone="memory" />
         </button>
+        <Metric label="Prep" value={snapshot.learning_prep?.sessions?.length || 0} tone="memory" />
         <button type="button" className="metric-button" onClick={() => onOpenGraph("risk")}>
           <Metric label="High risk" value={graph.summary.high_risk_files} tone="risk" />
         </button>
@@ -527,6 +530,87 @@ function MemoryView({
             {!snapshot.learning_weak_spots.length ? <p className="empty">No learning weak spots found.</p> : null}
           </div>
         </Panel>
+      </div>
+    </div>
+  );
+}
+
+function LearningPrepView({
+  snapshot,
+  onCopy
+}: {
+  snapshot: DashboardSnapshot;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  const prep = snapshot.learning_prep || {};
+  const sessions = prep.sessions || [];
+  const weakSpots = snapshot.learning_weak_spots || [];
+  return (
+    <div className="view-stack">
+      <SectionTitle title="Learning Prep" subtitle="Task-backed quiz, interview, and failure-drill preparation from AgentPack memory." />
+      <div className="metric-grid">
+        <Metric label="Queued" value={prep.queued_count || 0} tone="memory" />
+        <Metric label="Needs review" value={prep.needs_review_count || 0} tone={prep.needs_review_count ? "warn" : "good"} />
+        <Metric label="Completed" value={prep.completed_count || 0} tone="good" />
+        <Metric label="Concepts" value={(prep.top_concepts || []).length} tone="neutral" />
+      </div>
+      <div className="content-grid">
+        <Panel title="Prep Commands" icon={ClipboardList}>
+          <div className="stack-sm">
+            <PrepCommand label="Interview prep" value={prep.interview_command || 'agentpack learn "interview me on last task"'} onCopy={onCopy} />
+            <PrepCommand label="Quiz" value={prep.quiz_command || 'agentpack learn "quiz me on last task"'} onCopy={onCopy} />
+            <PrepCommand label="Failure drill" value={prep.failure_drill_command || 'agentpack learn "failure drill on last task"'} onCopy={onCopy} />
+          </div>
+        </Panel>
+        <Panel title="Concept Focus" icon={Brain}>
+          <div className="stack-sm">
+            {(prep.top_concepts || []).slice(0, 8).map((concept) => (
+              <div key={concept} className="list-row passive">
+                <span>
+                  <strong>{concept}</strong>
+                  <small>{weakSpots.find((spot) => spot.concept === concept)?.latest_question || "Task-backed learning concept"}</small>
+                </span>
+                <span className="badge memory">concept</span>
+              </div>
+            ))}
+            {!(prep.top_concepts || []).length ? <p className="empty">No learning concepts found yet.</p> : null}
+          </div>
+        </Panel>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Session</th>
+              <th>Question</th>
+              <th>Evidence</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {sessions.map((session, index) => (
+              <tr key={`${session.created_at}:${session.question}:${index}`}>
+                <td>
+                  <strong>{session.topic || session.mode || "Learning session"}</strong>
+                  <small>{session.task}</small>
+                  {session.request ? <code>{session.request}</code> : null}
+                </td>
+                <td>{session.question || "No question recorded."}</td>
+                <td>
+                  {(session.concepts || []).slice(0, 4).map((concept) => <span key={concept} className="badge memory">{concept}</span>)}
+                  {(session.evidence_files || []).slice(0, 3).map((path) => <code key={path}>{path}</code>)}
+                </td>
+                <td>
+                  <span className={`badge ${learningStatusTone(session.status)}`}>{session.status || "queued"}</span>
+                  {typeof session.score === "number" ? <small>{session.score}%</small> : null}
+                </td>
+              </tr>
+            ))}
+            {!sessions.length ? (
+              <tr><td colSpan={4}>No learning prep sessions found.</td></tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -922,6 +1006,27 @@ function CopyCommand({
   );
 }
 
+function PrepCommand({
+  label,
+  value,
+  onCopy
+}: {
+  label: string;
+  value: string;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  return (
+    <div className="command-row">
+      <TerminalSquare size={16} aria-hidden="true" />
+      <span>
+        <strong>{label}</strong>
+        <code>{value}</code>
+      </span>
+      <CopyButton value={value} label={label} onCopy={onCopy} />
+    </div>
+  );
+}
+
 function nextDecision(payload: DashboardPayload): { title: string; detail: string; command: string; tone: string; filter: GraphFilter } {
   const highRisk = payload.snapshot.task_map.find((item) => item.risk_level === "high");
   const firstTest = highRisk?.tests_to_run?.[0] || payload.snapshot.task_map.flatMap((item) => item.tests_to_run || [])[0] || "";
@@ -1055,6 +1160,12 @@ function reviewStatusTone(status?: string) {
   return "neutral";
 }
 
+function learningStatusTone(status?: string) {
+  if (status === "done" || status === "completed") return "good";
+  if (status === "needs_review") return "warn";
+  return "memory";
+}
+
 function samplePayload(): DashboardPayload {
   const snapshot: DashboardSnapshot = {
     schema_version: 1,
@@ -1182,7 +1293,50 @@ function samplePayload(): DashboardPayload {
         selected_files: ["src/auth/session.py"]
       }
     ],
-    learning_weak_spots: [],
+    learning_weak_spots: [
+      {
+        concept: "authentication",
+        count: 2,
+        mode: "interview",
+        latest_task: "Fixed session refresh regression",
+        latest_question: "How would you explain refresh-token expiry tradeoffs?",
+        evidence_files: ["src/auth/token.py"]
+      }
+    ],
+    learning_prep: {
+      queued_count: 1,
+      needs_review_count: 0,
+      completed_count: 1,
+      top_concepts: ["authentication", "session refresh", "test design"],
+      sessions: [
+        {
+          task: "Fixed session refresh regression",
+          request: "interview me on last task",
+          mode: "interview",
+          topic: "Authentication",
+          question: "How would you explain refresh-token expiry tradeoffs in an interview?",
+          status: "queued",
+          concepts: ["authentication", "session refresh"],
+          evidence_files: ["src/auth/token.py"],
+          created_at: "2026-07-07T12:00:00Z"
+        },
+        {
+          task: "Fixed session refresh regression",
+          request: "quiz me on last task",
+          mode: "quiz",
+          topic: "Test Design",
+          question: "Which regression test proves session refresh still works?",
+          status: "done",
+          score: 90,
+          concepts: ["test design"],
+          evidence_files: ["tests/test_auth_token.py"],
+          created_at: "2026-07-07T12:05:00Z"
+        }
+      ],
+      quiz_command: 'agentpack learn "quiz me on last task"',
+      interview_command: 'agentpack learn "interview me on last task"',
+      failure_drill_command: 'agentpack learn "failure drill on last task"'
+    },
     observer: {
       events: 1,
       insights: [

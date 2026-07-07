@@ -202,6 +202,30 @@ class LearningWeakSpot(BaseModel):
     evidence_files: list[str] = Field(default_factory=list)
 
 
+class LearningPrepSessionRow(BaseModel):
+    task: str
+    request: str = ""
+    mode: str = ""
+    topic: str = ""
+    question: str = ""
+    status: str = ""
+    score: int | None = None
+    concepts: list[str] = Field(default_factory=list)
+    evidence_files: list[str] = Field(default_factory=list)
+    created_at: str = ""
+
+
+class LearningPrepSummary(BaseModel):
+    queued_count: int = 0
+    needs_review_count: int = 0
+    completed_count: int = 0
+    top_concepts: list[str] = Field(default_factory=list)
+    sessions: list[LearningPrepSessionRow] = Field(default_factory=list)
+    quiz_command: str = 'agentpack learn "quiz me on last task"'
+    interview_command: str = 'agentpack learn "interview me on last task"'
+    failure_drill_command: str = 'agentpack learn "failure drill on last task"'
+
+
 class ObserverInsightRow(BaseModel):
     kind: str
     title: str
@@ -360,6 +384,7 @@ class DashboardSnapshot(BaseModel):
     learning: list[LearningArtifact] = Field(default_factory=list)
     learning_memories: list[LearningMemory] = Field(default_factory=list)
     learning_weak_spots: list[LearningWeakSpot] = Field(default_factory=list)
+    learning_prep: LearningPrepSummary = Field(default_factory=LearningPrepSummary)
     observer: ObserverSummary = Field(default_factory=ObserverSummary)
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)

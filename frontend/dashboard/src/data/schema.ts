@@ -175,6 +175,27 @@ export interface DashboardSnapshot {
     latest_question?: string;
     evidence_files?: string[];
   }>;
+  learning_prep: {
+    queued_count?: number;
+    needs_review_count?: number;
+    completed_count?: number;
+    top_concepts?: string[];
+    sessions?: Array<{
+      task: string;
+      request?: string;
+      mode?: string;
+      topic?: string;
+      question?: string;
+      status?: string;
+      score?: number | null;
+      concepts?: string[];
+      evidence_files?: string[];
+      created_at?: string;
+    }>;
+    quiz_command?: string;
+    interview_command?: string;
+    failure_drill_command?: string;
+  };
   observer: {
     events?: number;
     insights?: Array<{

@@ -329,6 +329,46 @@ def test_project_dashboard_summarizes_learning_weak_spots(tmp_path) -> None:
     assert snapshot.learning_weak_spots[0].evidence_files == ["src/cache.py"]
 
 
+def test_project_dashboard_summarizes_learning_prep_sessions(tmp_path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    sessions = [
+        LearningSession(
+            task="Fix cache ttl bug",
+            request="interview me on last task",
+            mode="interview",
+            topic="Cache Correctness",
+            question="How would you explain TTL invalidation tradeoffs?",
+            expected_points=["TTL expires stale entries"],
+            evidence_files=["src/cache.py"],
+            concepts=["caching"],
+        ),
+        LearningSession(
+            task="Fix auth token refresh",
+            request="quiz me on last task",
+            mode="quiz",
+            topic="Authentication",
+            question="What breaks when refresh tokens expire early?",
+            status="done",
+            score=90,
+            evidence_files=["src/auth.py"],
+            concepts=["authentication"],
+        ),
+    ]
+    agentpack.joinpath("learning-sessions.jsonl").write_text(
+        "\n".join(json.dumps(session.model_dump(mode="json")) for session in sessions) + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    assert snapshot.learning_prep.queued_count == 1
+    assert snapshot.learning_prep.completed_count == 1
+    assert snapshot.learning_prep.top_concepts[:2] == ["caching", "authentication"]
+    assert snapshot.learning_prep.sessions[0].question == "What breaks when refresh tokens expire early?"
+    assert snapshot.learning_prep.interview_command == 'agentpack learn "interview me on last task"'
+
+
 def test_project_dashboard_summarizes_skill_feedback(tmp_path) -> None:
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()

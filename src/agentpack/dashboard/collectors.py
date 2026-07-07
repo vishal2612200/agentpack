@@ -21,6 +21,8 @@ from agentpack.dashboard.models import (
     DashboardSnapshot,
     LearningArtifact,
     LearningMemory,
+    LearningPrepSessionRow,
+    LearningPrepSummary,
     LearningWeakSpot,
     ObserverInsightRow,
     ObserverSummary,
@@ -43,7 +45,7 @@ from agentpack.dashboard.models import (
     TaskMapFileRow,
     ThreadSummary,
 )
-from agentpack.learning.sessions import summarize_weak_spots
+from agentpack.learning.sessions import read_learning_sessions, summarize_weak_spots
 from agentpack.learning.task_memory import recent_task_memories
 from agentpack.observer.brief import build_observer_brief
 from agentpack.router.models import SkillArtifact
@@ -108,6 +110,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     learning = _learning_artifacts(agentpack_dir)
     learning_memories = _learning_memories(root)
     learning_weak_spots = _learning_weak_spots(root)
+    learning_prep = _learning_prep(root, learning_weak_spots)
     observer = _observer_summary(root, task_text)
     benchmarks = _benchmark_summary(
         _load_jsonl(agentpack_dir / "metrics.jsonl"),
@@ -116,7 +119,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     threads = _thread_summary(root, meta)
     loop = _loop_summary(root)
     review_runs = _review_runs(root)
-    actions = _suggested_actions(agentpack_dir, task_text, context, learning, benchmarks, feedback_rows, review_runs)
+    actions = _suggested_actions(agentpack_dir, task_text, context, learning, benchmarks, feedback_rows, review_runs, learning_prep)
 
     return DashboardSnapshot(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -136,6 +139,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         learning=learning,
         learning_memories=learning_memories,
         learning_weak_spots=learning_weak_spots,
+        learning_prep=learning_prep,
         observer=observer,
         benchmarks=benchmarks,
         threads=threads,
@@ -831,6 +835,39 @@ def _learning_weak_spots(root: Path) -> list[LearningWeakSpot]:
     return rows
 
 
+def _learning_prep(root: Path, weak_spots: list[LearningWeakSpot]) -> LearningPrepSummary:
+    sessions = read_learning_sessions(root, limit=12)
+    rows = [
+        LearningPrepSessionRow(
+            task=session.task,
+            request=session.request,
+            mode=session.mode,
+            topic=session.topic,
+            question=session.question,
+            status=session.status,
+            score=session.score,
+            concepts=session.concepts[:6],
+            evidence_files=session.evidence_files[:6],
+            created_at=session.created_at,
+        )
+        for session in reversed(sessions)
+    ]
+    concept_counts: Counter[str] = Counter()
+    for spot in weak_spots:
+        if spot.concept:
+            concept_counts[spot.concept] += max(spot.count, 1)
+    for row in rows:
+        for concept in row.concepts:
+            concept_counts[concept] += 1
+    return LearningPrepSummary(
+        queued_count=sum(1 for row in rows if row.status == "queued"),
+        needs_review_count=sum(1 for row in rows if row.status == "needs_review"),
+        completed_count=sum(1 for row in rows if row.status in {"done", "completed"}),
+        top_concepts=[concept for concept, _count in concept_counts.most_common(8)],
+        sessions=rows,
+    )
+
+
 def _bounded_excerpt(path: Path, limit: int = MAX_EXCERPT_CHARS) -> str:
     if not path.exists() or path.suffix == ".jsonl":
         return ""
@@ -1003,6 +1040,7 @@ def _suggested_actions(
     benchmarks: BenchmarkSummary,
     feedback_rows: list[dict[str, Any]],
     review_runs: list[ReviewRunRow],
+    learning_prep: LearningPrepSummary,
 ) -> list[SuggestedAction]:
     actions: list[SuggestedAction] = []
     if not agentpack_dir.exists():
@@ -1068,6 +1106,14 @@ def _suggested_actions(
                 label="Run PR review",
                 command="agentpack review --pr <number>",
                 reason="No AgentPack PR review runs found for this project.",
+            )
+        )
+    if not learning_prep.sessions:
+        actions.append(
+            SuggestedAction(
+                label="Prepare from last task",
+                command=learning_prep.interview_command,
+                reason="No interview-prep learning sessions found.",
             )
         )
     return actions
