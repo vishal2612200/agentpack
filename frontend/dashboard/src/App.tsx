@@ -29,7 +29,7 @@ import {
 import { loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { DashboardEdge, DashboardGraph, DashboardNode, DashboardSnapshot } from "./data/schema";
 
-type View = "cockpit" | "graph" | "memory" | "risk" | "replay" | "raw";
+type View = "cockpit" | "graph" | "memory" | "risk" | "reviews" | "replay" | "raw";
 type GraphFilter = "all" | "selected" | "risk" | "memory" | "tests";
 
 const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -37,6 +37,7 @@ const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "graph", label: "Task Graph", icon: Network },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "risk", label: "Risk & Tests", icon: ShieldAlert },
+  { id: "reviews", label: "PR Reviews", icon: GitBranch },
   { id: "replay", label: "Replay", icon: PlayCircle },
   { id: "raw", label: "Raw Data", icon: Code2 }
 ];
@@ -141,6 +142,7 @@ export function App() {
           )}
           {view === "memory" && <MemoryView snapshot={payload.snapshot} graph={payload.graph} onSelect={setSelectedId} />}
           {view === "risk" && <RiskTestsView snapshot={payload.snapshot} onSelect={(id) => setSelectedId(id)} />}
+          {view === "reviews" && <ReviewsView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "replay" && <ReplayView snapshot={payload.snapshot} graph={payload.graph} />}
           {view === "raw" && <RawDataView payload={payload} />}
         </section>
@@ -497,6 +499,96 @@ function RiskTestsView({ snapshot, onSelect }: { snapshot: DashboardSnapshot; on
   );
 }
 
+function ReviewsView({
+  snapshot,
+  onCopy
+}: {
+  snapshot: DashboardSnapshot;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  const runs = snapshot.review_runs || [];
+  return (
+    <div className="view-stack">
+      <SectionTitle title="PR Reviews" subtitle="AgentPack review runs, stage state, and review commands for this project." />
+      <div className="content-grid">
+        <Panel title="Review Actions" icon={GitBranch}>
+          <div className="stack-sm">
+            <div className="command-row">
+              <GitBranch size={16} aria-hidden="true" />
+              <span>
+                <strong>Run PR review</strong>
+                <code>agentpack review --pr &lt;number&gt;</code>
+              </span>
+              <CopyButton value="agentpack review --pr <number>" label="run PR review" onCopy={onCopy} />
+            </div>
+            <div className="command-row">
+              <CheckCircle2 size={16} aria-hidden="true" />
+              <span>
+                <strong>Check active review</strong>
+                <code>agentpack review --check</code>
+              </span>
+              <CopyButton value="agentpack review --check" label="check review" onCopy={onCopy} />
+            </div>
+          </div>
+        </Panel>
+        <Panel title="Latest Runs" icon={ClipboardList}>
+          <ItemList
+            items={runs.slice(0, 6).map((run) => ({
+              id: run.run_id,
+              title: reviewRunTitle(run),
+              detail: `${run.status || "prepared"} · ${run.changed_files_count || 0} files · ${run.diff_source || "unknown diff"}`,
+              tone: reviewStatusTone(run.status)
+            }))}
+            empty="No AgentPack review runs found."
+            onSelect={() => undefined}
+          />
+        </Panel>
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Run</th>
+              <th>Target</th>
+              <th>Status</th>
+              <th>Files</th>
+              <th>Artifacts</th>
+              <th>Commands</th>
+            </tr>
+          </thead>
+          <tbody>
+            {runs.map((run) => (
+              <tr key={run.run_id}>
+                <td>
+                  <strong>{run.run_id}</strong>
+                  <small>{run.generated_at || run.branch_prefix || ""}</small>
+                </td>
+                <td>{run.target_number ? `PR #${run.target_number}` : run.branch_prefix || "local"}</td>
+                <td><span className={`badge ${reviewStatusTone(run.status)}`}>{run.status || "prepared"}</span></td>
+                <td>{run.changed_files_count || 0}</td>
+                <td>
+                  {run.understanding_path ? <code>{run.understanding_path}</code> : null}
+                  {run.findings_path ? <code>{run.findings_path}</code> : null}
+                </td>
+                <td>
+                  <div className="stack-sm">
+                    {run.resume_command ? <CopyCommand value={run.resume_command} label="resume" onCopy={onCopy} /> : null}
+                    {run.check_command ? <CopyCommand value={run.check_command} label="check" onCopy={onCopy} /> : null}
+                    {run.post_command ? <CopyCommand value={run.post_command} label="post" onCopy={onCopy} /> : null}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!runs.length ? (
+              <tr><td colSpan={6}>No review runs found.</td></tr>
+            ) : null}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function ReplayView({ snapshot, graph }: { snapshot: DashboardSnapshot; graph: DashboardGraph }) {
   const steps = [
     { label: "Task loaded", detail: snapshot.task.text || "No task text", tone: "neutral" },
@@ -742,6 +834,22 @@ function CopyButton({
   );
 }
 
+function CopyCommand({
+  value,
+  label,
+  onCopy
+}: {
+  value: string;
+  label: string;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  return (
+    <button type="button" className="link-button" onClick={() => onCopy(value, label)}>
+      <code>{value}</code>
+    </button>
+  );
+}
+
 function nextDecision(payload: DashboardPayload): { title: string; detail: string; command: string; tone: string; filter: GraphFilter } {
   const highRisk = payload.snapshot.task_map.find((item) => item.risk_level === "high");
   const firstTest = highRisk?.tests_to_run?.[0] || payload.snapshot.task_map.flatMap((item) => item.tests_to_run || [])[0] || "";
@@ -864,6 +972,17 @@ function formatNumber(value: number) {
   return new Intl.NumberFormat().format(value);
 }
 
+function reviewRunTitle(run: DashboardSnapshot["review_runs"][number]) {
+  if (run.target_number) return `PR #${run.target_number}`;
+  return run.review_context || run.branch_prefix || run.run_id;
+}
+
+function reviewStatusTone(status?: string) {
+  if (status === "findings_ready") return "good";
+  if (status === "understanding_ready") return "memory";
+  return "neutral";
+}
+
 function samplePayload(): DashboardPayload {
   const snapshot: DashboardSnapshot = {
     schema_version: 1,
@@ -957,6 +1076,27 @@ function samplePayload(): DashboardPayload {
     },
     benchmarks: { averages: {}, misses: [] },
     loop: {},
+    review_runs: [
+      {
+        run_id: "20260707T120000-abcd1234",
+        branch_prefix: "pr-42",
+        generated_at: "2026-07-07T12:00:00Z",
+        review_context: "Review auth hardening PR",
+        target_number: 42,
+        target_url: "https://github.com/acme/sample-repo/pull/42",
+        diff_source: "pr-target",
+        changed_files_count: 5,
+        scaffold: "strict",
+        status: "understanding_ready",
+        run_dir: ".agentpack/reviews/pr-42/20260707T120000-abcd1234",
+        preflight_path: ".agentpack/reviews/pr-42/20260707T120000-abcd1234/preflight.json",
+        understanding_path: ".agentpack/reviews/pr-42/20260707T120000-abcd1234/understanding.toon",
+        findings_path: ".agentpack/reviews/pr-42/20260707T120000-abcd1234/findings.toon",
+        resume_command: "agentpack review --resume 20260707T120000-abcd1234",
+        check_command: "agentpack review --check",
+        post_command: "agentpack review --check --post-inline-comments"
+      }
+    ],
     suggested_actions: [
       { label: "Run auth token tests", command: "pytest tests/test_auth_token.py", kind: "command" },
       { label: "Retrieve omitted session context", command: "agentpack retrieve --block-id \"src__auth__session.py:sample\"", kind: "command" }

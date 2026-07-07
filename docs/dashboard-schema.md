@@ -19,6 +19,7 @@ schema version bump and frontend compatibility handling.
 - `nodes`: typed graph nodes for `task`, `file`, `symbol`, `test`, `episode`, `procedure`, and `action`.
 - `edges`: typed relationships for file/symbol containment, selection, omission, tests, memory influence, procedure applicability, breakage risk, and retrieval.
   `memory_influenced` edges may point at files or selected symbols when recorded learning memory references the file and matches the symbol by concept or symbol name.
+- `review_runs`: recent `.agentpack/reviews/<branch-prefix>/<run-id>/preflight.json` records with PR target, stage status, artifact paths, and copyable review commands.
 
 Node IDs are stable within a generated dashboard:
 

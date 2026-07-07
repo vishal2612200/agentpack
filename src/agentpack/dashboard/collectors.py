@@ -25,6 +25,7 @@ from agentpack.dashboard.models import (
     ObserverSummary,
     LoopSummary,
     ProjectInfo,
+    ReviewRunRow,
     SelectedFileRow,
     SelectedSymbolRow,
     SkillFeedbackStatus,
@@ -55,6 +56,7 @@ MAX_SKILL_INVENTORY_ROWS = 100
 MAX_METADATA_ITEMS = 8
 MAX_INFERRED_DOMAINS = 3
 MIN_BM25_DOMAIN_SCORE = 1.0
+MAX_REVIEW_RUNS = 20
 
 _DOMAIN_CORPUS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("career", ("academic", "ats", "career", "cover-letter", "cv", "interview", "job", "linkedin", "offer", "portfolio", "reference", "resume", "salary")),
@@ -109,7 +111,8 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     )
     threads = _thread_summary(root, meta)
     loop = _loop_summary(root)
-    actions = _suggested_actions(agentpack_dir, task_text, context, learning, benchmarks, feedback_rows)
+    review_runs = _review_runs(root)
+    actions = _suggested_actions(agentpack_dir, task_text, context, learning, benchmarks, feedback_rows, review_runs)
 
     return DashboardSnapshot(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -132,6 +135,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         benchmarks=benchmarks,
         threads=threads,
         loop=loop,
+        review_runs=review_runs,
         suggested_actions=actions,
     )
 
@@ -828,6 +832,86 @@ def _loop_metrics(root: Path) -> dict[str, Any]:
     }
 
 
+def _review_runs(root: Path) -> list[ReviewRunRow]:
+    runs_dir = root / ".agentpack" / "reviews"
+    if not runs_dir.exists():
+        return []
+    rows: list[ReviewRunRow] = []
+    for preflight_path in runs_dir.glob("*/*/preflight.json"):
+        try:
+            preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if not isinstance(preflight, dict):
+            continue
+        row = _review_run_row(root, preflight_path, preflight)
+        if row:
+            rows.append(row)
+    rows.sort(key=lambda item: (item.generated_at, item.run_id), reverse=True)
+    return rows[:MAX_REVIEW_RUNS]
+
+
+def _review_run_row(root: Path, preflight_path: Path, preflight: dict[str, Any]) -> ReviewRunRow | None:
+    review = preflight.get("review") if isinstance(preflight.get("review"), dict) else {}
+    paths = preflight.get("paths") if isinstance(preflight.get("paths"), dict) else {}
+    diff = preflight.get("diff") if isinstance(preflight.get("diff"), dict) else {}
+    target = review.get("target") if isinstance(review.get("target"), dict) else {}
+    run_id = str(review.get("run_id") or preflight_path.parent.name)
+    if not run_id:
+        return None
+    branch_prefix = str(review.get("branch_prefix") or preflight_path.parent.parent.name)
+    understanding_path = str(paths.get("understanding_canonical_output") or paths.get("understanding_output") or "")
+    findings_path = str(paths.get("findings_canonical_output") or paths.get("findings_output") or "")
+    return ReviewRunRow(
+        run_id=run_id,
+        branch_prefix=branch_prefix,
+        generated_at=str(preflight.get("generated_at") or ""),
+        review_context=str(preflight.get("review_context") or ""),
+        target_number=_target_number(target.get("number")),
+        target_url=str(target.get("url") or ""),
+        diff_source=str(diff.get("source") or ""),
+        changed_files_count=_as_int(diff.get("changed_files_count"), 0),
+        scaffold=str(review.get("scaffold") or ""),
+        status=_review_run_status(root, understanding_path, findings_path),
+        run_dir=str(paths.get("run_dir") or _rel_path(preflight_path.parent, root)),
+        preflight_path=_rel_path(preflight_path, root),
+        understanding_path=understanding_path,
+        findings_path=findings_path,
+        resume_command=f"agentpack review --resume {run_id}",
+        check_command="agentpack review --check",
+        post_command="agentpack review --check --post-inline-comments",
+    )
+
+
+def _review_run_status(root: Path, understanding_path: str, findings_path: str) -> str:
+    if findings_path and _path_exists(root, findings_path):
+        return "findings_ready"
+    if understanding_path and _path_exists(root, understanding_path):
+        return "understanding_ready"
+    return "prepared"
+
+
+def _path_exists(root: Path, value: str) -> bool:
+    path = Path(value)
+    return (path if path.is_absolute() else root / path).exists()
+
+
+def _rel_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.relative_to(root))
+    except ValueError:
+        return str(path)
+
+
+def _target_number(value: object) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        return int(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def _suggested_actions(
     agentpack_dir: Path,
     task_text: str,
@@ -835,6 +919,7 @@ def _suggested_actions(
     learning: list[LearningArtifact],
     benchmarks: BenchmarkSummary,
     feedback_rows: list[dict[str, Any]],
+    review_runs: list[ReviewRunRow],
 ) -> list[SuggestedAction]:
     actions: list[SuggestedAction] = []
     if not agentpack_dir.exists():
@@ -883,6 +968,23 @@ def _suggested_actions(
                 label="Record skill feedback",
                 command='agentpack skills feedback --task "..." --recommended-skill skill-name --user-feedback helpful',
                 reason="No skill feedback found.",
+            )
+        )
+    if review_runs:
+        latest = review_runs[0]
+        actions.append(
+            SuggestedAction(
+                label="Resume latest PR review",
+                command=latest.resume_command,
+                reason=f"Latest review run {latest.run_id} is {latest.status}.",
+            )
+        )
+    else:
+        actions.append(
+            SuggestedAction(
+                label="Run PR review",
+                command="agentpack review --pr <number>",
+                reason="No AgentPack PR review runs found for this project.",
             )
         )
     return actions

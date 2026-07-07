@@ -223,6 +223,26 @@ class LoopSummary(BaseModel):
     next_action: str = ""
 
 
+class ReviewRunRow(BaseModel):
+    run_id: str
+    branch_prefix: str = ""
+    generated_at: str = ""
+    review_context: str = ""
+    target_number: int | None = None
+    target_url: str = ""
+    diff_source: str = ""
+    changed_files_count: int = 0
+    scaffold: str = ""
+    status: str = "prepared"
+    run_dir: str = ""
+    preflight_path: str = ""
+    understanding_path: str = ""
+    findings_path: str = ""
+    resume_command: str = ""
+    check_command: str = "agentpack review --check"
+    post_command: str = "agentpack review --check --post-inline-comments"
+
+
 class SuggestedAction(BaseModel):
     label: str
     command: str
@@ -311,4 +331,5 @@ class DashboardSnapshot(BaseModel):
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)
     loop: LoopSummary = Field(default_factory=LoopSummary)
+    review_runs: list[ReviewRunRow] = Field(default_factory=list)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)

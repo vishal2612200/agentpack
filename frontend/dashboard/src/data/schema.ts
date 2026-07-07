@@ -169,5 +169,24 @@ export interface DashboardSnapshot {
     blocked_reason?: string;
     next_action?: string;
   };
+  review_runs: Array<{
+    run_id: string;
+    branch_prefix?: string;
+    generated_at?: string;
+    review_context?: string;
+    target_number?: number | null;
+    target_url?: string;
+    diff_source?: string;
+    changed_files_count?: number;
+    scaffold?: string;
+    status?: string;
+    run_dir?: string;
+    preflight_path?: string;
+    understanding_path?: string;
+    findings_path?: string;
+    resume_command?: string;
+    check_command?: string;
+    post_command?: string;
+  }>;
   suggested_actions: DashboardAction[];
 }

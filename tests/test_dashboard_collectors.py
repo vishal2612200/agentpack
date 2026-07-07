@@ -175,6 +175,53 @@ def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
     assert snapshot.learning_memories[0].concepts == ["caching"]
 
 
+def test_project_dashboard_reads_review_runs(tmp_path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    run_dir = agentpack / "reviews" / "pr-42" / "20260707T120000-abcd1234"
+    run_dir.mkdir(parents=True)
+    (run_dir / "understanding.toon").write_text("@root review_understanding\n", encoding="utf-8")
+    (run_dir / "preflight.json").write_text(
+        json.dumps(
+            {
+                "generated_at": "2026-07-07T12:00:00Z",
+                "review_context": "review auth PR",
+                "review": {
+                    "run_id": "20260707T120000-abcd1234",
+                    "branch_prefix": "pr-42",
+                    "scaffold": "strict",
+                    "target": {"number": 42, "url": "https://github.com/acme/repo/pull/42"},
+                },
+                "diff": {"source": "pr-target", "changed_files_count": 5},
+                "paths": {
+                    "run_dir": ".agentpack/reviews/pr-42/20260707T120000-abcd1234",
+                    "understanding_canonical_output": ".agentpack/reviews/pr-42/20260707T120000-abcd1234/understanding.toon",
+                    "findings_canonical_output": ".agentpack/reviews/pr-42/20260707T120000-abcd1234/findings.toon",
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+    review = snapshot.review_runs[0]
+
+    assert review.run_id == "20260707T120000-abcd1234"
+    assert review.target_number == 42
+    assert review.changed_files_count == 5
+    assert review.status == "understanding_ready"
+    assert review.resume_command == "agentpack review --resume 20260707T120000-abcd1234"
+    assert any(action.command == review.resume_command for action in snapshot.suggested_actions)
+
+
+def test_project_dashboard_suggests_review_when_no_runs_exist(tmp_path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    assert any(action.command == "agentpack review --pr <number>" for action in snapshot.suggested_actions)
+
+
 def test_project_dashboard_reads_observer_summary(tmp_path) -> None:
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()
