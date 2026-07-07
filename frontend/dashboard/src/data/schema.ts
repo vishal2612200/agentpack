@@ -83,6 +83,35 @@ export interface DashboardSnapshot {
     branch?: string;
     git_sha?: string;
   };
+  project_index: {
+    root_path?: string;
+    project_count?: number;
+    stale_count?: number;
+    missing_count?: number;
+    total_raw_tokens?: number;
+    total_packed_tokens?: number;
+    estimated_saved_tokens?: number;
+    average_saving_pct?: number;
+    projects?: Array<{
+      name: string;
+      path: string;
+      current?: boolean;
+      branch?: string;
+      git_sha?: string;
+      task?: string;
+      context_status?: ContextStatus;
+      packed_tokens?: number;
+      raw_tokens?: number;
+      saving_pct?: number;
+      selected_files_count?: number;
+      review_runs_count?: number;
+      memory_count?: number;
+      weak_spots_count?: number;
+      dashboard_path?: string;
+      open_command?: string;
+      refresh_command?: string;
+    }>;
+  };
   task: {
     text?: string;
     state?: string;

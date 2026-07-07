@@ -148,6 +148,54 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8
 
 
+def test_project_dashboard_indexes_sibling_agentpack_projects(tmp_path) -> None:
+    current = tmp_path / "current"
+    sibling = tmp_path / "sibling"
+    for project in (current, sibling):
+        (project / ".agentpack").mkdir(parents=True)
+    (current / ".agentpack" / "task.md").write_text("fix current task\n", encoding="utf-8")
+    (current / ".agentpack" / "pack_metadata.json").write_text(
+        json.dumps(
+            {
+                "task": "fix current task",
+                "token_estimate": 100,
+                "raw_tokens": 1000,
+                "saving_pct": 90,
+                "selected_files_meta": [{"path": "src/current.py"}],
+                "freshness": {"status": "fresh"},
+            }
+        ),
+        encoding="utf-8",
+    )
+    (sibling / ".agentpack" / "task.md").write_text("fix sibling task\n", encoding="utf-8")
+    (sibling / ".agentpack" / "pack_metadata.json").write_text(
+        json.dumps(
+            {
+                "task": "fix sibling task",
+                "token_estimate": 200,
+                "raw_tokens": 2000,
+                "saving_pct": 90,
+                "selected_files_meta": [{"path": "src/sibling.py"}, {"path": "tests/test_sibling.py"}],
+                "freshness": {"status": "stale", "reason": "task changed"},
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(current)
+    projects = {row.name: row for row in snapshot.project_index.projects}
+
+    assert snapshot.project_index.project_count == 2
+    assert snapshot.project_index.total_raw_tokens == 3000
+    assert snapshot.project_index.total_packed_tokens == 300
+    assert snapshot.project_index.estimated_saved_tokens == 2700
+    assert projects["current"].current is True
+    assert projects["current"].selected_files_count == 1
+    assert projects["sibling"].context_status == "stale"
+    assert projects["sibling"].selected_files_count == 2
+    assert projects["sibling"].open_command == f"cd {sibling} && agentpack dashboard --open"
+
+
 def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()

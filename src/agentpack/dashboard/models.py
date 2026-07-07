@@ -36,6 +36,38 @@ class ProjectInfo(BaseModel):
     git_sha: str = ""
 
 
+class ProjectIndexRow(BaseModel):
+    name: str
+    path: str
+    current: bool = False
+    branch: str = ""
+    git_sha: str = ""
+    task: str = ""
+    context_status: ContextStatus = "unknown"
+    packed_tokens: int = 0
+    raw_tokens: int = 0
+    saving_pct: float = 0.0
+    selected_files_count: int = 0
+    review_runs_count: int = 0
+    memory_count: int = 0
+    weak_spots_count: int = 0
+    dashboard_path: str = ""
+    open_command: str = ""
+    refresh_command: str = ""
+
+
+class ProjectIndexSummary(BaseModel):
+    root_path: str = ""
+    project_count: int = 0
+    stale_count: int = 0
+    missing_count: int = 0
+    total_raw_tokens: int = 0
+    total_packed_tokens: int = 0
+    estimated_saved_tokens: int = 0
+    average_saving_pct: float = 0.0
+    projects: list[ProjectIndexRow] = Field(default_factory=list)
+
+
 class TaskInfo(BaseModel):
     text: str = ""
     state: TaskState = "unknown"
@@ -317,6 +349,7 @@ class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""
     project: ProjectInfo
+    project_index: ProjectIndexSummary = Field(default_factory=ProjectIndexSummary)
     task: TaskInfo = Field(default_factory=TaskInfo)
     context: ContextHealth = Field(default_factory=ContextHealth)
     selected_files: list[SelectedFileRow] = Field(default_factory=list)

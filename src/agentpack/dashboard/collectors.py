@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import shlex
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
@@ -25,6 +26,8 @@ from agentpack.dashboard.models import (
     ObserverSummary,
     LoopSummary,
     ProjectInfo,
+    ProjectIndexRow,
+    ProjectIndexSummary,
     ReviewRunRow,
     SelectedFileRow,
     SelectedSymbolRow,
@@ -57,6 +60,7 @@ MAX_METADATA_ITEMS = 8
 MAX_INFERRED_DOMAINS = 3
 MIN_BM25_DOMAIN_SCORE = 1.0
 MAX_REVIEW_RUNS = 20
+MAX_PROJECT_INDEX_ROWS = 40
 
 _DOMAIN_CORPUS: tuple[tuple[str, tuple[str, ...]], ...] = (
     ("career", ("academic", "ats", "career", "cover-letter", "cv", "interview", "job", "linkedin", "offer", "portfolio", "reference", "resume", "salary")),
@@ -117,6 +121,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     return DashboardSnapshot(
         generated_at=datetime.now(timezone.utc).isoformat(),
         project=_project_info(root, meta),
+        project_index=_project_index(root),
         task=TaskInfo(
             text=task_text,
             state=_task_state(agentpack_dir / "task_state.md"),
@@ -147,6 +152,84 @@ def _project_info(root: Path, meta: dict[str, Any] | None) -> ProjectInfo:
         branch = branch or (git.current_branch(root) or "")
         sha = sha or (git.current_sha(root) or "")
     return ProjectInfo(name=root.name, path=str(root), branch=branch, git_sha=sha[:12])
+
+
+def _project_index(root: Path) -> ProjectIndexSummary:
+    project_roots = _candidate_project_roots(root)
+    rows = [_project_index_row(project_root, current=project_root == root) for project_root in project_roots]
+    rows = [row for row in rows if row is not None]
+    raw_total = sum(row.raw_tokens for row in rows)
+    packed_total = sum(row.packed_tokens for row in rows)
+    saving_values = [row.saving_pct for row in rows if row.saving_pct > 0]
+    return ProjectIndexSummary(
+        root_path=str(root.parent),
+        project_count=len(rows),
+        stale_count=sum(1 for row in rows if row.context_status == "stale"),
+        missing_count=sum(1 for row in rows if row.context_status == "missing"),
+        total_raw_tokens=raw_total,
+        total_packed_tokens=packed_total,
+        estimated_saved_tokens=max(raw_total - packed_total, 0),
+        average_saving_pct=round(sum(saving_values) / len(saving_values), 1) if saving_values else 0.0,
+        projects=rows,
+    )
+
+
+def _candidate_project_roots(root: Path) -> list[Path]:
+    candidates: list[Path] = [root]
+    try:
+        siblings = sorted(root.parent.iterdir(), key=lambda item: item.name.lower())
+    except OSError:
+        siblings = []
+    for item in siblings:
+        if len(candidates) >= MAX_PROJECT_INDEX_ROWS:
+            break
+        if item == root or not item.is_dir() or not (item / ".agentpack").is_dir():
+            continue
+        candidates.append(item.resolve())
+    unique: list[Path] = []
+    seen: set[Path] = set()
+    for candidate in candidates:
+        resolved = candidate.resolve()
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        unique.append(resolved)
+    return unique
+
+
+def _project_index_row(project_root: Path, *, current: bool) -> ProjectIndexRow | None:
+    agentpack_dir = project_root / ".agentpack"
+    if not agentpack_dir.exists():
+        return None
+    try:
+        meta = load_pack_metadata(project_root)
+    except Exception:
+        meta = None
+    freshness = task_freshness(project_root, meta) if meta else None
+    context = _context_health(meta, freshness)
+    info = _project_info(project_root, meta)
+    review_runs = _review_runs(project_root)
+    memories = recent_task_memories(project_root, limit=20)
+    dashboard_path = agentpack_dir / "index.html"
+    return ProjectIndexRow(
+        name=info.name,
+        path=str(project_root),
+        current=current,
+        branch=info.branch,
+        git_sha=info.git_sha,
+        task=_read_task(agentpack_dir / "task.md") or str((meta or {}).get("task") or ""),
+        context_status=context.status,
+        packed_tokens=context.packed_tokens,
+        raw_tokens=context.raw_tokens,
+        saving_pct=context.saving_pct,
+        selected_files_count=context.selected_files_count,
+        review_runs_count=len(review_runs),
+        memory_count=len(memories),
+        weak_spots_count=len(_learning_weak_spots(project_root)),
+        dashboard_path=str(dashboard_path) if dashboard_path.exists() else "",
+        open_command=f"cd {shlex.quote(str(project_root))} && agentpack dashboard --open",
+        refresh_command=f"cd {shlex.quote(str(project_root))} && agentpack pack --task auto",
+    )
 
 
 def _thread_id(meta: dict[str, Any] | None) -> str | None:

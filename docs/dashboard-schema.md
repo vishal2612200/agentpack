@@ -16,6 +16,7 @@ schema version bump and frontend compatibility handling.
 
 - `root_id`: the active task node, currently `task:active`.
 - `summary`: node and edge counts, selected/omitted counts, memory count, high-risk count, truncation metadata, and the node cap used by the builder.
+- `project_index`: bounded local AgentPack project index from the current checkout's parent directory, including context health, token savings, review count, memory count, and copyable open/refresh commands.
 - `nodes`: typed graph nodes for `task`, `file`, `symbol`, `test`, `episode`, `procedure`, and `action`.
 - `edges`: typed relationships for file/symbol containment, selection, omission, tests, memory influence, procedure applicability, breakage risk, and retrieval.
   `memory_influenced` edges may point at files or selected symbols when recorded learning memory references the file and matches the symbol by concept or symbol name.

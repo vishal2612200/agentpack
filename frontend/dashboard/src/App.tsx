@@ -29,11 +29,12 @@ import {
 import { loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { DashboardEdge, DashboardGraph, DashboardNode, DashboardSnapshot } from "./data/schema";
 
-type View = "cockpit" | "graph" | "memory" | "risk" | "reviews" | "replay" | "raw";
+type View = "cockpit" | "projects" | "graph" | "memory" | "risk" | "reviews" | "replay" | "raw";
 type GraphFilter = "all" | "selected" | "risk" | "memory" | "tests";
 
 const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "cockpit", label: "Cockpit", icon: Activity },
+  { id: "projects", label: "Projects", icon: GitBranch },
   { id: "graph", label: "Task Graph", icon: Network },
   { id: "memory", label: "Memory", icon: Brain },
   { id: "risk", label: "Risk & Tests", icon: ShieldAlert },
@@ -130,6 +131,7 @@ export function App() {
               onLoadSample={loadSample}
             />
           )}
+          {view === "projects" && <ProjectsView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "graph" && (
             <TaskGraph
               graph={payload.graph}
@@ -252,6 +254,7 @@ function CockpitView({
         <button type="button" className="metric-button" onClick={() => onOpenGraph("risk")}>
           <Metric label="High risk" value={graph.summary.high_risk_files} tone="risk" />
         </button>
+        <Metric label="Projects" value={snapshot.project_index?.project_count || 0} tone="neutral" />
         <Metric label="Tokens" value={formatNumber(snapshot.context.packed_tokens || 0)} tone="neutral" />
       </div>
 
@@ -410,6 +413,75 @@ function TaskGraph({
           empty="No graph nodes found."
           onSelect={onSelect}
         />
+      </div>
+    </div>
+  );
+}
+
+function ProjectsView({
+  snapshot,
+  onCopy
+}: {
+  snapshot: DashboardSnapshot;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  const index = snapshot.project_index || { projects: [] };
+  const projects = index.projects || [];
+  return (
+    <div className="view-stack">
+      <SectionTitle title="Projects" subtitle="AgentPack-associated local projects, context health, token savings, and developer-productivity signals." />
+      <div className="metric-grid">
+        <Metric label="Projects" value={index.project_count || 0} tone="neutral" />
+        <Metric label="Stale" value={index.stale_count || 0} tone={index.stale_count ? "warn" : "good"} />
+        <Metric label="Saved tokens" value={formatNumber(index.estimated_saved_tokens || 0)} tone="good" />
+        <Metric label="Avg savings" value={`${index.average_saving_pct || 0}%`} tone="memory" />
+      </div>
+      <div className="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Project</th>
+              <th>Context</th>
+              <th>Tokens</th>
+              <th>Signals</th>
+              <th>Commands</th>
+            </tr>
+          </thead>
+          <tbody>
+            {projects.map((project) => (
+              <tr key={project.path}>
+                <td>
+                  <strong>{project.name}{project.current ? " (current)" : ""}</strong>
+                  <small>{project.task || project.path}</small>
+                  <code>{project.path}</code>
+                </td>
+                <td>
+                  <span className={`badge ${riskTone(project.context_status)}`}>{project.context_status || "unknown"}</span>
+                  {project.branch ? <small>{project.branch} {project.git_sha || ""}</small> : null}
+                </td>
+                <td>
+                  <strong>{project.saving_pct || 0}% saved</strong>
+                  <small>{formatNumber(project.packed_tokens || 0)} / {formatNumber(project.raw_tokens || 0)} tokens</small>
+                </td>
+                <td>
+                  <small>{project.selected_files_count || 0} files</small>
+                  <small>{project.review_runs_count || 0} reviews</small>
+                  <small>{project.memory_count || 0} memories</small>
+                  <small>{project.weak_spots_count || 0} learning spots</small>
+                </td>
+                <td>
+                  <div className="stack-sm">
+                    {project.open_command ? <CopyCommand value={project.open_command} label={`open ${project.name}`} onCopy={onCopy} /> : null}
+                    {project.refresh_command ? <CopyCommand value={project.refresh_command} label={`refresh ${project.name}`} onCopy={onCopy} /> : null}
+                  </div>
+                </td>
+              </tr>
+            ))}
+            {!projects.length ? (
+              <tr><td colSpan={5}>No AgentPack projects found near this checkout.</td></tr>
+            ) : null}
+          </tbody>
+        </table>
       </div>
     </div>
   );
@@ -992,6 +1064,55 @@ function samplePayload(): DashboardPayload {
       path: "/local/sample-repo",
       branch: "feature/auth-hardening",
       git_sha: "sample"
+    },
+    project_index: {
+      root_path: "/local",
+      project_count: 2,
+      stale_count: 1,
+      missing_count: 0,
+      total_raw_tokens: 82000,
+      total_packed_tokens: 2440,
+      estimated_saved_tokens: 79560,
+      average_saving_pct: 96.9,
+      projects: [
+        {
+          name: "sample-repo",
+          path: "/local/sample-repo",
+          current: true,
+          branch: "feature/auth-hardening",
+          git_sha: "sample",
+          task: "Fix auth token expiry without breaking session refresh",
+          context_status: "fresh",
+          packed_tokens: 1240,
+          raw_tokens: 42000,
+          saving_pct: 97,
+          selected_files_count: 2,
+          review_runs_count: 1,
+          memory_count: 3,
+          weak_spots_count: 0,
+          dashboard_path: "/local/sample-repo/.agentpack/index.html",
+          open_command: "cd /local/sample-repo && agentpack dashboard --open",
+          refresh_command: "cd /local/sample-repo && agentpack pack --task auto"
+        },
+        {
+          name: "payments-service",
+          path: "/local/payments-service",
+          branch: "main",
+          git_sha: "pay123",
+          task: "Review checkout retry path",
+          context_status: "stale",
+          packed_tokens: 1200,
+          raw_tokens: 40000,
+          saving_pct: 96.8,
+          selected_files_count: 5,
+          review_runs_count: 2,
+          memory_count: 6,
+          weak_spots_count: 1,
+          dashboard_path: "/local/payments-service/.agentpack/index.html",
+          open_command: "cd /local/payments-service && agentpack dashboard --open",
+          refresh_command: "cd /local/payments-service && agentpack pack --task auto"
+        }
+      ]
     },
     task: {
       text: "Fix auth token expiry without breaking session refresh",
