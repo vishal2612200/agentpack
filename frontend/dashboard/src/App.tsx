@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -11,6 +11,8 @@ import {
   FileText,
   GitBranch,
   ListFilter,
+  Maximize2,
+  Minimize2,
   Network,
   PlayCircle,
   Search,
@@ -21,8 +23,10 @@ import {
   Background,
   Controls,
   ReactFlow,
+  applyNodeChanges,
   type Edge,
   type Node,
+  type NodeChange,
   type NodeMouseHandler
 } from "@xyflow/react";
 import { loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
@@ -343,9 +347,15 @@ function TaskGraph({
   onSelect: (id: string) => void;
 }) {
   const [graphMode, setGraphMode] = useState<GraphMode>("decision");
+  const [isFullscreen, setIsFullscreen] = useState(false);
   const flow = useMemo(() => toFlowGraph(graph, query, filter, selectedId, graphMode), [graph, query, filter, selectedId, graphMode]);
   const { nodes, edges } = flow;
+  const [flowNodes, setFlowNodes] = useState<Node[]>(nodes);
+  const [flowEdges, setFlowEdges] = useState<Edge[]>(edges);
   const handleClick: NodeMouseHandler = (_event, node) => onSelect(node.id);
+  const handleNodesChange = useCallback((changes: NodeChange[]) => {
+    setFlowNodes((current) => applyNodeChanges(changes, current));
+  }, []);
   const filterItems: Array<{ id: GraphFilter; label: string }> = [
     { id: "all", label: "All" },
     { id: "selected", label: "Selected" },
@@ -355,8 +365,19 @@ function TaskGraph({
     { id: "tests", label: "Tests" }
   ];
 
+  useEffect(() => {
+    setFlowNodes((current) => {
+      const currentPositions = new Map(current.map((node) => [node.id, node.position]));
+      return nodes.map((node) => ({
+        ...node,
+        position: currentPositions.get(node.id) || node.position
+      }));
+    });
+    setFlowEdges(edges);
+  }, [nodes, edges]);
+
   return (
-    <div className="graph-shell">
+    <div className={`graph-shell ${isFullscreen ? "fullscreen" : ""}`}>
       <div className="graph-toolbar">
         <span><CircleDot size={14} aria-hidden="true" /> {graph.summary.node_count} nodes</span>
         <span>{graph.summary.edge_count} edges</span>
@@ -372,6 +393,16 @@ function TaskGraph({
             Full
           </Button>
         </div>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="graph-fullscreen-button"
+          aria-pressed={isFullscreen}
+          onClick={() => setIsFullscreen((value) => !value)}
+        >
+          {isFullscreen ? <Minimize2 size={15} aria-hidden="true" /> : <Maximize2 size={15} aria-hidden="true" />}
+          {isFullscreen ? "Exit fullscreen" : "Fullscreen"}
+        </Button>
         <Tabs value={filter} onValueChange={(value) => onFilterChange(value as GraphFilter)}>
           <TabsList aria-label="Graph filter">
           {filterItems.map((item) => (
@@ -393,16 +424,17 @@ function TaskGraph({
           <span><i className="legend-dot test" />Test</span>
         </div>
       </div>
-      {nodes.length ? (
+      {flowNodes.length ? (
         <ReactFlow
-          key={`${graphMode}:${filter}:${query}:${nodes.length}:${edges.length}`}
-          nodes={nodes}
-          edges={edges}
+          key={`${graphMode}:${filter}:${query}:${flowNodes.length}:${flowEdges.length}:${isFullscreen ? "fullscreen" : "inline"}`}
+          nodes={flowNodes}
+          edges={flowEdges}
           fitView
           fitViewOptions={{ padding: 0.18, minZoom: 0.35, maxZoom: 1.05 }}
           minZoom={0.25}
           maxZoom={1.35}
           onNodeClick={handleClick}
+          onNodesChange={handleNodesChange}
           nodesDraggable
           nodesConnectable={false}
           panOnDrag={[2]}
