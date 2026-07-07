@@ -387,6 +387,15 @@ class _GraphBuilder:
     def _add_file_node(self, item: TaskMapFileRow, *, selected: bool) -> None:
         file_id = "file:" + item.path
         reasons = item.why_selected or item.risk_reasons
+        metadata = {
+            "kind": item.kind,
+            "include_mode": item.include_mode,
+            "retrieve_ref": item.retrieve_ref,
+            "why_selected": list(item.why_selected),
+            "risk_reasons": list(item.risk_reasons),
+            "tests_to_run": list(item.tests_to_run),
+            "may_break": list(item.may_break),
+        }
         self._add_node(
             DashboardNode(
                 id=file_id,
@@ -398,7 +407,7 @@ class _GraphBuilder:
                 selected=selected,
                 score=item.score,
                 summary="; ".join(reasons[:3]),
-                metadata={"kind": item.kind, "include_mode": item.include_mode, "retrieve_ref": item.retrieve_ref},
+                metadata=metadata,
                 evidence=[
                     DashboardEvidence(
                         kind="task_map",

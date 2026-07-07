@@ -51,6 +51,9 @@ def test_dashboard_graph_builds_task_context_nodes() -> None:
     assert nodes["task:active"].label == "fix auth token expiry"
     assert nodes["file:src/auth.py"].selected is True
     assert nodes["file:src/auth.py"].risk == "high"
+    assert nodes["file:src/auth.py"].metadata["why_selected"] == ["task keyword match"]
+    assert nodes["file:src/auth.py"].metadata["tests_to_run"] == ["tests/test_auth.py"]
+    assert nodes["file:src/auth.py"].metadata["may_break"] == ["reverse dependents: src/api.py"]
     assert nodes["file:src/session.py"].selected is False
     assert nodes["test:tests/test_auth.py"].type == "test"
     assert any(edge.type == "selected_because" for edge in edges.values())

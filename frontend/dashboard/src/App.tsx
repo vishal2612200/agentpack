@@ -936,12 +936,84 @@ function Inspector({
           {"summary" in selected && selected.summary ? <p>{selected.summary}</p> : null}
           {"reason" in selected && selected.reason ? <p>{selected.reason}</p> : null}
           {"path" in selected && selected.path ? <code>{selected.path}</code> : null}
+          <InspectorMetrics selected={selected} />
+          {"metadata" in selected ? <NodeReasonSections node={selected} /> : null}
+          {"confidence" in selected || "reason" in selected ? <EdgeReasonSection selected={selected} /> : null}
           <InspectorList title="Evidence" items={selected.evidence || []} />
           <ActionList actions={selected.actions || []} onCopy={onCopy} />
           <p className="sr-only" aria-live="polite">{copyMessage}</p>
         </div>
       )}
     </InspectorPanel>
+  );
+}
+
+function InspectorMetrics({ selected }: { selected: DashboardNode | DashboardEdge }) {
+  const items = [
+    "score" in selected && typeof selected.score === "number" && selected.score > 0 ? { label: "Score", value: formatScore(selected.score) } : null,
+    "confidence" in selected && typeof selected.confidence === "number" && selected.confidence > 0 ? { label: "Confidence", value: `${Math.round(selected.confidence * 100)}%` } : null,
+    "metadata" in selected && selected.metadata?.include_mode ? { label: "Mode", value: String(selected.metadata.include_mode) } : null,
+    "metadata" in selected && selected.metadata?.retrieve_ref ? { label: "Retrieve", value: "available" } : null
+  ].filter(Boolean) as Array<{ label: string; value: string }>;
+
+  if (!items.length) return null;
+  return (
+    <div className="inspector-metrics" aria-label="Selection metrics">
+      {items.map((item) => (
+        <span key={`${item.label}:${item.value}`}>
+          <strong>{item.value}</strong>
+          <small>{item.label}</small>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function NodeReasonSections({ node }: { node: DashboardNode }) {
+  const whySelected = metadataStrings(node, "why_selected");
+  const riskReasons = metadataStrings(node, "risk_reasons");
+  const tests = metadataStrings(node, "tests_to_run");
+  const mayBreak = metadataStrings(node, "may_break");
+  const symbolMeta = symbolMetadata(node);
+
+  return (
+    <>
+      <InspectorTextList title="Why selected" items={whySelected} empty="No selection reasoning attached." />
+      <InspectorTextList title="Risk" items={[...riskReasons, ...mayBreak]} empty="No risk notes attached." />
+      <InspectorTextList title="Validation" items={tests.map((test) => test.endsWith(".py") ? `pytest ${test}` : test)} empty="No validation hints attached." />
+      {symbolMeta.length ? <InspectorTextList title="AST details" items={symbolMeta} empty="No AST metadata attached." /> : null}
+      {typeof node.metadata?.retrieve_ref === "string" && node.metadata.retrieve_ref ? (
+        <InspectorTextList title="Retrieval" items={[`agentpack retrieve --block-id "${node.metadata.retrieve_ref}"`]} empty="No retrieval ref attached." />
+      ) : null}
+    </>
+  );
+}
+
+function EdgeReasonSection({ selected }: { selected: DashboardNode | DashboardEdge }) {
+  if (!("source" in selected)) return null;
+  const items = [
+    selected.reason || "",
+    typeof selected.confidence === "number" && selected.confidence > 0 ? `Confidence ${Math.round(selected.confidence * 100)}%` : ""
+  ].filter(Boolean);
+  return <InspectorTextList title="Connection" items={items} empty="No connection reason attached." />;
+}
+
+function InspectorTextList({ title, items, empty }: { title: string; items: string[]; empty: string }) {
+  return (
+    <section className="inspector-section">
+      <h3>{title}</h3>
+      {items.length ? (
+        <ul>
+          {items.slice(0, 8).map((item, index) => (
+            <li key={`${title}:${item}:${index}`}>
+              <span>{item}</span>
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p className="empty">{empty}</p>
+      )}
+    </section>
   );
 }
 
@@ -1377,16 +1449,51 @@ function edgeLabel(edge: DashboardEdge) {
   return edge.label || edge.type;
 }
 
+function metadataStrings(node: DashboardNode, key: string) {
+  const value = node.metadata?.[key];
+  if (!Array.isArray(value)) return [];
+  return value.map((item) => String(item || "").trim()).filter(Boolean);
+}
+
+function symbolMetadata(node: DashboardNode) {
+  if (node.type !== "symbol") return [];
+  return [
+    node.metadata?.symbol ? `Symbol ${String(node.metadata.symbol)}` : "",
+    node.metadata?.kind ? `Kind ${String(node.metadata.kind)}` : "",
+    node.path ? `File ${node.path}` : "",
+    lineRange(node) ? `Lines ${lineRange(node)}` : ""
+  ].filter(Boolean);
+}
+
+function lineRange(node: DashboardNode) {
+  const start = Number(node.metadata?.start_line || 0);
+  const end = Number(node.metadata?.end_line || 0);
+  if (start > 0 && end > 0 && end !== start) return `L${start}-L${end}`;
+  if (start > 0) return `L${start}`;
+  return "";
+}
+
+function formatScore(score?: number) {
+  if (typeof score !== "number" || score <= 0) return "";
+  if (score >= 1000) return "score 1000";
+  if (score >= 100) return `score ${Math.round(score)}`;
+  return `score ${Math.round(score * 10) / 10}`;
+}
+
 function nodeLabel(node: DashboardNode) {
   const family = nodeFamily(node);
+  const primaryReason = node.type === "file" ? metadataStrings(node, "why_selected")[0] || node.summary : "";
   const detail = node.type === "symbol"
-    ? String(node.metadata?.kind || "symbol")
+    ? [String(node.metadata?.kind || "symbol"), lineRange(node)].filter(Boolean).join(" · ")
+    : node.type === "file"
+      ? [formatScore(node.score), node.risk || "", String(node.metadata?.include_mode || "")].filter(Boolean).join(" · ")
     : node.status || node.risk || node.type;
   return (
     <div className="node-label">
       <small className={`node-family ${family.tone}`}>{family.label}</small>
       <span>{node.label}</span>
       {detail ? <small>{detail}</small> : null}
+      {primaryReason ? <small className="node-reason">{primaryReason}</small> : null}
     </div>
   );
 }
