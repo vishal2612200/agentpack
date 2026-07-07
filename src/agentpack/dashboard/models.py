@@ -49,6 +49,19 @@ class SelectedFileRow(BaseModel):
     reasons: list[str] = Field(default_factory=list)
 
 
+class TaskMapFileRow(BaseModel):
+    path: str
+    kind: str = ""
+    include_mode: str = ""
+    score: float = 0.0
+    risk_level: str = "low"
+    risk_reasons: list[str] = Field(default_factory=list)
+    why_selected: list[str] = Field(default_factory=list)
+    tests_to_run: list[str] = Field(default_factory=list)
+    may_break: list[str] = Field(default_factory=list)
+    retrieve_ref: str = ""
+
+
 class SkillRow(BaseModel):
     name: str
     path: str = ""
@@ -198,6 +211,7 @@ class DashboardSnapshot(BaseModel):
     task: TaskInfo = Field(default_factory=TaskInfo)
     context: ContextHealth = Field(default_factory=ContextHealth)
     selected_files: list[SelectedFileRow] = Field(default_factory=list)
+    task_map: list[TaskMapFileRow] = Field(default_factory=list)
     skills: SkillSection = Field(default_factory=SkillSection)
     skills_inventory: SkillsInventorySummary = Field(default_factory=SkillsInventorySummary)
     skill_feedback: dict[str, Any] = Field(default_factory=dict)

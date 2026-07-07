@@ -69,11 +69,14 @@ MCP_TOOL_NAMES = (
     "explain_file",
     "get_related_files",
     "get_delta_context",
+    "get_task_map",
     "retrieve_context",
     "compress_output",
     "validate_toon",
     "get_stats",
 )
+
+MAX_RETRIEVE_TARGETS = 12
 
 
 def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str:
@@ -597,25 +600,83 @@ def _get_delta_context_impl(root: Path, max_files: int = 12) -> str:
     return "\n".join(lines)
 
 
-def _retrieve_context_impl(root: Path, path: str = "", block_id: str = "", mode: str = "as_stored", allow_stale: bool = False) -> str:
+def _get_task_map_impl(root: Path, output_format: StructuredFormat = "auto", max_files: int = 50) -> str:
+    metadata = load_pack_metadata(root) or {}
+    task_map = metadata.get("task_map") if isinstance(metadata, dict) else {}
+    if not isinstance(task_map, dict) or not task_map:
+        return "No task map found. Run `agentpack pack` or MCP `pack_context()` first."
+    files = task_map.get("files")
+    if isinstance(files, list) and max_files > 0:
+        task_map = {**task_map, "files": files[:max_files]}
+    requested = "toon" if output_format == "auto" else output_format
+    return to_llm(root, task_map, requested=requested, root_name="agentpack_task_map")
+
+
+def _retrieve_context_impl(
+    root: Path,
+    path: str = "",
+    block_id: str = "",
+    mode: str = "as_stored",
+    allow_stale: bool = False,
+    *,
+    targets: list[str] | None = None,
+    kind: str = "any",
+) -> str:
     from agentpack.core.config import load_config
     from agentpack.core.pack_registry import retrieve_from_registry
     from agentpack.session.events import record_event
 
     cfg = load_config(root)
-    result = retrieve_from_registry(
-        root,
-        path=path,
-        block_id=block_id,
-        mode=mode,
-        allow_stale=allow_stale,
-        max_chars=cfg.runtime.max_retrieve_chars,
-        registry_file=root / cfg.runtime.pack_registry_output,
-    )
+    clean_kind = kind if kind in {"any", "selected", "omitted"} else "any"
+    target_paths = [item for item in (targets or []) if item]
+    if target_paths:
+        selected_targets = target_paths[:MAX_RETRIEVE_TARGETS]
+        results = [
+            retrieve_from_registry(
+                root,
+                path=target,
+                mode=mode,
+                allow_stale=allow_stale,
+                kind=clean_kind,  # type: ignore[arg-type]
+                max_chars=cfg.runtime.max_retrieve_chars,
+                registry_file=root / cfg.runtime.pack_registry_output,
+            )
+            for target in selected_targets
+        ]
+        truncated_targets = len(target_paths) - len(selected_targets)
+        if truncated_targets > 0:
+            results.insert(
+                0,
+                f"Note: retrieve_context targets truncated to first {MAX_RETRIEVE_TARGETS}; "
+                f"{truncated_targets} target(s) not retrieved.",
+            )
+        result = "\n\n---\n\n".join(results)
+    else:
+        selected_targets = []
+        truncated_targets = 0
+        result = retrieve_from_registry(
+            root,
+            path=path,
+            block_id=block_id,
+            mode=mode,
+            allow_stale=allow_stale,
+            kind=clean_kind,  # type: ignore[arg-type]
+            max_chars=cfg.runtime.max_retrieve_chars,
+            registry_file=root / cfg.runtime.pack_registry_output,
+        )
     record_event(
         root,
         "retrieve",
-        {"path": path, "block_id": block_id, "mode": mode, "allow_stale": allow_stale},
+        {
+            "path": path,
+            "block_id": block_id,
+            "targets": target_paths,
+            "retrieved_targets": selected_targets,
+            "truncated_targets": truncated_targets,
+            "mode": mode,
+            "kind": clean_kind,
+            "allow_stale": allow_stale,
+        },
         output_path=cfg.runtime.session_events_output,
     )
     return result
@@ -913,16 +974,43 @@ def serve() -> None:
         return _get_delta_context_impl(_repo_root(), max_files)
 
     @mcp.tool()
-    def retrieve_context(path: str = "", block_id: str = "", mode: str = "as_stored", allow_stale: bool = False) -> str:
+    def get_task_map(format: str = "toon", max_files: int = 50) -> str:
+        """Return risk-aware task map for the latest pack without loading full context.
+
+        Args:
+            format: auto | toon | json.
+            max_files: Maximum task-map rows to include. Default 50.
+        """
+        return _get_task_map_impl(_repo_root(), output_format=format, max_files=max_files)
+
+    @mcp.tool()
+    def retrieve_context(
+        path: str = "",
+        block_id: str = "",
+        mode: str = "as_stored",
+        allow_stale: bool = False,
+        targets: list[str] | None = None,
+        kind: str = "any",
+    ) -> str:
         """Retrieve full or stored content for a selected/omitted pack registry record.
 
         Args:
             path: Repo-relative path to retrieve.
             block_id: Stable block id from the pack registry. Optional if path is set.
-            mode: as_stored | full | skeleton | summary.
+            mode: as_stored | full | skeleton | symbols | summary.
             allow_stale: If false, refuse retrieval when file changed since the latest pack.
+            targets: Optional list of repo-relative paths to retrieve in one call (max 12; extras are reported).
+            kind: any | selected | omitted.
         """
-        return _retrieve_context_impl(_repo_root(), path=path, block_id=block_id, mode=mode, allow_stale=allow_stale)
+        return _retrieve_context_impl(
+            _repo_root(),
+            path=path,
+            block_id=block_id,
+            mode=mode,
+            allow_stale=allow_stale,
+            targets=targets,
+            kind=kind,
+        )
 
     @mcp.tool()
     def compress_output(content: str, kind: str = "auto") -> str:

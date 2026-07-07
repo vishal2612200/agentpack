@@ -5,6 +5,7 @@ from collections import defaultdict
 from agentpack.core.models import Citation, ContextPack, OmittedRelevantFile, SelectedFile, Symbol
 from agentpack.core.command_surface import refresh_commands
 from agentpack.core.pack_handoff import build_pack_handoff
+from agentpack.core.task_map import task_map_for_path
 from agentpack.core.token_estimator import estimate_tokens
 from agentpack.renderers.toon import render_toon
 
@@ -97,17 +98,52 @@ def _omitted_relevant_lines(pack: ContextPack, limit: int = 10) -> list[str]:
         "function signatures, data models, API contracts, or side effects."
     )
     lines.append("")
-    lines.append("| # | File | Risk | Score | Why | Suggested action |")
-    lines.append("|---:|---|---|---:|---|---|")
+    lines.append("| # | File | Risk | Score | Why | Suggested action | Retrieve |")
+    lines.append("|---:|---|---|---:|---|---|---|")
     for index, item in enumerate(omitted, start=1):
+        task_item = task_map_for_path(pack.task_map, item.path, "omitted")
         lines.append(
             f"| {index} | `{item.path}` | {item.risk.upper()} | {item.score:.0f} | "
-            f"{_omitted_reason(item)} | {_omitted_action(item)} |"
+            f"{_omitted_reason(item)} | {_omitted_action(item)} | {_retrieve_hint(task_item)} |"
         )
     hidden = len(pack.omitted_relevant_files) - len(omitted)
     if hidden > 0:
         lines.append("")
         lines.append(f"_+{hidden} more omitted relevant file(s) hidden._")
+    lines.append("")
+    return lines
+
+
+def _retrieve_hint(task_item: dict[str, object]) -> str:
+    ref = str(task_item.get("retrieve_ref") or "")
+    if not ref:
+        return ""
+    return f"`retrieve_context(block_id=\"{ref}\")`"
+
+
+def _task_map_lines(pack: ContextPack, limit: int = 15) -> list[str]:
+    files = pack.task_map.get("files") if isinstance(pack.task_map, dict) else None
+    if not isinstance(files, list) or not files:
+        return []
+    lines = ["## Task Map", ""]
+    lines.append("Risk is advisory. Source files, tests, runtime evidence, and review remain authoritative.")
+    lines.append("")
+    lines.append("| File | Kind | Risk | Why | Tests | May break | Retrieve |")
+    lines.append("|---|---|---|---|---|---|---|")
+    for item in files[:limit]:
+        if not isinstance(item, dict):
+            continue
+        tests = ", ".join(f"`{test}`" for test in (item.get("tests_to_run") or [])[:3]) if isinstance(item.get("tests_to_run"), list) else ""
+        may_break = "; ".join(str(value) for value in (item.get("may_break") or [])[:2]) if isinstance(item.get("may_break"), list) else ""
+        why = "; ".join(str(value) for value in (item.get("why_selected") or [])[:2]) if isinstance(item.get("why_selected"), list) else ""
+        lines.append(
+            f"| `{item.get('path') or ''}` | {item.get('kind') or ''} | "
+            f"{str(item.get('risk_level') or '').upper()} | {why} | {tests} | {may_break} | {_retrieve_hint(item)} |"
+        )
+    hidden = len(files) - limit
+    if hidden > 0:
+        lines.append("")
+        lines.append(f"_+{hidden} more task-map file(s) hidden. Use MCP `get_task_map()` for full detail._")
     lines.append("")
     return lines
 
@@ -532,6 +568,7 @@ def render_claude(pack: ContextPack) -> str:
         sections.extend(_concurrent_context_lines(pack.concurrent_context))
 
     sections.extend(_pack_handoff_lines(pack))
+    sections.extend(_task_map_lines(pack))
 
     if pack.agent_lessons:
         sections.append("## Agent Lessons From Prior Work")
@@ -581,11 +618,16 @@ def render_claude(pack: ContextPack) -> str:
 
     sections.append("## Selected Files")
     sections.append("")
-    sections.append("| File | Mode | Score | Sources | Why |")
-    sections.append("|---|---|---:|---|---|")
+    sections.append("| File | Mode | Score | Risk | Sources | Why | Retrieve |")
+    sections.append("|---|---|---:|---|---|---|---|")
     for sf in pack.selected_files:
         why = sf.reasons[0] if sf.reasons else ""
-        sections.append(f"| `{sf.path}` | {sf.include_mode} | {sf.score:.0f} | {_citation_summary(sf.citations)} | {why} |")
+        task_item = task_map_for_path(pack.task_map, sf.path, "selected")
+        risk = str(task_item.get("risk_level") or "").upper()
+        sections.append(
+            f"| `{sf.path}` | {sf.include_mode} | {sf.score:.0f} | {risk} | "
+            f"{_citation_summary(sf.citations)} | {why} | {_retrieve_hint(task_item)} |"
+        )
     sections.append("")
 
     if pack.selected_files:

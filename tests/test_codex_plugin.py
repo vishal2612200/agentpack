@@ -69,7 +69,7 @@ def test_codex_plugin_has_distribution_screenshot() -> None:
 def test_hol_plugin_scanner_workflow_exists() -> None:
     workflow = (ROOT / ".github" / "workflows" / "hol-plugin-scanner.yml").read_text(encoding="utf-8")
 
-    assert "hashgraph-online/ai-plugin-scanner-action@b7d8b3299327f03f6e0a4a1eccbc5e3ee748151d" in workflow
+    assert "hashgraph-online/ai-plugin-scanner-action@b4ca70a7342b42e712df83f832b464110cb81f18" in workflow
     assert 'plugin_dir: "src/agentpack/data/codex_plugin"' in workflow
     assert "min_score: 80" in workflow
     assert "fail_on_severity: high" in workflow

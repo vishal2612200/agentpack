@@ -12,6 +12,7 @@ from agentpack.mcp_server import (
     _truncate_to_budget,
     _get_context_impl,
     _get_delta_context_impl,
+    _get_task_map_impl,
     _get_stats_impl,
     _retrieve_context_impl,
     _compress_output_impl,
@@ -216,6 +217,97 @@ def test_mcp_retrieve_context_missing_registry(tmp_path):
     result = _retrieve_context_impl(tmp_path, path="src/app.py")
 
     assert "No pack registry found" in result
+
+
+def test_mcp_get_task_map_returns_json(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "pack_metadata.json").write_text(
+        json.dumps(
+            {
+                "task_map": {
+                    "schema_version": 1,
+                    "task": "fix auth",
+                    "files": [
+                        {
+                            "path": "src/auth.py",
+                            "kind": "selected",
+                            "risk_level": "medium",
+                            "retrieve_ref": "src__auth.py:abc123",
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = json.loads(_get_task_map_impl(tmp_path, "json"))
+
+    assert payload["task"] == "fix auth"
+    assert payload["files"][0]["retrieve_ref"] == "src__auth.py:abc123"
+
+
+def test_mcp_retrieve_context_supports_targets_and_kind(tmp_path):
+    from agentpack.core.models import ContextPack, FileInfo, OmittedRelevantFile, SelectedFile
+    from agentpack.core.pack_registry import save_pack_registry
+    from agentpack.core.scanner import file_hash
+
+    source = tmp_path / "src.py"
+    source.write_text("def run():\n    return 1\n", encoding="utf-8")
+    pack = ContextPack(
+        task="test",
+        agent="generic",
+        mode="balanced",
+        budget=1000,
+        token_estimate=10,
+        raw_repo_tokens=100,
+        after_ignore_tokens=100,
+        estimated_savings_percent=90,
+        changed_files=["src.py"],
+        selected_files=[SelectedFile(path="src.py", score=100, include_mode="summary", reasons=["modified"], summary="selected")],
+        omitted_relevant_files=[
+            OmittedRelevantFile(path="src.py", score=80, estimated_tokens=10, suggested_mode="full", omission_reason="omitted")
+        ],
+        receipts=[],
+        freshness={"snapshot_root_hash": "abc", "generated_at": "2026-01-01T00:00:00+00:00"},
+    )
+    info = FileInfo(path="src.py", abs_path=source, size_bytes=source.stat().st_size, estimated_tokens=10, hash=file_hash(source))
+    save_pack_registry(tmp_path, pack, [info])
+
+    result = _retrieve_context_impl(tmp_path, targets=["src.py"], kind="omitted")
+
+    assert "- kind: omitted" in result
+    assert "omitted" in result
+
+
+def test_mcp_retrieve_context_reports_truncated_targets(tmp_path):
+    from agentpack.core.models import ContextPack, FileInfo, SelectedFile
+    from agentpack.core.pack_registry import save_pack_registry
+    from agentpack.core.scanner import file_hash
+
+    source = tmp_path / "src.py"
+    source.write_text("def run():\n    return 1\n", encoding="utf-8")
+    pack = ContextPack(
+        task="test",
+        agent="generic",
+        mode="balanced",
+        budget=1000,
+        token_estimate=10,
+        raw_repo_tokens=100,
+        after_ignore_tokens=100,
+        estimated_savings_percent=90,
+        changed_files=["src.py"],
+        selected_files=[SelectedFile(path="src.py", score=100, include_mode="summary", reasons=["modified"], summary="selected")],
+        omitted_relevant_files=[],
+        receipts=[],
+        freshness={"snapshot_root_hash": "abc", "generated_at": "2026-01-01T00:00:00+00:00"},
+    )
+    info = FileInfo(path="src.py", abs_path=source, size_bytes=source.stat().st_size, estimated_tokens=10, hash=file_hash(source))
+    save_pack_registry(tmp_path, pack, [info])
+
+    result = _retrieve_context_impl(tmp_path, targets=["src.py"] * 13)
+
+    assert "Note: retrieve_context targets truncated to first 12; 1 target(s) not retrieved." in result
 
 
 # ---------------------------------------------------------------------------

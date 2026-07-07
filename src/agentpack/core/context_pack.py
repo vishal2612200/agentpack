@@ -72,6 +72,7 @@ def save_pack_metadata(
     citation_manifest_path: str = "",
     citation_summary: dict[str, Any] | None = None,
     token_contract: dict[str, Any] | None = None,
+    task_map: dict[str, Any] | None = None,
     metadata_path: Path | None = None,
 ) -> None:
     generated_at = (
@@ -99,6 +100,7 @@ def save_pack_metadata(
         "citation_manifest_path": citation_manifest_path,
         "citation_summary": citation_summary or {},
         "token_contract": token_contract or {},
+        "task_map": task_map or {},
     }
     if freshness:
         for key in (

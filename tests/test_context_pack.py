@@ -4157,6 +4157,16 @@ def test_save_pack_metadata_persists_freshness(tmp_path):
             }
         ],
         pack_handoff={"recommended_action": "ready_to_inspect_selected"},
+        task_map={
+            "files": [
+                {
+                    "path": "src/auth.py",
+                    "kind": "selected",
+                    "risk_level": "medium",
+                    "retrieve_ref": "src__auth.py:abc123",
+                }
+            ]
+        },
     )
     meta = (tmp_path / ".agentpack" / "pack_metadata.json").read_text()
     assert '"git_sha": "abc123"' in meta
@@ -4167,6 +4177,8 @@ def test_save_pack_metadata_persists_freshness(tmp_path):
     assert '"path": "src/auth.py"' in meta
     assert '"pack_handoff": {' in meta
     assert '"recommended_action": "ready_to_inspect_selected"' in meta
+    assert '"task_map": {' in meta
+    assert '"retrieve_ref": "src__auth.py:abc123"' in meta
 
 
 def test_save_pack_metadata_persists_real_pack_handoff_v2_fields(tmp_path):

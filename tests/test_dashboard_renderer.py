@@ -19,6 +19,7 @@ from agentpack.dashboard.models import (
     SkillsInventorySummary,
     SuggestedAction,
     TaskInfo,
+    TaskMapFileRow,
 )
 from agentpack.dashboard.renderers import render_dashboard_html
 
@@ -31,6 +32,17 @@ def test_render_dashboard_html_contains_core_sections() -> None:
             task=TaskInfo(text="fix auth", state="in_progress"),
             context=ContextHealth(status="fresh", mode="balanced", packed_tokens=1200, raw_tokens=40000),
             selected_files=[SelectedFileRow(path="src/auth.py", include_mode="full", score=120)],
+            task_map=[
+                TaskMapFileRow(
+                    path="src/auth.py",
+                    kind="selected",
+                    risk_level="medium",
+                    why_selected=["modified"],
+                    tests_to_run=["tests/test_auth.py"],
+                    may_break=["reverse dependents: src/api.py"],
+                    retrieve_ref="src__auth.py:abc123",
+                )
+            ],
             skills=SkillSection(
                 task_specific=[SkillRow(name="auth-review", confidence=0.8, status="used_helpful")]
             ),
@@ -77,6 +89,10 @@ def test_render_dashboard_html_contains_core_sections() -> None:
     assert "AgentPack Dashboard" in html
     assert "fix auth" in html
     assert "src/auth.py" in html
+    assert "Task Map" in html
+    assert 'href="#task-map"' in html
+    assert "tests/test_auth.py" in html
+    assert "retrieve_context(block_id=&quot;src__auth.py:abc123&quot;)" in html
     assert "auth-review" in html
     assert "selection_recall" in html
     assert "Guarded Loop" in html

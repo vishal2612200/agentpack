@@ -5,6 +5,7 @@ features around that router without becoming a provider proxy.
 
 | Need | AgentPack surface |
 |---|---|
+| Inspect risk, tests, impact, and retrieve refs for latest pack | MCP `get_task_map` and `agentpack dashboard` |
 | Retrieve selected, symbol, or omitted context after a pack | `agentpack retrieve` and MCP `retrieve_context` |
 | Record cheap task memory while work starts or finishes | `agentpack work` and `agentpack finish` |
 | Generate on-demand lessons, quiz, interview prep, or failure drills | `agentpack learn "<request>"` and `@agentpack-learn <request>` |
@@ -22,7 +23,8 @@ The runtime loop keeps the first context pack small and reversible:
 
 - **Compress** repo files into budget-aware pack views and compress noisy command output into failure-focused summaries.
 - **Cache** snapshots, summaries, pack metadata, registry records, session events, and learning feedback locally under `.agentpack/`.
-- **Retrieve** precise file or symbol context from the latest pack registry through `agentpack retrieve` or MCP `retrieve_context`.
+- **Map** selected and omitted files into Task Map v1 rows: why selected, advisory risk, related tests, likely impact, and retrieve refs.
+- **Retrieve** precise file, symbol, or omitted context from the latest pack registry through `agentpack retrieve` or MCP `retrieve_context`.
 
 Rendered packs are prompt-cache friendly by default. Every markdown and compact
 context artifact starts with the same stable instructions and mode legend before
@@ -47,8 +49,9 @@ across refreshes without users selecting a separate render mode.
 
 AgentPack does not proxy LLM traffic, rewrite provider requests, or replace raw
 logs as source of truth. Retrieval uses the latest local pack registry, supports
-symbol-level block IDs when the latest pack contains symbols, and refuses stale
-full-file reads unless explicitly allowed.
+symbol-level and omitted-file block IDs when the latest pack contains them, and
+refuses stale full-file reads unless explicitly allowed. Task-map risk levels
+are advisory routing hints, not proof that a file is safe or unsafe.
 
 `agentpack work --run` is optional. It is a guarded proof harness around an
 external coding agent, not the main AgentPack workflow and not a fully

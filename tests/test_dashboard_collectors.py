@@ -13,6 +13,7 @@ from agentpack.dashboard.models import (
     SkillRow,
     SkillSection,
     TaskInfo,
+    TaskMapFileRow,
 )
 from agentpack.learning.models import LearningSession
 
@@ -30,6 +31,17 @@ def test_dashboard_snapshot_is_json_safe() -> None:
                 score=120.0,
                 tokens=450,
                 reasons=["task keyword match"],
+            )
+        ],
+        task_map=[
+            TaskMapFileRow(
+                path="src/auth.py",
+                kind="selected",
+                risk_level="medium",
+                why_selected=["modified"],
+                tests_to_run=["tests/test_auth.py"],
+                may_break=["reverse dependents: src/api.py"],
+                retrieve_ref="src__auth.py:abc123",
             )
         ],
         skills=SkillSection(
@@ -52,6 +64,7 @@ def test_dashboard_snapshot_is_json_safe() -> None:
     assert payload["schema_version"] == 1
     assert payload["project"]["name"] == "repo"
     assert payload["selected_files"][0]["path"] == "src/auth.py"
+    assert payload["task_map"][0]["risk_level"] == "medium"
     assert payload["skills"]["task_specific"][0]["status"] == "used_helpful"
 
 
@@ -85,6 +98,19 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
                         "reasons": ["task keyword match", "related test"],
                     }
                 ],
+                "task_map": {
+                    "files": [
+                        {
+                            "path": "src/auth/token.py",
+                            "kind": "selected",
+                            "risk_level": "high",
+                            "why_selected": ["task keyword match"],
+                            "tests_to_run": ["tests/test_token.py"],
+                            "may_break": ["reverse dependents: src/api.py"],
+                            "retrieve_ref": "src__auth__token.py:abc123",
+                        }
+                    ]
+                },
                 "freshness": {"status": "fresh"},
             }
         ),
@@ -102,6 +128,8 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
     assert snapshot.context.packed_tokens == 1450
     assert snapshot.context.raw_tokens == 40000
     assert snapshot.selected_files[0].path == "src/auth/token.py"
+    assert snapshot.task_map[0].path == "src/auth/token.py"
+    assert snapshot.task_map[0].risk_level == "high"
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8
 
 
