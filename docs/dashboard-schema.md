@@ -18,6 +18,7 @@ schema version bump and frontend compatibility handling.
 - `summary`: node and edge counts, selected/omitted counts, memory count, high-risk count, truncation metadata, and the node cap used by the builder.
 - `nodes`: typed graph nodes for `task`, `file`, `symbol`, `test`, `episode`, `procedure`, and `action`.
 - `edges`: typed relationships for file/symbol containment, selection, omission, tests, memory influence, procedure applicability, breakage risk, and retrieval.
+  `memory_influenced` edges may point at files or selected symbols when recorded learning memory references the file and matches the symbol by concept or symbol name.
 
 Node IDs are stable within a generated dashboard:
 

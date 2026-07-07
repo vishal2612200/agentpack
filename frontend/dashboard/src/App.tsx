@@ -786,10 +786,11 @@ function nextDecision(payload: DashboardPayload): { title: string; detail: strin
 
 function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, selectedId: string): { nodes: Node[]; edges: Edge[] } {
   const lower = query.trim().toLowerCase();
+  const memoryTargets = new Set(graph.edges.filter((edge) => edge.type === "memory_influenced").map((edge) => edge.target));
   const visible = new Set(
     graph.nodes
       .filter((node) => {
-        if (!matchesGraphFilter(node, filter)) return false;
+        if (!matchesGraphFilter(node, filter, memoryTargets)) return false;
         if (!lower) return true;
         return [node.label, node.path, node.summary, node.type].some((value) => String(value || "").toLowerCase().includes(lower));
       })
@@ -818,10 +819,10 @@ function toFlowGraph(graph: DashboardGraph, query: string, filter: GraphFilter, 
   return { nodes, edges };
 }
 
-function matchesGraphFilter(node: DashboardNode, filter: GraphFilter) {
-  if (filter === "selected") return node.type === "task" || (node.type === "file" && Boolean(node.selected));
+function matchesGraphFilter(node: DashboardNode, filter: GraphFilter, memoryTargets: Set<string>) {
+  if (filter === "selected") return node.type === "task" || ((node.type === "file" || node.type === "symbol") && Boolean(node.selected));
   if (filter === "risk") return node.type === "task" || node.risk === "high" || node.risk === "medium" || node.type === "action";
-  if (filter === "memory") return node.type === "task" || node.type === "episode" || node.type === "procedure";
+  if (filter === "memory") return node.type === "task" || node.type === "episode" || node.type === "procedure" || memoryTargets.has(node.id);
   if (filter === "tests") return node.type === "task" || node.type === "test" || node.actions?.some((action) => action.command?.includes("pytest"));
   return true;
 }
@@ -885,7 +886,23 @@ function samplePayload(): DashboardPayload {
       selected_files_count: 2
     },
     selected_files: [
-      { path: "src/auth/token.py", include_mode: "full", score: 220, reasons: ["task keyword match", "changed file"] },
+      {
+        path: "src/auth/token.py",
+        include_mode: "full",
+        score: 220,
+        reasons: ["task keyword match", "changed file"],
+        symbols: [
+          {
+            name: "refresh_token",
+            kind: "function",
+            start_line: 42,
+            end_line: 68,
+            signature: "def refresh_token(session: Session) -> Token",
+            summary: "Refreshes auth tokens for active sessions.",
+            node_id: "sample-refresh-token"
+          }
+        ]
+      },
       { path: "tests/test_auth_token.py", include_mode: "full", score: 160, reasons: ["related test"] }
     ],
     task_map: [
@@ -950,8 +967,8 @@ function samplePayload(): DashboardPayload {
     generated_at: snapshot.generated_at,
     root_id: "task:active",
     summary: {
-      node_count: 6,
-      edge_count: 5,
+      node_count: 7,
+      edge_count: 7,
       selected_files: 2,
       omitted_files: 1,
       memory_nodes: 1,
@@ -976,6 +993,16 @@ function samplePayload(): DashboardPayload {
         ]
       },
       {
+        id: "symbol:sample-refresh-token",
+        type: "symbol",
+        label: "refresh_token",
+        path: "src/auth/token.py",
+        selected: true,
+        summary: "Refreshes auth tokens for active sessions.",
+        metadata: { file: "src/auth/token.py", symbol: "refresh_token", kind: "function", start_line: 42 },
+        evidence: [{ kind: "symbol", ref: "L42-L68", summary: "def refresh_token(session: Session) -> Token", path: "src/auth/token.py", line: 42 }]
+      },
+      {
         id: "file:src/auth/session.py",
         type: "file",
         label: "session.py",
@@ -991,9 +1018,11 @@ function samplePayload(): DashboardPayload {
     ],
     edges: [
       { id: "edge:task:file:token", source: "task:active", target: "file:src/auth/token.py", type: "selected_because", label: "selected", confidence: 0.9 },
+      { id: "edge:file:symbol:refresh", source: "file:src/auth/token.py", target: "symbol:sample-refresh-token", type: "contains", label: "contains", confidence: 0.9 },
       { id: "edge:task:file:session", source: "task:active", target: "file:src/auth/session.py", type: "omitted_because", label: "omitted", confidence: 0.6 },
       { id: "edge:file:test", source: "file:src/auth/token.py", target: "test:tests/test_auth_token.py", type: "tested_by", label: "tested by", confidence: 0.8 },
       { id: "edge:memory:file", source: "episode:task-memory:session-refresh", target: "file:src/auth/token.py", type: "memory_influenced", label: "memory", confidence: 0.7 },
+      { id: "edge:memory:symbol", source: "episode:task-memory:session-refresh", target: "symbol:sample-refresh-token", type: "memory_influenced", label: "memory", confidence: 0.75 },
       { id: "edge:file:impact", source: "file:src/auth/token.py", target: "action:impact:auth", type: "may_break", label: "may break", confidence: 0.6 }
     ]
   };

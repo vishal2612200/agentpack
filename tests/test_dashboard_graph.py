@@ -122,6 +122,59 @@ def test_dashboard_graph_builds_symbol_nodes_for_selected_files() -> None:
     assert any(edge.type == "contains" and edge.source == "file:src/auth.py" and edge.target == symbol.id for edge in graph.edges)
 
 
+def test_dashboard_graph_links_task_memory_to_matching_symbols() -> None:
+    snapshot = DashboardSnapshot(
+        project=ProjectInfo(name="repo", path="/tmp/repo"),
+        task=TaskInfo(text="fix cache ttl"),
+        selected_files=[
+            SelectedFileRow(
+                path="src/cache.py",
+                include_mode="symbols",
+                symbols=[
+                    SelectedSymbolRow(
+                        name="refresh_cache",
+                        kind="function",
+                        start_line=10,
+                        end_line=18,
+                        signature="def refresh_cache(ttl: int) -> None",
+                        summary="Refreshes cache entries after TTL changes.",
+                        node_id="node:refresh-cache",
+                    ),
+                    SelectedSymbolRow(
+                        name="serialize_value",
+                        kind="function",
+                        start_line=25,
+                        end_line=30,
+                        signature="def serialize_value(value: object) -> str",
+                        summary="Serializes values.",
+                        node_id="node:serialize-value",
+                    ),
+                ],
+            )
+        ],
+        task_map=[TaskMapFileRow(path="src/cache.py", kind="selected", include_mode="symbols")],
+        learning_memories=[
+            {
+                "task": "Fix cache ttl bug",
+                "status": "done",
+                "concepts": ["caching"],
+                "changed_files": ["src/cache.py"],
+                "selected_files": [],
+            }
+        ],
+    )
+
+    graph = build_dashboard_graph(snapshot)
+    edges = [edge for edge in graph.edges if edge.type == "memory_influenced"]
+
+    assert any(edge.target == "file:src/cache.py" for edge in edges)
+    symbol_edges = [edge for edge in edges if edge.target.startswith("symbol:")]
+    assert len(symbol_edges) == 1
+    assert symbol_edges[0].target == "symbol:node:refresh-cache"
+    assert "concept:caching" in symbol_edges[0].evidence[0].ref
+    assert symbol_edges[0].evidence[0].line == 10
+
+
 def test_dashboard_graph_reads_timeline_memory_and_marks_stale(tmp_path) -> None:
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()

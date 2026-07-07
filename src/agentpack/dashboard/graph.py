@@ -201,6 +201,13 @@ class _GraphBuilder:
 
     def add_learning_memories(self) -> None:
         file_node_ids = {node.path: node.id for node in self.nodes.values() if node.type == "file" and node.path}
+        symbol_nodes: dict[str, list[DashboardNode]] = {}
+        for node in self.nodes.values():
+            if node.type != "symbol":
+                continue
+            symbol_file = str(node.metadata.get("file") or "")
+            if symbol_file:
+                symbol_nodes.setdefault(symbol_file, []).append(node)
         for memory in self.snapshot.learning_memories[:20]:
             memory_id = "episode:task-memory:" + _slug(memory.task or memory.git_sha or "memory")
             self._add_node(
@@ -214,7 +221,7 @@ class _GraphBuilder:
                     evidence=[DashboardEvidence(kind="task_memory", summary=memory.task)],
                 )
             )
-            for path in [*memory.changed_files, *memory.selected_files]:
+            for path in _unique_strings([*memory.changed_files, *memory.selected_files]):
                 file_id = file_node_ids.get(path)
                 if file_id:
                     self._add_edge(
@@ -227,6 +234,30 @@ class _GraphBuilder:
                             confidence=0.7,
                             reason=f"Recent task memory referenced {path}.",
                             evidence=[DashboardEvidence(kind="task_memory", summary=memory.task, path=path)],
+                        )
+                    )
+                for symbol_node in symbol_nodes.get(path, []):
+                    cues = _memory_symbol_cues(memory, symbol_node)
+                    if not cues:
+                        continue
+                    self._add_edge(
+                        DashboardEdge(
+                            id=f"edge:{memory_id}:{symbol_node.id}:symbol-memory",
+                            source=memory_id,
+                            target=symbol_node.id,
+                            type="memory_influenced",
+                            label="memory",
+                            confidence=0.75,
+                            reason=f"Task memory referenced {path} and matched {', '.join(cues[:3])}.",
+                            evidence=[
+                                DashboardEvidence(
+                                    kind="task_memory",
+                                    ref=", ".join(cues[:3]),
+                                    summary=memory.task,
+                                    path=path,
+                                    line=_metadata_int(symbol_node.metadata.get("start_line")),
+                                )
+                            ],
                         )
                     )
 
@@ -474,6 +505,64 @@ def _line_label(symbol: SelectedSymbolRow) -> str:
     if symbol.start_line:
         return f"L{symbol.start_line}"
     return ""
+
+
+def _memory_symbol_cues(memory: Any, symbol_node: DashboardNode) -> list[str]:
+    symbol_text = " ".join(
+        str(value or "")
+        for value in (
+            symbol_node.metadata.get("symbol"),
+            symbol_node.metadata.get("kind"),
+            symbol_node.label,
+            symbol_node.summary,
+        )
+    ).lower()
+    cues: list[str] = []
+    for concept in getattr(memory, "concepts", []) or []:
+        concept_text = str(concept).strip().lower()
+        if concept_text and any(variant in symbol_text for variant in _concept_variants(concept_text)):
+            cues.append(f"concept:{concept_text}")
+
+    memory_task = str(getattr(memory, "task", "") or "").lower()
+    symbol_name = str(symbol_node.metadata.get("symbol") or symbol_node.label or "")
+    for token in _identifier_tokens(symbol_name):
+        if token in memory_task:
+            cues.append(f"symbol:{token}")
+
+    return _unique_strings(cues)
+
+
+def _identifier_tokens(value: str) -> list[str]:
+    normalized = value.replace("_", " ").replace("-", " ")
+    return [token for token in (part.lower() for part in normalized.split()) if len(token) >= 3]
+
+
+def _concept_variants(value: str) -> set[str]:
+    variants = {value}
+    if value.endswith("ing") and len(value) > 5:
+        stem = value[:-3]
+        variants.add(stem)
+        variants.add(stem + "e")
+    return {variant for variant in variants if len(variant) >= 3}
+
+
+def _unique_strings(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for value in values:
+        if not value or value in seen:
+            continue
+        seen.add(value)
+        out.append(value)
+    return out
+
+
+def _metadata_int(value: object) -> int | None:
+    try:
+        number = int(value)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return number or None
 
 
 def _test_command(path: str) -> str:
