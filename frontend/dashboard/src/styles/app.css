@@ -1406,8 +1406,7 @@ code {
   overflow: auto;
 }
 
-.map-view.fullscreen .metric-grid,
-.map-view.fullscreen .map-side {
+.map-view.fullscreen .metric-grid {
   display: none;
 }
 
@@ -1425,7 +1424,7 @@ code {
 }
 
 .map-view.fullscreen .map-layout {
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(300px, 380px);
 }
 
 .map-view.fullscreen .city-canvas-wrap,
@@ -1433,6 +1432,15 @@ code {
 .map-view.fullscreen .graph-shell {
   height: calc(100vh - 106px);
   min-height: 620px;
+}
+
+.map-view.fullscreen .map-side {
+  max-height: calc(100vh - 106px);
+  overflow: auto;
+}
+
+.map-view.fullscreen .map-side .panel:not(:first-child):not(:nth-child(2)) {
+  display: none;
 }
 
 .map-view:fullscreen {
@@ -1578,6 +1586,56 @@ code {
 
 .legend-memory {
   background: #38cfd3;
+}
+
+.legend-expressway {
+  height: 6px;
+  background: #8fb2ff;
+  box-shadow: 0 0 0 2px rgba(143, 178, 255, 0.15), 0 0 16px rgba(143, 178, 255, 0.34);
+}
+
+.map-hover-card {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.map-hover-card strong,
+.map-hover-card small {
+  overflow-wrap: anywhere;
+}
+
+.map-hover-card dl {
+  display: grid;
+  gap: 7px;
+  margin: 0;
+}
+
+.map-hover-card dl div {
+  display: grid;
+  grid-template-columns: minmax(70px, 0.35fr) minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+  border-top: 1px solid color-mix(in srgb, var(--card-border) 72%, transparent);
+  padding-top: 7px;
+}
+
+.map-hover-card dt,
+.map-hover-card dd {
+  margin: 0;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.map-hover-card dt {
+  color: var(--text-subtle);
+  font-size: 12px;
+  font-weight: 680;
+}
+
+.map-hover-card dd {
+  color: var(--text);
+  font-size: 13px;
 }
 
 .map-building-detail {

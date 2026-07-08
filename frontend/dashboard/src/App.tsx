@@ -45,7 +45,7 @@ import { Html, OrbitControls, RoundedBox } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding } from "./data/schema";
+import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding, MapRoad } from "./data/schema";
 
 type View = "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
 
@@ -829,6 +829,14 @@ function ContextView({
 
 type MapMode = "city" | "network" | "table";
 
+interface MapHoverInfo {
+  kind: "building" | "road";
+  title: string;
+  subtitle: string;
+  tone: string;
+  rows: Array<{ label: string; value: string }>;
+}
+
 function MapView({
   dashboardMap,
   graph,
@@ -854,8 +862,10 @@ function MapView({
   const [demoMode, setDemoMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
   const [cameraSignal, setCameraSignal] = useState(0);
+  const [hoverInfo, setHoverInfo] = useState<MapHoverInfo | null>(null);
   const mapRootRef = useRef<HTMLDivElement | null>(null);
   const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
+  const activeMapInfo = hoverInfo || (selectedBuilding ? buildingHoverInfo(selectedBuilding) : null);
   const payloadRequiredActions = new Set(["work", "route_task", "retrieve"]);
   const primaryCatalog = (snapshot.command_catalog || []).filter((item) => item.primary && !payloadRequiredActions.has(item.id)).slice(0, 8);
   const weather = dashboardMap.weather || [];
@@ -886,8 +896,8 @@ function MapView({
       <section className="map-hero">
         <div>
           <p className="eyebrow">AgentPack Map</p>
-          <h1>Live context city for this local task</h1>
-          <p className="muted">Buildings are files. Height is confidence. Color is risk. Glow marks selected context.</p>
+          <h1>Live context colony for this local task</h1>
+          <p className="muted">Habitats are files. Module scale is confidence. Route class shows relationship strength.</p>
         </div>
         <div className="map-hero-actions">
           <button type="button" className={demoMode ? "toolbar-button active" : "toolbar-button"} onClick={() => setDemoMode((value) => !value)}>Demo</button>
@@ -923,7 +933,7 @@ function MapView({
           {mode === "city" ? (
             hasWebGLSupport() ? (
               <MapErrorBoundary resetKey={`${dashboardMap.generated_at}:${cameraSignal}`} onError={() => setMode("table")} fallback={<MapTable dashboardMap={dashboardMap} onSelect={onSelect} />}>
-                <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} />
+                <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
               </MapErrorBoundary>
             ) : (
               <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
@@ -935,14 +945,34 @@ function MapView({
           )}
         </section>
 
-        {!demoMode && !fullscreen ? (
+        {!demoMode ? (
           <aside className="map-side">
+            <Panel title="Map Focus" icon={Search}>
+              {activeMapInfo ? (
+                <div className="map-hover-card">
+                  <span className={`badge ${riskTone(activeMapInfo.tone)}`}>{activeMapInfo.kind}</span>
+                  <strong>{activeMapInfo.title}</strong>
+                  <small>{activeMapInfo.subtitle}</small>
+                  <dl>
+                    {activeMapInfo.rows.map((row) => (
+                      <div key={`${row.label}:${row.value}`}>
+                        <dt>{row.label}</dt>
+                        <dd>{row.value}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </div>
+              ) : (
+                <p className="empty">Hover a habitat or route to inspect map metadata.</p>
+              )}
+            </Panel>
             <Panel title="Map Legend" icon={MapIcon}>
               <div className="map-legend">
-                <span><i className="legend-height" /> Height = confidence</span>
+                <span><i className="legend-height" /> Module scale = confidence</span>
                 <span><i className="legend-selected" /> Glow = selected context</span>
                 <span><i className="legend-risk" /> Red = high risk</span>
                 <span><i className="legend-memory" /> Cyan = memory linked</span>
+                <span><i className="legend-expressway" /> Expressway = high confidence route</span>
               </div>
             </Panel>
             <Panel title="Why This File" icon={Search}>
@@ -1028,13 +1058,15 @@ function ContextCityMap({
   selectedId,
   cameraSignal,
   demoMode,
-  onSelect
+  onSelect,
+  onHover
 }: {
   dashboardMap: DashboardMap;
   selectedId: string;
   cameraSignal: number;
   demoMode: boolean;
   onSelect: (id: string) => void;
+  onHover: (info: MapHoverInfo | null) => void;
 }) {
   const reducedMotion = useReducedMotion();
   const controlsRef = useRef<OrbitControlsImpl | null>(null);
@@ -1048,7 +1080,7 @@ function ContextCityMap({
         <color attach="background" args={["#08111f"]} />
         <ambientLight intensity={0.62} />
         <directionalLight castShadow position={[34, 54, 34]} intensity={1.18} />
-        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} />
+        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} onHover={onHover} />
         <OrbitControls ref={controlsRef} makeDefault target={[32, 5, 22]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={24} maxDistance={320} maxPolarAngle={Math.PI / 2.08} />
       </Canvas>
     </div>
@@ -1059,12 +1091,14 @@ function CityScene({
   dashboardMap,
   selectedId,
   reducedMotion,
-  onSelect
+  onSelect,
+  onHover
 }: {
   dashboardMap: DashboardMap;
   selectedId: string;
   reducedMotion: boolean;
   onSelect: (id: string) => void;
+  onHover: (info: MapHoverInfo | null) => void;
 }) {
   const center = useMemo(() => mapCenter(dashboardMap), [dashboardMap]);
   const points = useMemo(() => mapPoints(dashboardMap), [dashboardMap]);
@@ -1086,7 +1120,7 @@ function CityScene({
         </group>
       ))}
       {dashboardMap.roads.slice(0, 80).map((road) => (
-        <RoadMesh key={road.id} road={road} points={points} />
+        <RoadMesh key={road.id} road={road} points={points} onHover={onHover} />
       ))}
       {dashboardMap.landmarks.map((landmark) => (
         <group key={landmark.id} position={[landmark.x, 0, landmark.z]}>
@@ -1102,7 +1136,7 @@ function CityScene({
         </group>
       ))}
       {dashboardMap.buildings.map((building) => (
-        <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} />
+        <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
       ))}
     </group>
   );
@@ -1112,12 +1146,14 @@ function BuildingMesh({
   building,
   selected,
   reducedMotion,
-  onSelect
+  onSelect,
+  onHover
 }: {
   building: MapBuilding;
   selected: boolean;
   reducedMotion: boolean;
   onSelect: (id: string) => void;
+  onHover: (info: MapHoverInfo | null) => void;
 }) {
   const ref = useRef<any>(null);
   const width = 6.0 + building.confidence * 3.2 + (building.selected ? 0.5 : 0);
@@ -1139,6 +1175,14 @@ function BuildingMesh({
       onClick={(event) => {
         event.stopPropagation();
         onSelect(building.node_id);
+      }}
+      onPointerOver={(event) => {
+        event.stopPropagation();
+        onHover(buildingHoverInfo(building));
+      }}
+      onPointerOut={(event) => {
+        event.stopPropagation();
+        onHover(null);
       }}
     >
       {selected ? (
@@ -1212,10 +1256,12 @@ function BuildingMesh({
 
 function RoadMesh({
   road,
-  points
+  points,
+  onHover
 }: {
-  road: { source: string; target: string; type: string };
+  road: MapRoad;
   points: Map<string, { x: number; z: number }>;
+  onHover: (info: MapHoverInfo | null) => void;
 }) {
   const source = points.get(road.source);
   const target = points.get(road.target);
@@ -1228,12 +1274,111 @@ function RoadMesh({
   const dz = tz - sz;
   const length = Math.sqrt(dx * dx + dz * dz);
   const angle = Math.atan2(dz, dx);
+  const visual = routeVisual(road);
   return (
-    <mesh position={[sx + dx / 2, 0.11, sz + dz / 2]} rotation={[0, -angle, 0]}>
-      <boxGeometry args={[length, 0.06, road.type === "selected_because" ? 0.42 : 0.24]} />
-      <meshBasicMaterial color={road.type === "memory_influenced" ? "#38cfd3" : "#6d86ae"} transparent opacity={road.type === "selected_because" ? 0.34 : 0.2} />
+    <mesh
+      position={[sx + dx / 2, visual.y, sz + dz / 2]}
+      rotation={[0, -angle, 0]}
+      onPointerOver={(event) => {
+        event.stopPropagation();
+        onHover(roadHoverInfo(road));
+      }}
+      onPointerOut={(event) => {
+        event.stopPropagation();
+        onHover(null);
+      }}
+    >
+      <boxGeometry args={[length, visual.height, visual.width]} />
+      <meshBasicMaterial color={visual.color} transparent opacity={visual.opacity} />
     </mesh>
   );
+}
+
+function buildingHoverInfo(building: MapBuilding): MapHoverInfo {
+  const tier = buildingTier(building.confidence);
+  return {
+    kind: "building",
+    title: building.path,
+    subtitle: `${tier.label} in ${building.district_id}`,
+    tone: building.risk || tier.tone,
+    rows: [
+      { label: "Confidence", value: `${Math.round(building.confidence * 100)}% (${tier.label})` },
+      { label: "Score", value: String(Math.round(building.score || 0)) },
+      { label: "Risk", value: building.risk || "unknown" },
+      { label: "Context", value: building.selected ? "selected" : building.include_mode || "omitted/available" },
+      { label: "Memory", value: building.memory_linked ? "linked" : "none" },
+      { label: "Tests", value: building.tests?.length ? building.tests.slice(0, 2).join(", ") : "none" },
+      { label: "Reason", value: building.reasons?.[0] || "No selection reason reported." }
+    ]
+  };
+}
+
+function roadHoverInfo(road: MapRoad): MapHoverInfo {
+  const visual = routeVisual(road);
+  return {
+    kind: "road",
+    title: visual.label,
+    subtitle: `${road.type.replace(/_/g, " ")} route`,
+    tone: visual.tone,
+    rows: [
+      { label: "Confidence", value: `${Math.round(routeConfidence(road) * 100)}%` },
+      { label: "Class", value: visual.label },
+      { label: "Source", value: road.source.replace(/^file:/, "") },
+      { label: "Target", value: road.target.replace(/^file:/, "") },
+      { label: "Reason", value: road.reason || "No route reason reported." }
+    ]
+  };
+}
+
+function buildingTier(confidence: number) {
+  if (confidence >= 0.8) return { label: "core habitat", tone: "good" };
+  if (confidence >= 0.55) return { label: "colony module", tone: "memory" };
+  if (confidence >= 0.3) return { label: "field module", tone: "warn" };
+  return { label: "survey outpost", tone: "neutral" };
+}
+
+function routeConfidence(road: MapRoad) {
+  if (typeof road.confidence === "number" && road.confidence > 0) return Math.min(1, Math.max(0.05, road.confidence));
+  if (road.type === "selected_because") return 0.72;
+  if (road.type === "tested_by") return 0.64;
+  if (road.type === "memory_influenced") return 0.58;
+  return 0.34;
+}
+
+function routeVisual(road: MapRoad) {
+  const confidence = routeConfidence(road);
+  const memory = road.type === "memory_influenced";
+  if (confidence >= 0.78) {
+    return {
+      label: "expressway",
+      tone: "good",
+      width: 0.78,
+      height: 0.08,
+      y: 0.15,
+      opacity: 0.46,
+      color: memory ? "#38cfd3" : "#8fb2ff"
+    };
+  }
+  if (confidence >= 0.5) {
+    return {
+      label: "highway",
+      tone: "memory",
+      width: 0.48,
+      height: 0.07,
+      y: 0.13,
+      opacity: 0.34,
+      color: memory ? "#38cfd3" : "#6d86ae"
+    };
+  }
+  return {
+    label: "county road",
+    tone: "neutral",
+    width: 0.24,
+    height: 0.055,
+    y: 0.11,
+    opacity: 0.22,
+    color: memory ? "#38cfd3" : "#536b8e"
+  };
 }
 
 function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSelect: (id: string) => void }) {
