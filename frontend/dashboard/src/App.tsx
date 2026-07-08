@@ -897,8 +897,8 @@ function MapView({
       <section className="map-hero">
         <div>
           <p className="eyebrow">AgentPack Map</p>
-          <h1>Live context colony for this local task</h1>
-          <p className="muted">Habitats are files. Module scale is confidence. Route class shows relationship strength.</p>
+          <h1>Live context city for this local task</h1>
+          <p className="muted">Buildings are files. Building class is confidence. Route class shows relationship strength.</p>
         </div>
         <div className="map-hero-actions">
           <button type="button" className={demoMode ? "toolbar-button active" : "toolbar-button"} onClick={() => setDemoMode((value) => !value)}>Demo</button>
@@ -969,11 +969,13 @@ function MapView({
             </Panel>
             <Panel title="Map Legend" icon={MapIcon}>
               <div className="map-legend">
-                <span><i className="legend-height" /> Module scale = confidence</span>
+                <span><i className="legend-height" /> Building scale = confidence</span>
                 <span><i className="legend-selected" /> Glow = selected context</span>
                 <span><i className="legend-risk" /> Red = high risk</span>
                 <span><i className="legend-memory" /> Cyan = memory linked</span>
                 <span><i className="legend-expressway" /> Expressway = high confidence route</span>
+                <span><i className="legend-highway" /> Highway = medium confidence route</span>
+                <span><i className="legend-county" /> County road = low confidence route</span>
               </div>
             </Panel>
             <Panel title="Why This File" icon={Search}>
@@ -1162,15 +1164,18 @@ function BuildingMesh({
   onHover: (info: MapHoverInfo | null) => void;
 }) {
   const ref = useRef<any>(null);
-  const width = 6.0 + building.confidence * 3.2 + (building.selected ? 0.5 : 0);
-  const depth = 5.4 + building.confidence * 2.6 + (building.memory_linked ? 0.35 : 0);
-  const moduleHeight = 2.8 + building.confidence * 7.2;
-  const domeHeight = 0.85 + building.confidence * 1.2;
-  const antennaHeight = building.selected || building.memory_linked ? 2.4 + building.confidence * 3.2 : 1.1 + building.confidence * 1.8;
-  const podiumHeight = 0.42;
+  const width = 4.6 + building.confidence * 3.8 + (building.selected ? 0.45 : 0);
+  const depth = 4.2 + building.confidence * 3.2 + (building.memory_linked ? 0.28 : 0);
+  const towerHeight = 4.8 + building.confidence * 18;
+  const podiumHeight = 1.15 + building.confidence * 0.5;
+  const upperHeight = building.confidence >= 0.55 ? towerHeight * 0.34 : 0;
+  const totalHeight = podiumHeight + towerHeight + upperHeight;
+  const floors = Math.min(8, Math.max(3, Math.round(towerHeight / 2.45)));
+  const windowColumns = Math.min(4, Math.max(2, Math.round(width / 2.15)));
   const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : "#d9e7ff";
-  const roofColor = selected ? "#cfe0ff" : building.memory_linked ? "#b5f7f5" : "#d7e2ef";
-  const windowRows = Math.min(4, Math.max(2, Math.floor(moduleHeight / 2.4)));
+  const roofColor = selected ? "#dbe8ff" : building.memory_linked ? "#b8f7f3" : "#d6e1ef";
+  const plazaRadius = Math.max(width, depth) * 0.82;
+  const facadeColor = building.color;
   useFrame(({ clock }) => {
     if (!ref.current || reducedMotion || !selected) return;
     ref.current.position.y = Math.sin(clock.elapsedTime * 2.4) * 0.18;
@@ -1193,66 +1198,93 @@ function BuildingMesh({
     >
       {selected ? (
         <mesh position={[building.x, 0.05, building.z]}>
-          <cylinderGeometry args={[Math.max(width, depth) * 0.82, Math.max(width, depth) * 0.82, 0.08, 48]} />
+          <cylinderGeometry args={[plazaRadius * 1.05, plazaRadius * 1.05, 0.08, 56]} />
           <meshBasicMaterial color="#80a9ff" transparent opacity={0.32} />
         </mesh>
       ) : null}
       {building.selected ? (
         <mesh position={[building.x, 0.09, building.z]}>
-          <cylinderGeometry args={[Math.max(width, depth) * 0.68, Math.max(width, depth) * 0.68, 0.06, 40]} />
+          <cylinderGeometry args={[plazaRadius * 0.88, plazaRadius * 0.88, 0.06, 48]} />
           <meshBasicMaterial color={accentColor} transparent opacity={0.22} />
         </mesh>
       ) : null}
-      <mesh
-        castShadow
-        receiveShadow
-        position={[building.x, podiumHeight / 2, building.z]}
-      >
-        <cylinderGeometry args={[Math.max(width, depth) * 0.68, Math.max(width, depth) * 0.76, podiumHeight, 8]} />
-        <meshStandardMaterial
-          color="#182940"
-          roughness={0.76}
-          metalness={0.12}
-        />
+      <mesh castShadow receiveShadow position={[building.x, 0.11, building.z]} rotation={[0, Math.PI / 8, 0]}>
+        <cylinderGeometry args={[plazaRadius, plazaRadius * 1.08, 0.22, 8]} />
+        <meshStandardMaterial color="#17263b" roughness={0.82} metalness={0.08} />
       </mesh>
-      <RoundedBox castShadow receiveShadow args={[width, moduleHeight, depth]} radius={0.52} smoothness={7} position={[building.x, podiumHeight + moduleHeight / 2, building.z]}>
+      <RoundedBox castShadow receiveShadow args={[width + 1.25, podiumHeight, depth + 1.1]} radius={0.22} smoothness={5} position={[building.x, podiumHeight / 2 + 0.22, building.z]}>
+        <meshStandardMaterial color="#213552" roughness={0.72} metalness={0.1} emissive={selected ? "#14396a" : "#000000"} emissiveIntensity={selected ? 0.12 : 0} />
+      </RoundedBox>
+      <RoundedBox castShadow receiveShadow args={[width, towerHeight, depth]} radius={0.18} smoothness={5} position={[building.x, podiumHeight + 0.22 + towerHeight / 2, building.z]}>
         <meshStandardMaterial
-          color={building.color}
-          roughness={0.64}
-          metalness={0.12}
-          emissive={selected ? "#294f91" : building.memory_linked ? "#0f5d61" : "#000000"}
-          emissiveIntensity={selected ? 0.22 : building.memory_linked ? 0.18 : 0}
+          color={facadeColor}
+          roughness={0.58}
+          metalness={0.16}
+          emissive={selected ? "#284f8f" : building.memory_linked ? "#0d4f55" : "#000000"}
+          emissiveIntensity={selected ? 0.2 : building.memory_linked ? 0.16 : 0}
         />
       </RoundedBox>
-      <mesh position={[building.x, podiumHeight + moduleHeight + domeHeight * 0.12, building.z]} scale={[width * 0.44, domeHeight * 0.42, depth * 0.44]}>
-        <sphereGeometry args={[1, 28, 14]} />
-        <meshStandardMaterial color={roofColor} roughness={0.42} metalness={0.24} emissive={accentColor} emissiveIntensity={selected || building.memory_linked ? 0.2 : 0.05} />
+      {upperHeight ? (
+        <RoundedBox castShadow receiveShadow args={[width * 0.72, upperHeight, depth * 0.72]} radius={0.14} smoothness={5} position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight / 2, building.z]}>
+          <meshStandardMaterial color={facadeColor} roughness={0.54} metalness={0.18} emissive={selected ? "#284f8f" : "#000000"} emissiveIntensity={selected ? 0.16 : 0} />
+        </RoundedBox>
+      ) : null}
+      <mesh position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight + 0.12, building.z]}>
+        <boxGeometry args={[width * 0.86, 0.24, depth * 0.86]} />
+        <meshStandardMaterial color={roofColor} roughness={0.44} metalness={0.22} emissive={accentColor} emissiveIntensity={selected || building.memory_linked ? 0.18 : 0.04} />
       </mesh>
-      <mesh position={[building.x - width * 0.62, podiumHeight + moduleHeight * 0.42, building.z]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[Math.max(1.05, depth * 0.16), Math.max(1.05, depth * 0.16), width * 0.38, 20]} />
-        <meshStandardMaterial color={building.color} roughness={0.66} metalness={0.1} emissive={building.memory_linked ? "#0f5d61" : "#000000"} emissiveIntensity={building.memory_linked ? 0.14 : 0} />
+      <mesh position={[building.x - width * 0.24, podiumHeight + 0.22 + towerHeight + upperHeight + 0.31, building.z + depth * 0.18]}>
+        <boxGeometry args={[width * 0.28, 0.12, depth * 0.3]} />
+        <meshStandardMaterial color="#6ed49a" roughness={0.8} metalness={0.02} />
       </mesh>
-      <mesh position={[building.x + width * 0.62, podiumHeight + moduleHeight * 0.38, building.z + depth * 0.08]} rotation={[0, 0, Math.PI / 2]}>
-        <cylinderGeometry args={[Math.max(0.95, depth * 0.14), Math.max(0.95, depth * 0.14), width * 0.32, 20]} />
-        <meshStandardMaterial color={building.color} roughness={0.66} metalness={0.1} />
+      <mesh position={[building.x + width * 0.23, podiumHeight + 0.22 + towerHeight + upperHeight + 0.31, building.z - depth * 0.18]}>
+        <boxGeometry args={[width * 0.34, 0.1, depth * 0.22]} />
+        <meshStandardMaterial color="#9fb0c5" roughness={0.5} metalness={0.28} />
       </mesh>
-      {Array.from({ length: windowRows }).map((_, index) => (
-        <mesh key={`${building.id}:window-front:${index}`} position={[building.x, podiumHeight + 1.25 + index * Math.max(1.35, moduleHeight / (windowRows + 1)), building.z + depth / 2 + 0.016]}>
-          <boxGeometry args={[Math.max(1.2, width * 0.42), 0.09, 0.035]} />
-          <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.78 : 0.46} />
+      {building.confidence >= 0.48 ? (
+        <RoundedBox castShadow receiveShadow args={[width * 0.38, towerHeight * 0.46, depth * 0.34]} radius={0.12} smoothness={4} position={[building.x + width * 0.68, podiumHeight + 0.22 + towerHeight * 0.32, building.z - depth * 0.1]}>
+          <meshStandardMaterial color={facadeColor} roughness={0.62} metalness={0.12} emissive={building.memory_linked ? "#0d4f55" : "#000000"} emissiveIntensity={building.memory_linked ? 0.1 : 0} />
+        </RoundedBox>
+      ) : null}
+      {Array.from({ length: floors }).flatMap((_, row) =>
+        Array.from({ length: windowColumns }).map((__, column) => {
+          const x = building.x - width * 0.32 + (column * width * 0.64) / Math.max(1, windowColumns - 1);
+          const y = podiumHeight + 1.25 + row * Math.max(1.15, towerHeight / (floors + 1));
+          return (
+            <mesh key={`${building.id}:front-window:${row}:${column}`} position={[x, y, building.z + depth / 2 + 0.018]}>
+              <boxGeometry args={[0.34, 0.3, 0.035]} />
+              <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.78 : 0.5} />
+            </mesh>
+          );
+        })
+      )}
+      {Array.from({ length: Math.min(6, floors) }).flatMap((_, row) =>
+        Array.from({ length: Math.min(3, windowColumns) }).map((__, column) => {
+          const z = building.z - depth * 0.26 + (column * depth * 0.52) / Math.max(1, Math.min(3, windowColumns) - 1);
+          const y = podiumHeight + 1.45 + row * Math.max(1.2, towerHeight / (floors + 1));
+          return (
+            <mesh key={`${building.id}:side-window:${row}:${column}`} position={[building.x + width / 2 + 0.018, y, z]} rotation={[0, Math.PI / 2, 0]}>
+              <boxGeometry args={[0.34, 0.28, 0.035]} />
+              <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.66 : 0.42} />
+            </mesh>
+          );
+        })
+      )}
+      <mesh position={[building.x, podiumHeight + 0.65, building.z + depth / 2 + 0.04]}>
+        <boxGeometry args={[Math.max(0.9, width * 0.18), 0.78, 0.08]} />
+        <meshBasicMaterial color="#101a2b" transparent opacity={0.9} />
+      </mesh>
+      {building.risk === "high" || building.risk === "medium" ? (
+        <mesh position={[building.x - width / 2 - 0.022, podiumHeight + 0.22 + towerHeight * 0.52, building.z]} rotation={[0, Math.PI / 2, 0]}>
+          <boxGeometry args={[depth * 0.72, 0.16, 0.035]} />
+          <meshBasicMaterial color={building.risk === "high" ? "#ff7a7f" : "#f7cf62"} transparent opacity={0.72} />
         </mesh>
-      ))}
-      {Array.from({ length: Math.min(5, windowRows) }).map((_, index) => (
-        <mesh key={`${building.id}:window-side:${index}`} position={[building.x + width / 2 + 0.016, podiumHeight + 1.45 + index * Math.max(1.45, moduleHeight / (windowRows + 1)), building.z]} rotation={[0, Math.PI / 2, 0]}>
-          <boxGeometry args={[Math.max(1.0, depth * 0.42), 0.075, 0.035]} />
-          <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.68 : 0.38} />
-        </mesh>
-      ))}
-      <mesh position={[building.x, podiumHeight + moduleHeight + domeHeight + antennaHeight / 2, building.z]}>
-        <cylinderGeometry args={[0.045, 0.045, antennaHeight, 10]} />
+      ) : null}
+      <mesh position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight + 1.6, building.z]}>
+        <cylinderGeometry args={[0.045, 0.045, 2.8 + building.confidence * 2, 10]} />
         <meshBasicMaterial color={accentColor} transparent opacity={0.74} />
       </mesh>
-      <mesh position={[building.x, podiumHeight + moduleHeight + domeHeight + antennaHeight + 0.16, building.z]}>
+      <mesh position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight + 3.15 + building.confidence * 2, building.z]}>
         <sphereGeometry args={[0.2, 12, 8]} />
         <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.95 : 0.56} />
       </mesh>
@@ -1282,8 +1314,10 @@ function RoadMesh({
   const angle = Math.atan2(dz, dx);
   const visual = routeVisual(road);
   const midpoint: [number, number, number] = [sx + dx / 2, visual.y + 0.75, sz + dz / 2];
+  const dashCount = Math.max(3, Math.min(18, Math.floor(length / 8)));
+  const dashSpacing = length / dashCount;
   return (
-    <mesh
+    <group
       position={[sx + dx / 2, visual.y, sz + dz / 2]}
       rotation={[0, -angle, 0]}
       onPointerOver={(event) => {
@@ -1295,9 +1329,43 @@ function RoadMesh({
         onHover(null);
       }}
     >
-      <boxGeometry args={[length, visual.height, visual.width]} />
-      <meshBasicMaterial color={visual.color} transparent opacity={visual.opacity} />
-    </mesh>
+      <mesh>
+        <boxGeometry args={[length, visual.height, visual.width]} />
+        <meshBasicMaterial color={visual.color} transparent opacity={visual.opacity} />
+      </mesh>
+      {visual.label === "expressway" ? (
+        <>
+          <mesh position={[0, visual.height / 2 + 0.012, 0]}>
+            <boxGeometry args={[length, 0.025, 0.08]} />
+            <meshBasicMaterial color="#f7cf62" transparent opacity={0.72} />
+          </mesh>
+          <mesh position={[0, visual.height / 2 + 0.018, visual.width * 0.34]}>
+            <boxGeometry args={[length, 0.02, 0.045]} />
+            <meshBasicMaterial color="#dce8ff" transparent opacity={0.62} />
+          </mesh>
+          <mesh position={[0, visual.height / 2 + 0.018, -visual.width * 0.34]}>
+            <boxGeometry args={[length, 0.02, 0.045]} />
+            <meshBasicMaterial color="#dce8ff" transparent opacity={0.62} />
+          </mesh>
+        </>
+      ) : null}
+      {visual.label !== "county road"
+        ? Array.from({ length: dashCount }).map((_, index) => (
+            <mesh key={`${road.id}:dash:${index}`} position={[-length / 2 + dashSpacing * index + dashSpacing * 0.35, visual.height / 2 + 0.026, visual.label === "expressway" ? visual.width * 0.17 : 0]}>
+              <boxGeometry args={[Math.max(0.9, dashSpacing * 0.38), 0.018, 0.04]} />
+              <meshBasicMaterial color="#e7eefc" transparent opacity={visual.label === "expressway" ? 0.64 : 0.54} />
+            </mesh>
+          ))
+        : null}
+      {visual.label === "expressway"
+        ? Array.from({ length: dashCount }).map((_, index) => (
+            <mesh key={`${road.id}:dash-opposite:${index}`} position={[-length / 2 + dashSpacing * index + dashSpacing * 0.35, visual.height / 2 + 0.026, -visual.width * 0.17]}>
+              <boxGeometry args={[Math.max(0.9, dashSpacing * 0.38), 0.018, 0.04]} />
+              <meshBasicMaterial color="#e7eefc" transparent opacity={0.64} />
+            </mesh>
+          ))
+        : null}
+    </group>
   );
 }
 
@@ -1326,7 +1394,7 @@ function buildingHoverInfo(building: MapBuilding): MapHoverInfo {
     title: building.path,
     subtitle: `${tier.label} in ${building.district_id}`,
     tone: building.risk || tier.tone,
-    position: [building.x, 16 + building.confidence * 8, building.z],
+    position: [building.x, 24 + building.confidence * 14, building.z],
     rows: [
       { label: "Confidence", value: `${Math.round(building.confidence * 100)}% (${tier.label})` },
       { label: "Score", value: String(Math.round(building.score || 0)) },
@@ -1358,15 +1426,15 @@ function roadHoverInfo(road: MapRoad, position: [number, number, number]): MapHo
 }
 
 function buildingTier(confidence: number) {
-  if (confidence >= 0.8) return { label: "core habitat", tone: "good" };
-  if (confidence >= 0.55) return { label: "colony module", tone: "memory" };
-  if (confidence >= 0.3) return { label: "field module", tone: "warn" };
-  return { label: "survey outpost", tone: "neutral" };
+  if (confidence >= 0.8) return { label: "civic tower", tone: "good" };
+  if (confidence >= 0.55) return { label: "district building", tone: "memory" };
+  if (confidence >= 0.3) return { label: "street block", tone: "warn" };
+  return { label: "edge pavilion", tone: "neutral" };
 }
 
 function routeConfidence(road: MapRoad) {
   if (typeof road.confidence === "number" && road.confidence > 0) return Math.min(1, Math.max(0.05, road.confidence));
-  if (road.type === "selected_because") return 0.72;
+  if (road.type === "selected_because") return 0.86;
   if (road.type === "tested_by") return 0.64;
   if (road.type === "memory_influenced") return 0.58;
   return 0.34;
@@ -1379,32 +1447,32 @@ function routeVisual(road: MapRoad) {
     return {
       label: "expressway",
       tone: "good",
-      width: 0.78,
-      height: 0.08,
+      width: 1.28,
+      height: 0.1,
       y: 0.15,
-      opacity: 0.46,
-      color: memory ? "#38cfd3" : "#8fb2ff"
+      opacity: 0.5,
+      color: memory ? "#245e64" : "#405879"
     };
   }
   if (confidence >= 0.5) {
     return {
       label: "highway",
       tone: "memory",
-      width: 0.48,
+      width: 0.7,
       height: 0.07,
       y: 0.13,
-      opacity: 0.34,
-      color: memory ? "#38cfd3" : "#6d86ae"
+      opacity: 0.38,
+      color: memory ? "#2d777a" : "#5e779b"
     };
   }
   return {
     label: "county road",
     tone: "neutral",
-    width: 0.24,
+    width: 0.32,
     height: 0.055,
     y: 0.11,
-    opacity: 0.22,
-    color: memory ? "#38cfd3" : "#536b8e"
+    opacity: 0.24,
+    color: memory ? "#2f7d81" : "#475a76"
   };
 }
 

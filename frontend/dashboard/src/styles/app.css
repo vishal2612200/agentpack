@@ -1638,8 +1638,18 @@ code {
 
 .legend-expressway {
   height: 6px;
-  background: #8fb2ff;
+  background: linear-gradient(90deg, #405879 0 42%, #f7cf62 42% 50%, #405879 50% 100%);
   box-shadow: 0 0 0 2px rgba(143, 178, 255, 0.15), 0 0 16px rgba(143, 178, 255, 0.34);
+}
+
+.legend-highway {
+  height: 5px;
+  background: repeating-linear-gradient(90deg, #5e779b 0 9px, #e7eefc 9px 13px, #5e779b 13px 22px);
+}
+
+.legend-county {
+  height: 3px;
+  background: #475a76;
 }
 
 .map-hover-card {
