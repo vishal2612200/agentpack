@@ -93,6 +93,9 @@ class DashboardServerState:
                 status=status,
                 confirmed=session.confirmed,
                 returncode=event.returncode,
+                duration_ms=session.duration_ms,
+                output_summary=session.output_summary,
+                follow_up_actions=_follow_up_actions(session.command, status),
             )
 
 
@@ -375,3 +378,17 @@ def serve_dashboard(root: Path, *, host: str = DEFAULT_DASHBOARD_HOST, port: int
 
 def _valid_project_root(path: Path) -> bool:
     return path.is_dir() and ((path / ".git").exists() or (path / ".agentpack" / "config.toml").exists())
+
+
+def _follow_up_actions(command: str, status: str) -> list[str]:
+    if status not in {"completed", "failed"}:
+        return []
+    if status == "failed":
+        return ["doctor_all", "refresh_context"]
+    if "agentpack guard" in command or "agentpack pack" in command:
+        return ["next", "dev_check"]
+    if "agentpack repair" in command or "agentpack install" in command:
+        return ["doctor_all"]
+    if "agentpack task" in command or "agentpack work" in command:
+        return ["refresh_context", "next"]
+    return []

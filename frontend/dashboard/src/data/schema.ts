@@ -86,6 +86,12 @@ export interface MapBuilding {
   label: string;
   path: string;
   district_id: string;
+  building_type?: string;
+  building_tier?: string;
+  confidence_source?: string;
+  confidence_breakdown?: Record<string, number | string | boolean>;
+  layout_group?: string;
+  action_refs?: string[];
   score: number;
   confidence: number;
   height: number;
@@ -108,6 +114,11 @@ export interface MapRoad {
   type: string;
   confidence?: number;
   reason?: string;
+  route_class?: string;
+  relationship_strength?: number;
+  relationship_source?: string;
+  source_kind?: string;
+  target_kind?: string;
 }
 
 export interface MapLandmark {
@@ -139,6 +150,9 @@ export interface DashboardMap {
     high_risk_buildings: number;
     max_score: number;
     stale: boolean;
+    building_type_counts?: Record<string, number>;
+    route_class_counts?: Record<string, number>;
+    confidence_source_counts?: Record<string, number>;
   };
   districts: MapDistrict[];
   buildings: MapBuilding[];
@@ -159,6 +173,9 @@ export interface ActionHistoryRow {
   confirmed?: boolean;
   source?: string;
   session_id?: string;
+  duration_ms?: number | null;
+  output_summary?: string;
+  follow_up_actions?: string[];
 }
 
 export interface DashboardSnapshot {
@@ -353,10 +370,14 @@ export interface DashboardSnapshot {
     git_sha?: string;
     source?: string;
     current?: boolean;
-    exists?: boolean;
-    valid?: boolean;
-    detail?: string;
-  }>;
+      exists?: boolean;
+      valid?: boolean;
+      detail?: string;
+      context_status?: string;
+      mcp_status?: string;
+      map_ready?: boolean;
+      last_seen_at?: string;
+    }>;
   task_history?: Array<{
     task: string;
     source: string;

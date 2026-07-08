@@ -1,4 +1,4 @@
-import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -40,12 +40,12 @@ import {
   type OnNodeDrag,
   useReactFlow
 } from "@xyflow/react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, OrbitControls, RoundedBox } from "@react-three/drei";
-import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding, MapRoad } from "./data/schema";
+import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
+
+const ContextCityMap = lazy(() => import("./MapCity").then((module) => ({ default: module.ContextCityMap })));
 
 type View = "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
 
@@ -450,6 +450,9 @@ function ProjectDropdown({
     branch: snapshot.project.branch,
     git_sha: snapshot.project.git_sha,
     source: "current",
+    context_status: snapshot.context.status,
+    mcp_status: snapshot.mcp_health?.status || "unknown",
+    map_ready: true,
     valid: true
   };
   return (
@@ -481,10 +484,12 @@ function ProjectDropdown({
               >
                 <span>
                   <strong>{project.name}</strong>
-                  <small>{project.source || "candidate"} · {project.detail || (project.valid ? "map-ready" : "unavailable")}</small>
+                  <small>
+                    {project.source || "candidate"} · {project.detail || (project.valid ? "map-ready" : "unavailable")} · context {project.context_status || "unknown"} · MCP {project.mcp_status || "unknown"}
+                  </small>
                   <code>{project.path}</code>
                 </span>
-                <span className={`badge ${project.valid ? "good" : "warn"}`}>{project.current ? "current" : project.valid ? "open" : "skip"}</span>
+                <span className={`badge ${project.map_ready ? "good" : project.valid ? "warn" : "risk"}`}>{project.current ? "current" : project.map_ready ? "map" : project.valid ? "setup" : "skip"}</span>
               </button>
             ))}
           </div>
@@ -829,15 +834,6 @@ function ContextView({
 
 type MapMode = "city" | "network" | "table";
 
-interface MapHoverInfo {
-  kind: "building" | "road";
-  title: string;
-  subtitle: string;
-  tone: string;
-  position: [number, number, number];
-  rows: Array<{ label: string; value: string }>;
-}
-
 function MapView({
   dashboardMap,
   graph,
@@ -862,14 +858,30 @@ function MapView({
   const [mode, setMode] = useState<MapMode>(() => (hasWebGLSupport() ? "city" : "table"));
   const [demoMode, setDemoMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(false);
   const [cameraSignal, setCameraSignal] = useState(0);
   const [hoverInfo, setHoverInfo] = useState<MapHoverInfo | null>(null);
   const mapRootRef = useRef<HTMLDivElement | null>(null);
   const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
-  const activeMapInfo = selectedBuilding ? buildingHoverInfo(selectedBuilding) : null;
+  const selectedRoad = dashboardMap.roads.find((road) => road.id === selectedId);
+  const pointById = useMemo(() => {
+    const points = new Map<string, { x: number; z: number }>();
+    dashboardMap.buildings.forEach((building) => {
+      points.set(building.id, { x: building.x, z: building.z });
+      points.set(building.node_id, { x: building.x, z: building.z });
+    });
+    dashboardMap.landmarks.forEach((landmark) => points.set(landmark.id, { x: landmark.x, z: landmark.z }));
+    return points;
+  }, [dashboardMap]);
+  const activeMapInfo = selectedBuilding
+    ? buildingHoverInfo(selectedBuilding)
+    : selectedRoad
+      ? roadHoverInfo(selectedRoad, roadMidpoint(selectedRoad, pointById))
+      : null;
   const payloadRequiredActions = new Set(["work", "route_task", "retrieve"]);
   const primaryCatalog = (snapshot.command_catalog || []).filter((item) => item.primary && !payloadRequiredActions.has(item.id)).slice(0, 8);
   const weather = dashboardMap.weather || [];
+  const showSide = !demoMode && !sideCollapsed;
   useEffect(() => {
     const handleFullscreenChange = () => {
       setFullscreen(document.fullscreenElement === mapRootRef.current);
@@ -902,6 +914,9 @@ function MapView({
         </div>
         <div className="map-hero-actions">
           <button type="button" className={demoMode ? "toolbar-button active" : "toolbar-button"} onClick={() => setDemoMode((value) => !value)}>Demo</button>
+          <button type="button" className={sideCollapsed ? "toolbar-button active" : "toolbar-button"} onClick={() => setSideCollapsed((value) => !value)}>
+            {sideCollapsed ? "Show cards" : "Hide cards"}
+          </button>
           <button type="button" className={fullscreen ? "toolbar-button active" : "toolbar-button"} onClick={toggleFullscreen}>
             {fullscreen ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
             {fullscreen ? "Exit full screen" : "Full screen"}
@@ -934,7 +949,9 @@ function MapView({
           {mode === "city" ? (
             hasWebGLSupport() ? (
               <MapErrorBoundary resetKey={`${dashboardMap.generated_at}:${cameraSignal}`} onError={() => setMode("table")} fallback={<MapTable dashboardMap={dashboardMap} onSelect={onSelect} />}>
-                <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
+                <Suspense fallback={<div className="city-loading">Loading 3D city map...</div>}>
+                  <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
+                </Suspense>
               </MapErrorBoundary>
             ) : (
               <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
@@ -946,7 +963,7 @@ function MapView({
           )}
         </section>
 
-        {!demoMode ? (
+        {showSide ? (
           <aside className="map-side">
             <Panel title="Map Focus" icon={Search}>
               {activeMapInfo ? (
@@ -983,11 +1000,12 @@ function MapView({
                 <div className="map-building-detail">
                   <strong>{selectedBuilding.path}</strong>
                   <span className={`badge ${riskTone(selectedBuilding.risk)}`}>{selectedBuilding.risk || "unknown"}</span>
-                  <small>score {Math.round(selectedBuilding.score)} · confidence {Math.round(selectedBuilding.confidence * 100)}% · {selectedBuilding.include_mode || "mode unknown"}</small>
+                  <small>
+                    {labelize(selectedBuilding.building_tier || "pavilion")} · {labelize(selectedBuilding.building_type || "file")} · score {Math.round(selectedBuilding.score)} · confidence {Math.round(selectedBuilding.confidence * 100)}%
+                  </small>
+                  <small>{labelize(selectedBuilding.confidence_source || "fallback")} · {selectedBuilding.include_mode || "mode unknown"}</small>
                   {(selectedBuilding.reasons || []).slice(0, 5).map((reason) => <p key={reason}>{reason}</p>)}
-                  {(selectedBuilding.tests || []).slice(0, 3).map((test) => (
-                    <CommandAction key={test} label="Run validation" command={test.endsWith(".py") ? `pytest ${test}` : test} compact onRunCommand={onRunCommand} />
-                  ))}
+                  <MapBuildingActions building={selectedBuilding} onRunAction={onRunAction} onRunCommand={onRunCommand} />
                 </div>
               ) : (
                 <p className="empty">Select a building to inspect score, risk, tests, and actions.</p>
@@ -1056,424 +1074,48 @@ class MapErrorBoundary extends Component<
   }
 }
 
-function ContextCityMap({
-  dashboardMap,
-  selectedId,
-  hoverInfo,
-  cameraSignal,
-  demoMode,
-  onSelect,
-  onHover
+function MapBuildingActions({
+  building,
+  onRunAction,
+  onRunCommand
 }: {
-  dashboardMap: DashboardMap;
-  selectedId: string;
-  hoverInfo: MapHoverInfo | null;
-  cameraSignal: number;
-  demoMode: boolean;
-  onSelect: (id: string) => void;
-  onHover: (info: MapHoverInfo | null) => void;
+  building: MapBuilding;
+  onRunAction: (action: string, body?: Record<string, unknown>) => void;
+  onRunCommand: (command: string) => void;
 }) {
-  const reducedMotion = useReducedMotion();
-  const controlsRef = useRef<OrbitControlsImpl | null>(null);
-  useEffect(() => {
-    controlsRef.current?.reset();
-  }, [cameraSignal]);
-
+  const refs = new Set(building.action_refs || []);
   return (
-    <div className="city-canvas-wrap">
-      <Canvas shadows camera={{ position: [122, 118, 172], fov: 34 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true }}>
-        <color attach="background" args={["#08111f"]} />
-        <ambientLight intensity={0.62} />
-        <directionalLight castShadow position={[34, 54, 34]} intensity={1.18} />
-        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} onHover={onHover} />
-        <OrbitControls ref={controlsRef} makeDefault target={[32, 5, 22]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={24} maxDistance={320} maxPolarAngle={Math.PI / 2.08} />
-      </Canvas>
+    <div className="map-action-row">
+      {refs.has("open_file") ? <CommandAction label="Open file" command={building.path} kind="path" compact onRunCommand={onRunCommand} /> : null}
+      {refs.has("retrieve") ? (
+        <button type="button" className="command-chip" onClick={() => onRunAction("retrieve", { target: building.path })}>
+          Retrieve context
+        </button>
+      ) : null}
+      {refs.has("run_tests") ? (
+        <button type="button" className="command-chip" onClick={() => onRunAction("dev_check")}>
+          Run validation
+        </button>
+      ) : null}
+      {refs.has("refresh_context") ? (
+        <button type="button" className="command-chip" onClick={() => onRunAction("refresh_context", { agent: "codex", thread: "global" })}>
+          Refresh context
+        </button>
+      ) : null}
+      {refs.has("ignore_suggest") ? (
+        <button type="button" className="command-chip" onClick={() => onRunAction("ignore_suggest")}>
+          Mark risky / ignore
+        </button>
+      ) : null}
     </div>
   );
 }
 
-function CityScene({
-  dashboardMap,
-  selectedId,
-  hoverInfo,
-  reducedMotion,
-  onSelect,
-  onHover
-}: {
-  dashboardMap: DashboardMap;
-  selectedId: string;
-  hoverInfo: MapHoverInfo | null;
-  reducedMotion: boolean;
-  onSelect: (id: string) => void;
-  onHover: (info: MapHoverInfo | null) => void;
-}) {
-  const center = useMemo(() => mapCenter(dashboardMap), [dashboardMap]);
-  const points = useMemo(() => mapPoints(dashboardMap), [dashboardMap]);
-  return (
-    <group position={[-center.x, 0, -center.z]}>
-      <mesh position={[center.x, -0.08, center.z]} receiveShadow>
-        <boxGeometry args={[Math.max(42, center.width + 28), 0.12, Math.max(34, center.depth + 28)]} />
-        <meshStandardMaterial color="#0f1b2d" roughness={0.92} metalness={0.05} />
-      </mesh>
-      {dashboardMap.districts.map((district) => (
-        <group key={district.id}>
-          <mesh position={[district.x + 8, 0.02, district.z + 8]} rotation={[0, Math.PI / 8, 0]}>
-            <cylinderGeometry args={[22, 22, 0.1, 8]} />
-            <meshStandardMaterial color={district.selected_count ? "#182c46" : "#131f30"} roughness={0.9} />
-          </mesh>
-          <Html position={[district.x + 4, 0.35, district.z - 12]} center className="district-label">
-            {district.label}
-          </Html>
-        </group>
-      ))}
-      {dashboardMap.roads.slice(0, 80).map((road) => (
-        <RoadMesh key={road.id} road={road} points={points} onHover={onHover} />
-      ))}
-      {dashboardMap.landmarks.map((landmark) => (
-        <group key={landmark.id} position={[landmark.x, 0, landmark.z]}>
-          <mesh>
-            <cylinderGeometry args={landmark.type === "action" ? [0.72, 0.72, 0.7, 16] : [1.6, 1.6, 1.8, 18]} />
-            <meshStandardMaterial color={landmark.tone === "risk" ? "#ff7a7f" : landmark.tone === "good" ? "#6ed49a" : "#80a9ff"} emissive="#1b355d" emissiveIntensity={0.28} />
-          </mesh>
-          {landmark.type === "action" ? null : (
-            <Html position={[0, 2.4, 0]} center className="district-label">
-              {landmark.label}
-            </Html>
-          )}
-        </group>
-      ))}
-      {hoverInfo ? <MapSceneTooltip info={hoverInfo} /> : null}
-      {dashboardMap.buildings.map((building) => (
-        <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
-      ))}
-    </group>
-  );
-}
-
-function BuildingMesh({
-  building,
-  selected,
-  reducedMotion,
-  onSelect,
-  onHover
-}: {
-  building: MapBuilding;
-  selected: boolean;
-  reducedMotion: boolean;
-  onSelect: (id: string) => void;
-  onHover: (info: MapHoverInfo | null) => void;
-}) {
-  const ref = useRef<any>(null);
-  const width = 4.6 + building.confidence * 3.8 + (building.selected ? 0.45 : 0);
-  const depth = 4.2 + building.confidence * 3.2 + (building.memory_linked ? 0.28 : 0);
-  const towerHeight = 4.8 + building.confidence * 18;
-  const podiumHeight = 1.15 + building.confidence * 0.5;
-  const upperHeight = building.confidence >= 0.55 ? towerHeight * 0.34 : 0;
-  const totalHeight = podiumHeight + towerHeight + upperHeight;
-  const floors = Math.min(8, Math.max(3, Math.round(towerHeight / 2.45)));
-  const windowColumns = Math.min(4, Math.max(2, Math.round(width / 2.15)));
-  const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : "#d9e7ff";
-  const roofColor = selected ? "#dbe8ff" : building.memory_linked ? "#b8f7f3" : "#d6e1ef";
-  const plazaRadius = Math.max(width, depth) * 0.82;
-  const facadeColor = building.color;
-  useFrame(({ clock }) => {
-    if (!ref.current || reducedMotion || !selected) return;
-    ref.current.position.y = Math.sin(clock.elapsedTime * 2.4) * 0.18;
-  });
-  return (
-    <group
-      ref={ref}
-      onClick={(event) => {
-        event.stopPropagation();
-        onSelect(building.node_id);
-      }}
-      onPointerOver={(event) => {
-        event.stopPropagation();
-        onHover(buildingHoverInfo(building));
-      }}
-      onPointerOut={(event) => {
-        event.stopPropagation();
-        onHover(null);
-      }}
-    >
-      {selected ? (
-        <mesh position={[building.x, 0.05, building.z]}>
-          <cylinderGeometry args={[plazaRadius * 1.05, plazaRadius * 1.05, 0.08, 56]} />
-          <meshBasicMaterial color="#80a9ff" transparent opacity={0.32} />
-        </mesh>
-      ) : null}
-      {building.selected ? (
-        <mesh position={[building.x, 0.09, building.z]}>
-          <cylinderGeometry args={[plazaRadius * 0.88, plazaRadius * 0.88, 0.06, 48]} />
-          <meshBasicMaterial color={accentColor} transparent opacity={0.22} />
-        </mesh>
-      ) : null}
-      <mesh castShadow receiveShadow position={[building.x, 0.11, building.z]} rotation={[0, Math.PI / 8, 0]}>
-        <cylinderGeometry args={[plazaRadius, plazaRadius * 1.08, 0.22, 8]} />
-        <meshStandardMaterial color="#17263b" roughness={0.82} metalness={0.08} />
-      </mesh>
-      <RoundedBox castShadow receiveShadow args={[width + 1.25, podiumHeight, depth + 1.1]} radius={0.22} smoothness={5} position={[building.x, podiumHeight / 2 + 0.22, building.z]}>
-        <meshStandardMaterial color="#213552" roughness={0.72} metalness={0.1} emissive={selected ? "#14396a" : "#000000"} emissiveIntensity={selected ? 0.12 : 0} />
-      </RoundedBox>
-      <RoundedBox castShadow receiveShadow args={[width, towerHeight, depth]} radius={0.18} smoothness={5} position={[building.x, podiumHeight + 0.22 + towerHeight / 2, building.z]}>
-        <meshStandardMaterial
-          color={facadeColor}
-          roughness={0.58}
-          metalness={0.16}
-          emissive={selected ? "#284f8f" : building.memory_linked ? "#0d4f55" : "#000000"}
-          emissiveIntensity={selected ? 0.2 : building.memory_linked ? 0.16 : 0}
-        />
-      </RoundedBox>
-      {upperHeight ? (
-        <RoundedBox castShadow receiveShadow args={[width * 0.72, upperHeight, depth * 0.72]} radius={0.14} smoothness={5} position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight / 2, building.z]}>
-          <meshStandardMaterial color={facadeColor} roughness={0.54} metalness={0.18} emissive={selected ? "#284f8f" : "#000000"} emissiveIntensity={selected ? 0.16 : 0} />
-        </RoundedBox>
-      ) : null}
-      <mesh position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight + 0.12, building.z]}>
-        <boxGeometry args={[width * 0.86, 0.24, depth * 0.86]} />
-        <meshStandardMaterial color={roofColor} roughness={0.44} metalness={0.22} emissive={accentColor} emissiveIntensity={selected || building.memory_linked ? 0.18 : 0.04} />
-      </mesh>
-      <mesh position={[building.x - width * 0.24, podiumHeight + 0.22 + towerHeight + upperHeight + 0.31, building.z + depth * 0.18]}>
-        <boxGeometry args={[width * 0.28, 0.12, depth * 0.3]} />
-        <meshStandardMaterial color="#6ed49a" roughness={0.8} metalness={0.02} />
-      </mesh>
-      <mesh position={[building.x + width * 0.23, podiumHeight + 0.22 + towerHeight + upperHeight + 0.31, building.z - depth * 0.18]}>
-        <boxGeometry args={[width * 0.34, 0.1, depth * 0.22]} />
-        <meshStandardMaterial color="#9fb0c5" roughness={0.5} metalness={0.28} />
-      </mesh>
-      {building.confidence >= 0.48 ? (
-        <RoundedBox castShadow receiveShadow args={[width * 0.38, towerHeight * 0.46, depth * 0.34]} radius={0.12} smoothness={4} position={[building.x + width * 0.68, podiumHeight + 0.22 + towerHeight * 0.32, building.z - depth * 0.1]}>
-          <meshStandardMaterial color={facadeColor} roughness={0.62} metalness={0.12} emissive={building.memory_linked ? "#0d4f55" : "#000000"} emissiveIntensity={building.memory_linked ? 0.1 : 0} />
-        </RoundedBox>
-      ) : null}
-      {Array.from({ length: floors }).flatMap((_, row) =>
-        Array.from({ length: windowColumns }).map((__, column) => {
-          const x = building.x - width * 0.32 + (column * width * 0.64) / Math.max(1, windowColumns - 1);
-          const y = podiumHeight + 1.25 + row * Math.max(1.15, towerHeight / (floors + 1));
-          return (
-            <mesh key={`${building.id}:front-window:${row}:${column}`} position={[x, y, building.z + depth / 2 + 0.018]}>
-              <boxGeometry args={[0.34, 0.3, 0.035]} />
-              <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.78 : 0.5} />
-            </mesh>
-          );
-        })
-      )}
-      {Array.from({ length: Math.min(6, floors) }).flatMap((_, row) =>
-        Array.from({ length: Math.min(3, windowColumns) }).map((__, column) => {
-          const z = building.z - depth * 0.26 + (column * depth * 0.52) / Math.max(1, Math.min(3, windowColumns) - 1);
-          const y = podiumHeight + 1.45 + row * Math.max(1.2, towerHeight / (floors + 1));
-          return (
-            <mesh key={`${building.id}:side-window:${row}:${column}`} position={[building.x + width / 2 + 0.018, y, z]} rotation={[0, Math.PI / 2, 0]}>
-              <boxGeometry args={[0.34, 0.28, 0.035]} />
-              <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.66 : 0.42} />
-            </mesh>
-          );
-        })
-      )}
-      <mesh position={[building.x, podiumHeight + 0.65, building.z + depth / 2 + 0.04]}>
-        <boxGeometry args={[Math.max(0.9, width * 0.18), 0.78, 0.08]} />
-        <meshBasicMaterial color="#101a2b" transparent opacity={0.9} />
-      </mesh>
-      {building.risk === "high" || building.risk === "medium" ? (
-        <mesh position={[building.x - width / 2 - 0.022, podiumHeight + 0.22 + towerHeight * 0.52, building.z]} rotation={[0, Math.PI / 2, 0]}>
-          <boxGeometry args={[depth * 0.72, 0.16, 0.035]} />
-          <meshBasicMaterial color={building.risk === "high" ? "#ff7a7f" : "#f7cf62"} transparent opacity={0.72} />
-        </mesh>
-      ) : null}
-      <mesh position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight + 1.6, building.z]}>
-        <cylinderGeometry args={[0.045, 0.045, 2.8 + building.confidence * 2, 10]} />
-        <meshBasicMaterial color={accentColor} transparent opacity={0.74} />
-      </mesh>
-      <mesh position={[building.x, podiumHeight + 0.22 + towerHeight + upperHeight + 3.15 + building.confidence * 2, building.z]}>
-        <sphereGeometry args={[0.2, 12, 8]} />
-        <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.95 : 0.56} />
-      </mesh>
-    </group>
-  );
-}
-
-function RoadMesh({
-  road,
-  points,
-  onHover
-}: {
-  road: MapRoad;
-  points: Map<string, { x: number; z: number }>;
-  onHover: (info: MapHoverInfo | null) => void;
-}) {
+function roadMidpoint(road: MapRoad, points: Map<string, { x: number; z: number }>): [number, number, number] {
   const source = points.get(road.source);
   const target = points.get(road.target);
-  if (!source || !target) return null;
-  const sx = source.x;
-  const sz = source.z;
-  const tx = target.x;
-  const tz = target.z;
-  const dx = tx - sx;
-  const dz = tz - sz;
-  const length = Math.sqrt(dx * dx + dz * dz);
-  const angle = Math.atan2(dz, dx);
-  const visual = routeVisual(road);
-  const midpoint: [number, number, number] = [sx + dx / 2, visual.y + 0.75, sz + dz / 2];
-  const dashCount = Math.max(3, Math.min(18, Math.floor(length / 8)));
-  const dashSpacing = length / dashCount;
-  return (
-    <group
-      position={[sx + dx / 2, visual.y, sz + dz / 2]}
-      rotation={[0, -angle, 0]}
-      onPointerOver={(event) => {
-        event.stopPropagation();
-        onHover(roadHoverInfo(road, midpoint));
-      }}
-      onPointerOut={(event) => {
-        event.stopPropagation();
-        onHover(null);
-      }}
-    >
-      <mesh>
-        <boxGeometry args={[length, visual.height, visual.width]} />
-        <meshBasicMaterial color={visual.color} transparent opacity={visual.opacity} />
-      </mesh>
-      {visual.label === "expressway" ? (
-        <>
-          <mesh position={[0, visual.height / 2 + 0.012, 0]}>
-            <boxGeometry args={[length, 0.025, 0.08]} />
-            <meshBasicMaterial color="#f7cf62" transparent opacity={0.72} />
-          </mesh>
-          <mesh position={[0, visual.height / 2 + 0.018, visual.width * 0.34]}>
-            <boxGeometry args={[length, 0.02, 0.045]} />
-            <meshBasicMaterial color="#dce8ff" transparent opacity={0.62} />
-          </mesh>
-          <mesh position={[0, visual.height / 2 + 0.018, -visual.width * 0.34]}>
-            <boxGeometry args={[length, 0.02, 0.045]} />
-            <meshBasicMaterial color="#dce8ff" transparent opacity={0.62} />
-          </mesh>
-        </>
-      ) : null}
-      {visual.label !== "county road"
-        ? Array.from({ length: dashCount }).map((_, index) => (
-            <mesh key={`${road.id}:dash:${index}`} position={[-length / 2 + dashSpacing * index + dashSpacing * 0.35, visual.height / 2 + 0.026, visual.label === "expressway" ? visual.width * 0.17 : 0]}>
-              <boxGeometry args={[Math.max(0.9, dashSpacing * 0.38), 0.018, 0.04]} />
-              <meshBasicMaterial color="#e7eefc" transparent opacity={visual.label === "expressway" ? 0.64 : 0.54} />
-            </mesh>
-          ))
-        : null}
-      {visual.label === "expressway"
-        ? Array.from({ length: dashCount }).map((_, index) => (
-            <mesh key={`${road.id}:dash-opposite:${index}`} position={[-length / 2 + dashSpacing * index + dashSpacing * 0.35, visual.height / 2 + 0.026, -visual.width * 0.17]}>
-              <boxGeometry args={[Math.max(0.9, dashSpacing * 0.38), 0.018, 0.04]} />
-              <meshBasicMaterial color="#e7eefc" transparent opacity={0.64} />
-            </mesh>
-          ))
-        : null}
-    </group>
-  );
-}
-
-function MapSceneTooltip({ info }: { info: MapHoverInfo }) {
-  return (
-    <Html position={info.position} center className="map-scene-tooltip">
-      <span className={`badge ${riskTone(info.tone)}`}>{info.kind}</span>
-      <strong>{info.title}</strong>
-      <small>{info.subtitle}</small>
-      <dl>
-        {info.rows.slice(0, 4).map((row) => (
-          <div key={`${row.label}:${row.value}`}>
-            <dt>{row.label}</dt>
-            <dd>{row.value}</dd>
-          </div>
-        ))}
-      </dl>
-    </Html>
-  );
-}
-
-function buildingHoverInfo(building: MapBuilding): MapHoverInfo {
-  const tier = buildingTier(building.confidence);
-  return {
-    kind: "building",
-    title: building.path,
-    subtitle: `${tier.label} in ${building.district_id}`,
-    tone: building.risk || tier.tone,
-    position: [building.x, 24 + building.confidence * 14, building.z],
-    rows: [
-      { label: "Confidence", value: `${Math.round(building.confidence * 100)}% (${tier.label})` },
-      { label: "Score", value: String(Math.round(building.score || 0)) },
-      { label: "Risk", value: building.risk || "unknown" },
-      { label: "Context", value: building.selected ? "selected" : building.include_mode || "omitted/available" },
-      { label: "Memory", value: building.memory_linked ? "linked" : "none" },
-      { label: "Tests", value: building.tests?.length ? building.tests.slice(0, 2).join(", ") : "none" },
-      { label: "Reason", value: building.reasons?.[0] || "No selection reason reported." }
-    ]
-  };
-}
-
-function roadHoverInfo(road: MapRoad, position: [number, number, number]): MapHoverInfo {
-  const visual = routeVisual(road);
-  return {
-    kind: "road",
-    title: visual.label,
-    subtitle: `${road.type.replace(/_/g, " ")} route`,
-    tone: visual.tone,
-    position,
-    rows: [
-      { label: "Confidence", value: `${Math.round(routeConfidence(road) * 100)}%` },
-      { label: "Class", value: visual.label },
-      { label: "Source", value: road.source.replace(/^file:/, "") },
-      { label: "Target", value: road.target.replace(/^file:/, "") },
-      { label: "Reason", value: road.reason || "No route reason reported." }
-    ]
-  };
-}
-
-function buildingTier(confidence: number) {
-  if (confidence >= 0.8) return { label: "civic tower", tone: "good" };
-  if (confidence >= 0.55) return { label: "district building", tone: "memory" };
-  if (confidence >= 0.3) return { label: "street block", tone: "warn" };
-  return { label: "edge pavilion", tone: "neutral" };
-}
-
-function routeConfidence(road: MapRoad) {
-  if (typeof road.confidence === "number" && road.confidence > 0) return Math.min(1, Math.max(0.05, road.confidence));
-  if (road.type === "selected_because") return 0.86;
-  if (road.type === "tested_by") return 0.64;
-  if (road.type === "memory_influenced") return 0.58;
-  return 0.34;
-}
-
-function routeVisual(road: MapRoad) {
-  const confidence = routeConfidence(road);
-  const memory = road.type === "memory_influenced";
-  if (confidence >= 0.78) {
-    return {
-      label: "expressway",
-      tone: "good",
-      width: 1.28,
-      height: 0.1,
-      y: 0.15,
-      opacity: 0.5,
-      color: memory ? "#245e64" : "#405879"
-    };
-  }
-  if (confidence >= 0.5) {
-    return {
-      label: "highway",
-      tone: "memory",
-      width: 0.7,
-      height: 0.07,
-      y: 0.13,
-      opacity: 0.38,
-      color: memory ? "#2d777a" : "#5e779b"
-    };
-  }
-  return {
-    label: "county road",
-    tone: "neutral",
-    width: 0.32,
-    height: 0.055,
-    y: 0.11,
-    opacity: 0.24,
-    color: memory ? "#2f7d81" : "#475a76"
-  };
+  if (!source || !target) return [0, 2, 0];
+  return [(source.x + target.x) / 2, 2, (source.z + target.z) / 2];
 }
 
 function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSelect: (id: string) => void }) {
@@ -1484,7 +1126,10 @@ function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSe
           <tr>
             <th>File</th>
             <th>District</th>
+            <th>Type</th>
+            <th>Tier</th>
             <th>Confidence</th>
+            <th>Source</th>
             <th>Risk</th>
             <th>Mode</th>
             <th>Tests</th>
@@ -1495,14 +1140,17 @@ function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSe
             <tr key={building.id} onClick={() => onSelect(building.node_id)}>
               <td><code>{building.path}</code></td>
               <td>{building.district_id}</td>
+              <td>{labelize(building.building_type || "unknown")}</td>
+              <td>{labelize(building.building_tier || "pavilion")}</td>
               <td>{Math.round(building.confidence * 100)}%</td>
+              <td>{labelize(building.confidence_source || "fallback")}</td>
               <td><span className={`badge ${riskTone(building.risk)}`}>{building.risk || "unknown"}</span></td>
               <td>{building.include_mode || "unknown"}</td>
               <td>{(building.tests || []).slice(0, 2).join(", ") || "none"}</td>
             </tr>
           ))}
           {!dashboardMap.buildings.length ? (
-            <tr><td colSpan={6}>No map buildings found.</td></tr>
+            <tr><td colSpan={9}>No map buildings found.</td></tr>
           ) : null}
         </tbody>
       </table>
@@ -1521,8 +1169,16 @@ function ActionHistoryList({ rows }: { rows: ActionHistoryRow[] }) {
           <span className={`timeline-dot ${riskTone(row.status)}`} />
           <div>
             <strong>{row.label || row.command || "AgentPack action"}</strong>
-            <small>{row.status || "recorded"} · {row.started_at || row.ended_at || "no timestamp"}</small>
+            <small>
+              {row.status || "recorded"} · {formatTimestamp(row.started_at || row.ended_at)}{typeof row.duration_ms === "number" ? ` · ${formatDuration(row.duration_ms)}` : ""}
+            </small>
             {row.command ? <code>{row.command}</code> : null}
+            {row.output_summary ? <p>{row.output_summary}</p> : null}
+            {row.follow_up_actions?.length ? (
+              <div className="timeline-actions">
+                {row.follow_up_actions.slice(0, 3).map((action) => <span key={action}>{labelize(action)}</span>)}
+              </div>
+            ) : null}
           </div>
         </li>
       ))}
@@ -1779,18 +1435,30 @@ function SettingsView({
   const settingsPresets = useMemo(
     () => [
       {
-        id: "local-dev",
-        label: "Local dev",
-        description: "Balanced context with tests included for daily local work.",
+        id: "codex-local",
+        label: "Codex local",
+        description: "Balanced context and blocking refresh behavior for Codex local work.",
         updates: {
           "context.default_mode": "balanced",
           "context.default_budget": 12000,
-          "context.include_tests": true
+          "context.include_tests": true,
+          "hooks.blocking_task_refresh": true
+        }
+      },
+      {
+        id: "claude-mcp",
+        label: "Claude MCP",
+        description: "Broader context, receipts, and task switch detection for Claude MCP sessions.",
+        updates: {
+          "context.default_mode": "deep",
+          "context.default_budget": 18000,
+          "context.include_receipts": true,
+          "hooks.task_switch_detection": true
         }
       },
       {
         id: "review-mode",
-        label: "Review mode",
+        label: "Review heavy",
         description: "Broader context and receipts for review-heavy workflows.",
         updates: {
           "context.default_mode": "deep",
@@ -1801,12 +1469,23 @@ function SettingsView({
       },
       {
         id: "fast-context",
-        label: "Fast context",
+        label: "Fast routing",
         description: "Smaller context for fast iteration and quick routing.",
         updates: {
           "context.default_mode": "lite",
           "context.default_budget": 8000,
           "context_lite.max_selected_files": 8
+        }
+      },
+      {
+        id: "benchmark-debug",
+        label: "Benchmark/debug",
+        description: "Repeatable context with compact lite bounds and tests enabled.",
+        updates: {
+          "context.default_mode": "balanced",
+          "context.include_tests": true,
+          "context_lite.max_selected_files": 12,
+          "context_lite.max_omitted_files": 20
         }
       }
     ],
@@ -1880,6 +1559,20 @@ function SettingsView({
           Save changes
         </button>
       </div>
+      {dirty.length ? (
+        <Panel title="Pending Config Diff" icon={SlidersHorizontal}>
+          <div className="config-diff-list">
+            {dirty.map((key) => (
+              <div key={key} className="list-row passive">
+                <span>
+                  <strong>{key}</strong>
+                  <small>{stringifyValue(initial[key])} {"->"} {stringifyValue(values[key])}</small>
+                </span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
       {config?.error ? <p className="empty">{config.error}</p> : null}
       <div className="settings-grid">
         {(config?.sections || []).map((section) => (
@@ -2646,6 +2339,20 @@ function configFieldDomId(fieldId: string) {
   return `config-field-${fieldId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
 }
 
+function formatTimestamp(value?: string) {
+  if (!value) return "no timestamp";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString();
+}
+
+function formatDuration(ms: number) {
+  if (ms < 1000) return `${ms}ms`;
+  const seconds = ms / 1000;
+  if (seconds < 60) return `${seconds.toFixed(seconds < 10 ? 1 : 0)}s`;
+  return `${Math.floor(seconds / 60)}m ${Math.round(seconds % 60)}s`;
+}
+
 let cachedWebGLSupport: boolean | null = null;
 
 function hasWebGLSupport() {
@@ -2661,56 +2368,6 @@ function hasWebGLSupport() {
     cachedWebGLSupport = false;
   }
   return cachedWebGLSupport;
-}
-
-function useReducedMotion() {
-  const [reduced, setReduced] = useState(() => {
-    if (typeof window === "undefined") return false;
-    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
-  });
-
-  useEffect(() => {
-    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
-    const handleChange = () => setReduced(query.matches);
-    handleChange();
-    query.addEventListener("change", handleChange);
-    return () => query.removeEventListener("change", handleChange);
-  }, []);
-
-  return reduced;
-}
-
-function mapPoints(dashboardMap: DashboardMap) {
-  const points = new Map<string, { x: number; z: number }>();
-  dashboardMap.buildings.forEach((building) => {
-    points.set(building.id, { x: building.x, z: building.z });
-    points.set(building.node_id, { x: building.x, z: building.z });
-  });
-  dashboardMap.landmarks.forEach((landmark) => {
-    points.set(landmark.id, { x: landmark.x, z: landmark.z });
-  });
-  return points;
-}
-
-function mapCenter(dashboardMap: DashboardMap) {
-  const coordinates = [
-    ...dashboardMap.buildings.map((building) => ({ x: building.x, z: building.z })),
-    ...dashboardMap.landmarks.map((landmark) => ({ x: landmark.x, z: landmark.z })),
-    ...dashboardMap.districts.map((district) => ({ x: district.x, z: district.z }))
-  ];
-  if (!coordinates.length) {
-    return { x: 0, z: 0, width: 48, depth: 36 };
-  }
-  const minX = Math.min(...coordinates.map((item) => item.x));
-  const maxX = Math.max(...coordinates.map((item) => item.x));
-  const minZ = Math.min(...coordinates.map((item) => item.z));
-  const maxZ = Math.max(...coordinates.map((item) => item.z));
-  return {
-    x: (minX + maxX) / 2,
-    z: (minZ + maxZ) / 2,
-    width: Math.max(12, maxX - minX),
-    depth: Math.max(12, maxZ - minZ)
-  };
 }
 
 function isRunnableAgentPackCommand(value: string) {

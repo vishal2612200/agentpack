@@ -35,14 +35,23 @@ def test_dashboard_map_builds_districts_and_building_confidence() -> None:
     buildings = {building.path: building for building in dashboard_map.buildings}
     districts = {district.id: district for district in dashboard_map.districts}
 
-    assert {"src/agentpack", "frontend/dashboard", "docs"} <= set(districts)
+    assert {"source:src/agentpack", "frontend:dashboard", "knowledge:docs"} <= set(districts)
     assert buildings["src/agentpack/dashboard/server.py"].height == 46.0
     assert buildings["src/agentpack/dashboard/server.py"].confidence == 1.0
     assert buildings["src/agentpack/dashboard/server.py"].color == "#ff7a7f"
-    assert buildings["frontend/dashboard/src/App.tsx"].height == 25.0
+    assert buildings["src/agentpack/dashboard/server.py"].building_type == "source"
+    assert buildings["src/agentpack/dashboard/server.py"].building_tier == "tower"
+    assert buildings["src/agentpack/dashboard/server.py"].confidence_source == "task_map"
+    assert "retrieve" in buildings["src/agentpack/dashboard/server.py"].action_refs
+    assert buildings["frontend/dashboard/src/App.tsx"].height == 26.68
+    assert buildings["frontend/dashboard/src/App.tsx"].building_type == "frontend"
     assert buildings["docs/commands.md"].confidence == 0.08
+    assert buildings["docs/commands.md"].building_type == "docs"
     assert dashboard_map.summary.selected_buildings == 2
     assert dashboard_map.summary.high_risk_buildings == 1
+    assert dashboard_map.summary.building_type_counts["source"] == 1
+    assert dashboard_map.summary.confidence_source_counts["task_map"] == 2
+    assert dashboard_map.summary.confidence_source_counts["fallback"] == 1
 
 
 def test_dashboard_map_preserves_roads_and_weather() -> None:
@@ -59,6 +68,8 @@ def test_dashboard_map_preserves_roads_and_weather() -> None:
     dashboard_map = build_dashboard_map(snapshot, graph)
 
     assert any(road.type == "selected_because" for road in dashboard_map.roads)
+    assert any(road.route_class == "expressway" for road in dashboard_map.roads)
+    assert all(road.relationship_source for road in dashboard_map.roads)
     assert any(item.id == "context" for item in dashboard_map.weather)
     assert any(item.id == "mcp" for item in dashboard_map.weather)
     assert dashboard_map.summary.stale is True
@@ -93,3 +104,4 @@ def test_action_history_merges_start_and_finish_without_output(tmp_path) -> None
     assert rows[0].ended_at
     assert rows[0].command == "agentpack doctor --agent all"
     assert rows[0].returncode == 0
+    assert rows[0].duration_ms is not None

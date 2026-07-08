@@ -90,6 +90,7 @@ class TerminalSession:
         self.returncode: int | None = None
         self.started_at = time.time()
         self.finished_at: float | None = None
+        self.output_tail = ""
         self._events: list[TerminalEvent] = []
         self._seq = 0
         self._condition = threading.Condition()
@@ -141,7 +142,20 @@ class TerminalSession:
             "finished_at": self.finished_at,
             "confirmed": self.confirmed,
             "inspection": self.inspection.model_dump(),
+            "duration_ms": self.duration_ms,
+            "output_summary": self.output_summary,
         }
+
+    @property
+    def duration_ms(self) -> int | None:
+        if self.finished_at is None:
+            return None
+        return max(0, int((self.finished_at - self.started_at) * 1000))
+
+    @property
+    def output_summary(self) -> str:
+        compact = " ".join(self.output_tail.split())
+        return compact[-500:]
 
     def _run(self) -> None:
         master_fd: int | None = None
@@ -206,6 +220,8 @@ class TerminalSession:
     def _emit(self, event_type: str, *, data: str = "", status: str = "", returncode: int | None = None) -> None:
         event: TerminalEvent
         with self._condition:
+            if event_type == "output" and data:
+                self.output_tail = (self.output_tail + data)[-4000:]
             self._seq += 1
             event = TerminalEvent(seq=self._seq, type=event_type, data=data, status=status, returncode=returncode)
             self._events.append(event)

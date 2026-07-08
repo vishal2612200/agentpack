@@ -1523,6 +1523,35 @@ code {
   box-shadow: var(--card-shadow);
 }
 
+.city-loading {
+  height: min(780px, calc(100dvh - 246px));
+  min-height: 540px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 48% 0%, rgba(128, 169, 255, 0.14), transparent 38%),
+    linear-gradient(180deg, #08111f 0%, #0a1220 100%);
+  color: var(--text-muted);
+  box-shadow: var(--card-shadow);
+}
+
+.city-tour-toggle {
+  position: absolute;
+  z-index: 3;
+  right: 14px;
+  top: 14px;
+  min-height: 32px;
+  border: 1px solid rgba(128, 169, 255, 0.34);
+  border-radius: var(--radius-md);
+  background: rgba(8, 16, 30, 0.82);
+  color: #f5f8ff;
+  padding: 6px 10px;
+  font-weight: 720;
+  box-shadow: 0 12px 26px rgba(0, 0, 0, 0.28);
+}
+
 .city-canvas-wrap canvas {
   outline: none;
   touch-action: none;
@@ -1713,6 +1742,22 @@ code {
   color: var(--text-muted);
 }
 
+.map-action-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.map-action-row .command-action {
+  flex: 1 1 150px;
+}
+
+.map-action-row .command-chip {
+  flex: 1 1 130px;
+  text-align: center;
+}
+
 .catalog-grid.compact {
   grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
 }
@@ -1763,6 +1808,31 @@ code {
 
 .action-history code {
   margin-top: 4px;
+}
+
+.action-history p {
+  margin: 6px 0 0;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.timeline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 6px;
+}
+
+.timeline-actions span {
+  border: 1px solid var(--card-border);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card-bg-strong) 78%, transparent);
+  color: var(--text-muted);
+  padding: 2px 7px;
+  font-size: 11px;
+  font-weight: 700;
 }
 
 .map-table {

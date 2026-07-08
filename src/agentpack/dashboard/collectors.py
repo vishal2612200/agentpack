@@ -1185,14 +1185,14 @@ def _task_history_key(row: TaskHistoryRow) -> str:
 
 
 def _project_candidates(root: Path, thread_rows: list[ThreadRow], task_history: list[TaskHistoryRow]) -> list[ProjectCandidate]:
-    candidates: list[tuple[Path, str]] = [(root, "current")]
-    candidates.extend((Path(str(row.get("path"))), "global index") for row in load_project_index() if row.get("path"))
-    candidates.extend((Path(row.worktree), "thread") for row in thread_rows if row.worktree)
-    candidates.extend((Path(row.cwd), "task history") for row in task_history if row.cwd)
+    candidates: list[tuple[Path, str, dict[str, Any]]] = [(root, "current", {})]
+    candidates.extend((Path(str(row.get("path"))), "global index", row) for row in load_project_index() if row.get("path"))
+    candidates.extend((Path(row.worktree), "thread", {}) for row in thread_rows if row.worktree)
+    candidates.extend((Path(row.cwd), "task history", {}) for row in task_history if row.cwd)
 
     seen: set[str] = set()
     rows: list[ProjectCandidate] = []
-    for path, source in candidates:
+    for path, source, index_row in candidates:
         candidate = path.expanduser()
         try:
             resolved = candidate.resolve()
@@ -1202,27 +1202,53 @@ def _project_candidates(root: Path, thread_rows: list[ThreadRow], task_history: 
         if key in seen:
             continue
         seen.add(key)
-        rows.append(_project_candidate(root, resolved, source))
+        rows.append(_project_candidate(root, resolved, source, index_row))
     return rows[:20]
 
 
-def _project_candidate(current_root: Path, path: Path, source: str) -> ProjectCandidate:
+def _project_candidate(current_root: Path, path: Path, source: str, index_row: dict[str, Any] | None = None) -> ProjectCandidate:
     exists = path.exists() and path.is_dir()
     valid = exists and _valid_project_root(path)
     branch = git.current_branch(path) or "" if valid and git.is_git_repo(path) else ""
     sha = (git.current_sha(path) or "")[:12] if valid and git.is_git_repo(path) else ""
-    detail = "ready" if valid else "missing directory" if not exists else "not a git or AgentPack project"
+    context_status = _project_context_status(path) if valid else "missing"
+    mcp_status = _project_mcp_status(path) if valid else "unknown"
+    map_ready = valid and context_status in {"fresh", "available"}
+    detail = "map-ready" if map_ready else "context missing" if valid else "missing directory" if not exists else "not a git or AgentPack project"
+    row = index_row or {}
     return ProjectCandidate(
         name=path.name or str(path),
         path=str(path),
-        branch=branch,
-        git_sha=sha,
+        branch=branch or str(row.get("branch") or ""),
+        git_sha=sha or str(row.get("git_sha") or ""),
         source=source,
         current=path == current_root,
         exists=exists,
         valid=valid,
         detail=detail,
+        context_status=context_status,
+        mcp_status=mcp_status,
+        map_ready=map_ready,
+        last_seen_at=str(row.get("last_seen_at") or ""),
     )
+
+
+def _project_context_status(path: Path) -> str:
+    context_path = path / ".agentpack" / "context.md"
+    config_path = path / ".agentpack" / "config.toml"
+    if context_path.exists():
+        try:
+            text = context_path.read_text(encoding="utf-8", errors="replace")[:1200]
+        except OSError:
+            return "available"
+        return "stale" if "refresh_required: true" in text else "fresh"
+    return "available" if config_path.exists() else "missing"
+
+
+def _project_mcp_status(path: Path) -> str:
+    if any((path / candidate).exists() for candidate in (".claude/settings.json", ".codex/config.toml", ".cursor/rules/agentpack.mdc", ".vscode/tasks.json")):
+        return "configured"
+    return "unknown"
 
 
 def _valid_project_root(path: Path) -> bool:

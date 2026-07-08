@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
 
 from agentpack.dashboard.models import ActionHistoryRow
 
@@ -21,6 +20,9 @@ def record_dashboard_action(
     confirmed: bool = False,
     returncode: int | None = None,
     session_id: str = "",
+    duration_ms: int | None = None,
+    output_summary: str = "",
+    follow_up_actions: list[str] | None = None,
 ) -> None:
     path = root / HISTORY_FILE
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -37,6 +39,9 @@ def record_dashboard_action(
         confirmed=confirmed,
         source="dashboard",
         session_id=session_id or action_id,
+        duration_ms=duration_ms,
+        output_summary=output_summary[:500],
+        follow_up_actions=follow_up_actions or [],
     )
     with path.open("a", encoding="utf-8") as fh:
         fh.write(json.dumps(row.model_dump(mode="json"), sort_keys=True) + "\n")
@@ -84,6 +89,7 @@ def _read_agentpack_session_events(root: Path) -> list[ActionHistoryRow]:
         event_type = str(data.get("type") or data.get("event_type") or "")
         task = str(data.get("task") or data.get("summary") or event_type or "AgentPack event")
         timestamp = str(data.get("timestamp") or data.get("recorded_at") or data.get("started_at") or "")
+        ended_at = str(data.get("completed_at") or data.get("ended_at") or "")
         rows.append(
             ActionHistoryRow(
                 action_id=f"session-event:{timestamp}:{index}",
@@ -92,8 +98,10 @@ def _read_agentpack_session_events(root: Path) -> list[ActionHistoryRow]:
                 cwd=str(root),
                 status=str(data.get("status") or event_type or "recorded"),
                 started_at=timestamp,
-                ended_at=str(data.get("completed_at") or ""),
+                ended_at=ended_at,
                 source="agentpack",
+                duration_ms=_duration_ms(timestamp, ended_at),
+                output_summary=str(data.get("result") or data.get("detail") or data.get("summary") or "")[:500],
             )
         )
     return rows
@@ -105,9 +113,17 @@ def _merge_action_rows(left: ActionHistoryRow, right: ActionHistoryRow) -> Actio
     for key, value in incoming.items():
         if key == "returncode" and value is not None:
             data[key] = value
+        elif isinstance(value, list):
+            if value:
+                data[key] = value
+        elif isinstance(value, dict):
+            if value:
+                data[key] = value
         elif value not in {"", None, False}:
             data[key] = value
     data["started_at"] = left.started_at or right.started_at
+    computed_duration = _duration_ms(data.get("started_at") or "", data.get("ended_at") or "")
+    data["duration_ms"] = computed_duration if computed_duration is not None else data.get("duration_ms")
     return ActionHistoryRow.model_validate(data)
 
 
@@ -122,3 +138,14 @@ def _label_from_command(command: str) -> str:
     if len(parts) >= 4 and parts[1:3] == ["-m", "agentpack.cli"]:
         return f"agentpack {parts[3]}"
     return parts[0] if parts else "dashboard action"
+
+
+def _duration_ms(started_at: str, ended_at: str) -> int | None:
+    if not started_at or not ended_at:
+        return None
+    try:
+        start = datetime.fromisoformat(started_at.replace("Z", "+00:00"))
+        end = datetime.fromisoformat(ended_at.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    return max(0, int((end - start).total_seconds() * 1000))

@@ -332,6 +332,10 @@ class ProjectCandidate(BaseModel):
     exists: bool = False
     valid: bool = False
     detail: str = ""
+    context_status: str = "unknown"
+    mcp_status: str = "unknown"
+    map_ready: bool = False
+    last_seen_at: str = ""
 
 
 class TaskHistoryRow(BaseModel):
@@ -426,6 +430,12 @@ class MapBuilding(BaseModel):
     label: str
     path: str
     district_id: str
+    building_type: str = "unknown"
+    building_tier: str = "pavilion"
+    confidence_source: str = "fallback"
+    confidence_breakdown: dict[str, float | str | bool] = Field(default_factory=dict)
+    layout_group: str = "unknown"
+    action_refs: list[str] = Field(default_factory=list)
     score: float = 0.0
     confidence: float = 0.08
     height: float = 7.36
@@ -448,6 +458,11 @@ class MapRoad(BaseModel):
     type: str
     confidence: float = 0.0
     reason: str = ""
+    route_class: str = "local"
+    relationship_strength: float = 0.0
+    relationship_source: str = "fallback"
+    source_kind: str = "unknown"
+    target_kind: str = "unknown"
 
 
 class MapLandmark(BaseModel):
@@ -476,6 +491,9 @@ class DashboardMapSummary(BaseModel):
     high_risk_buildings: int = 0
     max_score: float = 0.0
     stale: bool = False
+    building_type_counts: dict[str, int] = Field(default_factory=dict)
+    route_class_counts: dict[str, int] = Field(default_factory=dict)
+    confidence_source_counts: dict[str, int] = Field(default_factory=dict)
 
 
 class DashboardMap(BaseModel):
@@ -501,6 +519,9 @@ class ActionHistoryRow(BaseModel):
     confirmed: bool = False
     source: str = "dashboard"
     session_id: str = ""
+    duration_ms: int | None = None
+    output_summary: str = ""
+    follow_up_actions: list[str] = Field(default_factory=list)
 
 
 class DashboardSnapshot(BaseModel):
