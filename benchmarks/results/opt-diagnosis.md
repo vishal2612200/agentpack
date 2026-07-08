@@ -218,3 +218,76 @@ individually exceed the 60-point floor.
    on Rails" (disproven — zero NOT_FOUND on Rails too) to "might help
    RANKED_LOW by reducing cross-workspace noise," lower confidence,
    still optional/last.
+## Tier 4 attempt (import resolution) — REVERTED, net-negative on dense repos
+
+Implemented and fully tested PSR-4 resolution for PHP (parse
+`composer.json` autoload map, resolve `use App\Models\User` →
+`app/Models/User.php`) and package-directory-convention resolution for
+Java/Kotlin (`import com.x.Foo` → `.../com/x/Foo.java` via a suffix
+index built once per graph build). Both resolvers were verified correct
+against the real cloned repos:
+- spring-petclinic: 22 real intra-repo import edges resolved (was 0),
+  including the model→entity chains (Owner→Person, Pet→NamedEntity).
+- laravel-framework: `Illuminate\Contracts\Queue\Factory` →
+  `src/Illuminate/Contracts/Queue/Factory.php`, longest-prefix PSR-4
+  fallback working. 8394 real edges resolved across 3295 files.
+
+25 unit tests passed (5 new for the resolvers), full suite green.
+
+**Benchmark result: a real regression.**
+
+| Language | Recall (Tier 3 → Tier 4) | reason_graph | Verdict |
+|---|---|---|---|
+| Java (spring-petclinic) | 61.7% → 61.7% | 28.4% → 28.4% | neutral (tiny sparse graph, 22 edges) |
+| PHP (laravel-framework) | 16.7% → **13.3%** | 6.7% → **5.0%** | **regressed** |
+
+The numbers are deterministic (frozen commit sample), so 16.7% → 13.3%
+is a real change caused by the edges, not sampling noise. Adding import
+edges *lowered* the exact metric they were meant to raise.
+
+**Root cause — graph signal without IDF, in a dense hub-and-spoke.**
+Measured laravel's import graph directly: 8394 edges, and the top import
+targets are generic infrastructure imported by hundreds of files —
+`Database/Eloquent/Model.php` (273 importers),
+`Collections/Collection.php` (253), `Support/Str.php` (238),
+`Container/Container.php` (175). The ranker's neighbor-boost passes
+(`boost_recall_neighbors`, `boost_second_pass_expansion`) propagate
+score from high-scoring seed files to their import neighbors. In a dense
+framework graph, that means score floods into these hub files — which
+are imported everywhere but are almost never the actual *target* of a
+specific task — and they crowd out the real task-relevant files, so
+recall drops.
+
+Two compounding reasons the benchmark is the worst case for raw import
+edges:
+1. **Cold regime.** Benchmark cases have no live diff (`all_changed`
+   empty). The import graph's genuine value is finding neighbors of
+   *changed* files; with no changes, `direct/reverse dependency of
+   changed file` reasons barely fire, so the graph provides almost no
+   upside — only the hub-noise downside.
+2. **No edge weighting.** Every edge counts equally. An edge to a file
+   imported by 273 others carries essentially zero discriminative
+   signal but propagates the same boost as an edge to a rarely-imported,
+   task-specific file.
+
+**Reverted in full** — the 4 changed files (`dependency_graph.py`,
+`java_imports.py`, `php_imports.py`, and the 5 resolver tests) restored
+to the clean Tier 3 state; PHP verified back to the 16.7% baseline; full
+test suite green.
+
+**How to make import resolution net-positive (future work, not
+attempted here):**
+- **Down-weight edges by target in-degree (graph IDF).** A file imported
+  by N others contributes boost ∝ 1/log(N) or is excluded above a
+  threshold (e.g. drop edges to any file imported by >30 others). This
+  is the single most important missing piece — it converts the dense
+  framework graph from anti-signal to signal.
+- **Only propagate along edges from/to task-relevant seeds**, not all
+  high-scoring files, to stop generic hubs from seeding expansion.
+- **Validate in a warm regime** (with a real diff) where the graph's
+  actual value — neighbor-of-changed-file — is exercised, rather than
+  only the cold benchmark regime that shows only the downside.
+
+Until edge weighting exists, raw import resolution should not be shipped:
+it helps sparse repos negligibly and hurts dense framework repos
+measurably.
