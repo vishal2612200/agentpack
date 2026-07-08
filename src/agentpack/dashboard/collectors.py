@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
 import shlex
 from collections import Counter
@@ -13,6 +14,7 @@ from agentpack.core import git
 from agentpack.core.config import load_config
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.loop_protocol import load_loop_state
+from agentpack.core.mcp_runtime import check_mcp_runtime
 from agentpack.core.task_freshness import task_freshness
 from agentpack.core.thread_context import list_thread_rows
 from agentpack.dashboard.models import (
@@ -24,6 +26,8 @@ from agentpack.dashboard.models import (
     LearningPrepSessionRow,
     LearningPrepSummary,
     LearningWeakSpot,
+    McpHealth,
+    McpRegistration,
     ObserverInsightRow,
     ObserverSummary,
     LoopSummary,
@@ -47,6 +51,7 @@ from agentpack.dashboard.models import (
 )
 from agentpack.learning.sessions import read_learning_sessions, summarize_weak_spots
 from agentpack.learning.task_memory import recent_task_memories
+from agentpack.mcp_server import MCP_TOOL_NAMES
 from agentpack.observer.brief import build_observer_brief
 from agentpack.router.models import SkillArtifact
 from agentpack.router.skills_index import ensure_inventory_index
@@ -117,6 +122,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         _load_jsonl(agentpack_dir / "benchmark_results.jsonl"),
     )
     threads = _thread_summary(root, meta)
+    mcp_health = _mcp_health(root)
     loop = _loop_summary(root)
     review_runs = _review_runs(root)
     actions = _suggested_actions(agentpack_dir, task_text, context, learning, benchmarks, feedback_rows, review_runs, learning_prep)
@@ -143,6 +149,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         observer=observer,
         benchmarks=benchmarks,
         threads=threads,
+        mcp_health=mcp_health,
         loop=loop,
         review_runs=review_runs,
         suggested_actions=actions,
@@ -909,6 +916,83 @@ def _thread_summary(root: Path, meta: dict[str, Any] | None) -> ThreadSummary:
         if isinstance(raw_conflicts, list):
             conflicts = [item for item in raw_conflicts if isinstance(item, dict)]
     return ThreadSummary(active_count=len(rows), conflicts=conflicts)
+
+
+def _mcp_health(root: Path) -> McpHealth:
+    registrations = _mcp_registrations(root)
+    registered = any(item.status == "present" for item in registrations)
+    runtime = check_mcp_runtime(root=root)
+    status = "healthy" if runtime.ok and registered else "warning" if runtime.ok or registered else "missing"
+    remediation = list(runtime.remediation)
+    if not registered:
+        remediation.append("agentpack repair --agent all")
+    if runtime.ok:
+        remediation.append("Call agentpack_readiness() from the agent host to prove live exposure.")
+    return McpHealth(
+        status=status,
+        runtime_status=runtime.status,
+        runtime_ok=runtime.ok,
+        runtime_detail=runtime.detail,
+        registered=registered,
+        registrations=registrations,
+        live_exposure="unknown",
+        expected_tools=list(MCP_TOOL_NAMES),
+        remediation=_dedupe(remediation),
+    )
+
+
+def _mcp_registrations(root: Path) -> list[McpRegistration]:
+    return [
+        _local_mcp_registration(root / ".mcp.json"),
+        _claude_global_mcp_registration(Path.home() / ".claude" / "settings.json"),
+        _codex_mcp_registration(Path(os.environ.get("CODEX_HOME", "~/.codex")).expanduser() / "config.toml"),
+    ]
+
+
+def _local_mcp_registration(path: Path) -> McpRegistration:
+    if not path.exists():
+        return McpRegistration(scope="Claude local", path=str(path), status="missing", detail="No .mcp.json found.")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return McpRegistration(scope="Claude local", path=str(path), status="invalid", detail=str(exc))
+    if "agentpack" in data.get("mcpServers", {}):
+        return McpRegistration(scope="Claude local", path=str(path), status="present", detail="agentpack server registered.")
+    return McpRegistration(scope="Claude local", path=str(path), status="missing", detail="agentpack missing from mcpServers.")
+
+
+def _claude_global_mcp_registration(path: Path) -> McpRegistration:
+    if not path.exists():
+        return McpRegistration(scope="Claude global", path=str(path), status="missing", detail="No Claude settings found.")
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        return McpRegistration(scope="Claude global", path=str(path), status="invalid", detail=str(exc))
+    if "agentpack" in data.get("mcpServers", {}):
+        return McpRegistration(scope="Claude global", path=str(path), status="present", detail="agentpack server registered.")
+    return McpRegistration(scope="Claude global", path=str(path), status="missing", detail="agentpack missing from mcpServers.")
+
+
+def _codex_mcp_registration(path: Path) -> McpRegistration:
+    if not path.exists():
+        return McpRegistration(scope="Codex", path=str(path), status="missing", detail="No Codex config found.")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        return McpRegistration(scope="Codex", path=str(path), status="invalid", detail=str(exc))
+    if "[mcp_servers.agentpack]" in text and 'command = "agentpack"' in text and 'args = ["mcp"]' in text:
+        return McpRegistration(scope="Codex", path=str(path), status="present", detail="agentpack server registered.")
+    return McpRegistration(scope="Codex", path=str(path), status="missing", detail="agentpack missing from mcp_servers.")
+
+
+def _dedupe(values: list[str]) -> list[str]:
+    seen: set[str] = set()
+    result: list[str] = []
+    for value in values:
+        if value and value not in seen:
+            seen.add(value)
+            result.append(value)
+    return result
 
 
 def _loop_summary(root: Path) -> LoopSummary:

@@ -174,21 +174,29 @@ pre {
 }
 
 .ui-badge-good,
-.ui-badge-fresh {
+.ui-badge-fresh,
+.ui-badge-healthy,
+.ui-badge-present {
   background: var(--good-soft);
   border-color: color-mix(in srgb, var(--good) 34%, var(--border));
   color: var(--good);
 }
 
 .ui-badge-warn,
-.ui-badge-stale {
+.ui-badge-stale,
+.ui-badge-warning,
+.ui-badge-unknown,
+.ui-badge-invalid {
   background: var(--warn-soft);
   border-color: color-mix(in srgb, var(--warn) 34%, var(--border));
   color: var(--warn);
 }
 
 .ui-badge-risk,
-.ui-badge-missing {
+.ui-badge-missing,
+.ui-badge-command_missing,
+.ui-badge-missing_extra,
+.ui-badge-server_error {
   background: var(--danger-soft);
   border-color: color-mix(in srgb, var(--danger) 36%, var(--border));
   color: var(--danger);
@@ -463,6 +471,15 @@ pre {
   padding: 10px 18px;
   border-bottom: 1px solid var(--border);
   background: color-mix(in srgb, var(--surface) 92%, transparent);
+}
+
+.topbar-status {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
 }
 
 .project-meta {
@@ -839,6 +856,13 @@ small {
 .command-row span {
   display: grid;
   gap: 3px;
+}
+
+.tool-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 14px;
 }
 
 .icon-button {

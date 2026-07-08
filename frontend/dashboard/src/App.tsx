@@ -41,13 +41,14 @@ import { DataTable, type DataTableColumn } from "./components/ui/data-table";
 import { Input } from "./components/ui/input";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 
-type View = "cockpit" | "projects" | "graph" | "memory" | "learning" | "risk" | "reviews" | "replay" | "raw";
+type View = "cockpit" | "projects" | "graph" | "memory" | "learning" | "risk" | "reviews" | "integrations" | "replay" | "raw";
 type GraphFilter = "all" | "selected" | "risk" | "memory" | "reviews" | "tests";
 type GraphMode = "decision" | "full";
 type ProjectRow = NonNullable<DashboardSnapshot["project_index"]["projects"]>[number];
 type LearningSessionRow = NonNullable<DashboardSnapshot["learning_prep"]["sessions"]>[number];
 type TaskMapRow = DashboardSnapshot["task_map"][number];
 type ReviewRunRow = DashboardSnapshot["review_runs"][number];
+type McpRegistrationRow = NonNullable<NonNullable<DashboardSnapshot["mcp_health"]>["registrations"]>[number];
 
 const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "cockpit", label: "Cockpit", icon: Activity },
@@ -57,6 +58,7 @@ const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "learning", label: "Learning", icon: ClipboardList },
   { id: "risk", label: "Risk & Tests", icon: ShieldAlert },
   { id: "reviews", label: "PR Reviews", icon: GitBranch },
+  { id: "integrations", label: "Integrations", icon: TerminalSquare },
   { id: "replay", label: "Replay", icon: PlayCircle },
   { id: "raw", label: "Raw Data", icon: Code2 }
 ];
@@ -141,6 +143,7 @@ export function App() {
           {view === "learning" && <LearningPrepView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "risk" && <RiskTestsView snapshot={payload.snapshot} onSelect={(id) => setSelectedId(id)} />}
           {view === "reviews" && <ReviewsView snapshot={payload.snapshot} onCopy={copyText} />}
+          {view === "integrations" && <IntegrationsView snapshot={payload.snapshot} onCopy={copyText} />}
           {view === "replay" && <ReplayView snapshot={payload.snapshot} graph={payload.graph} />}
           {view === "raw" && <RawDataView payload={payload} />}
     </AppShell>
@@ -168,7 +171,10 @@ function TopBar({
         <span className="sr-only">Search graph</span>
         <Input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search paths, memory, tests" />
       </label>
-      <StatusBadge status={snapshot.context.status} />
+      <div className="topbar-status" aria-label="Dashboard health">
+        <StatusBadge status={snapshot.context.status} />
+        <StatusBadge status={snapshot.mcp_health?.status || "unknown"} />
+      </div>
     </header>
   );
 }
@@ -867,6 +873,100 @@ function ReviewsView({
         </Panel>
       </div>
       <DataTable data={runs} columns={columns} empty="No review runs found." getRowKey={(run) => run.run_id} />
+    </div>
+  );
+}
+
+function IntegrationsView({
+  snapshot,
+  onCopy
+}: {
+  snapshot: DashboardSnapshot;
+  onCopy: (value: string, label?: string) => void;
+}) {
+  const health = snapshot.mcp_health || {};
+  const registrations = health.registrations || [];
+  const tools = health.expected_tools || [];
+  const remediation = health.remediation || [];
+  const registrationColumns = useMemo<Array<DataTableColumn<McpRegistrationRow>>>(
+    () => [
+      {
+        id: "scope",
+        header: "Scope",
+        cell: ({ row }) => (
+          <>
+            <strong>{row.original.scope}</strong>
+            <code>{row.original.path}</code>
+          </>
+        )
+      },
+      {
+        id: "status",
+        header: "Status",
+        cell: ({ row }) => <Badge tone={riskTone(row.original.status)}>{row.original.status || "unknown"}</Badge>
+      },
+      {
+        id: "detail",
+        header: "Detail",
+        cell: ({ row }) => row.original.detail || "No detail captured."
+      }
+    ],
+    []
+  );
+
+  return (
+    <div className="view-stack">
+      <SectionTitle title="Integrations" subtitle="MCP runtime, host registration, live exposure boundary, and repair commands." />
+      <div className="metric-grid">
+        <Metric label="MCP" value={health.status || "unknown"} tone={riskTone(health.status)} />
+        <Metric label="Runtime" value={health.runtime_status || "unknown"} tone={health.runtime_ok ? "good" : riskTone(health.runtime_status)} />
+        <Metric label="Registered" value={health.registered ? "yes" : "no"} tone={health.registered ? "good" : "warn"} />
+        <Metric label="Host exposure" value={health.live_exposure || "unknown"} tone={health.live_exposure === "confirmed" ? "good" : "warn"} />
+      </div>
+
+      <div className="content-grid">
+        <Panel title="MCP Runtime" icon={TerminalSquare}>
+          <div className="stack-sm">
+            <div className="list-row passive">
+              <span>
+                <strong>{health.runtime_status || "unknown"}</strong>
+                <small>{health.runtime_detail || "No runtime detail captured."}</small>
+              </span>
+              <Badge tone={health.runtime_ok ? "good" : riskTone(health.runtime_status)}>
+                {health.runtime_ok ? "ok" : "check"}
+              </Badge>
+            </div>
+            <p className="muted">
+              Dashboard probes whether `agentpack mcp` can start locally. Only a tool call from the agent host proves live exposure.
+            </p>
+          </div>
+        </Panel>
+
+        <Panel title="Repair Path" icon={CheckCircle2}>
+          <div className="stack-sm">
+            {remediation.map((command) => (
+              <div key={command} className="command-row">
+                <TerminalSquare size={16} aria-hidden="true" />
+                <code>{command}</code>
+                <CopyButton value={command} label="repair command" onCopy={onCopy} />
+              </div>
+            ))}
+            {!remediation.length ? <p className="empty">No repair action needed.</p> : null}
+          </div>
+        </Panel>
+      </div>
+
+      <DataTable data={registrations} columns={registrationColumns} empty="No MCP registration checks found." getRowKey={(row) => `${row.scope}:${row.path}`} />
+
+      <Card>
+        <CardHeader title="Expected MCP Tools" subtitle="Tools AgentPack expects the host to expose after MCP is registered and the host has restarted." icon={ClipboardList} />
+        <div className="tool-list">
+          {tools.slice(0, 32).map((tool) => (
+            <Badge key={tool} tone="neutral">{tool}</Badge>
+          ))}
+          {!tools.length ? <p className="empty">No expected MCP tools reported.</p> : null}
+        </div>
+      </Card>
     </div>
   );
 }
@@ -1583,9 +1683,9 @@ function findSelected(graph: DashboardGraph, selectedId: string): DashboardNode 
 }
 
 function riskTone(value?: string) {
-  if (value === "high" || value === "risk" || value === "missing") return "risk";
-  if (value === "medium" || value === "stale" || value === "warn") return "warn";
-  if (value === "low" || value === "fresh" || value === "good") return "good";
+  if (value === "high" || value === "risk" || value === "missing" || value === "command_missing" || value === "missing_extra" || value === "server_error") return "risk";
+  if (value === "medium" || value === "stale" || value === "warn" || value === "warning" || value === "unknown" || value === "invalid") return "warn";
+  if (value === "low" || value === "fresh" || value === "good" || value === "healthy" || value === "present" || value === "ready" || value === "stdio_waiting") return "good";
   if (value === "memory") return "memory";
   return "neutral";
 }

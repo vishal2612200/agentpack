@@ -209,6 +209,22 @@ export interface DashboardSnapshot {
       evidence?: string[];
     }>;
   };
+  mcp_health?: {
+    status?: "healthy" | "warning" | "missing" | "unknown";
+    runtime_status?: string;
+    runtime_ok?: boolean;
+    runtime_detail?: string;
+    registered?: boolean;
+    registrations?: Array<{
+      scope: string;
+      path: string;
+      status?: string;
+      detail?: string;
+    }>;
+    live_exposure?: "confirmed" | "unknown";
+    expected_tools?: string[];
+    remediation?: string[];
+  };
   benchmarks: {
     latest?: Record<string, unknown>;
     averages?: Record<string, number>;

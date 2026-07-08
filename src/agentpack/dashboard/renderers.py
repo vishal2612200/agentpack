@@ -22,6 +22,7 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     if not skills:
         skills = '<tr><td colspan="7">No skill recommendations found.</td></tr>'
     quality_strip = _quality_strip(snapshot)
+    integrations = _integrations_panel(snapshot)
     skills_inventory = _skills_inventory_panel(snapshot)
     learning = _learning_rows(snapshot)
     observer = _observer_rows(snapshot)
@@ -190,6 +191,7 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     <div class="brand">AgentPack</div>
     <nav aria-label="Dashboard sections">
       <a href="#health">Health</a>
+      <a href="#integrations">Integrations</a>
       <a href="#files">Files</a>
       <a href="#task-map">Task Map</a>
       <a href="#skills">Skills</a>
@@ -231,6 +233,8 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     {_stale_reason(snapshot)}
     </div>
   </section>
+
+  {integrations}
 
   <section id="files" class="section">
     <div class="section-header"><h2>Selected Files</h2><small>Top {min(len(snapshot.selected_files), MAX_RENDERED_FILES)} files from the active context pack</small></div>
@@ -313,6 +317,40 @@ def _selected_file_rows(snapshot: DashboardSnapshot) -> str:
         for item in snapshot.selected_files[:MAX_RENDERED_FILES]
     )
     return rows or '<tr><td colspan="5">No selected files found.</td></tr>'
+
+
+def _integrations_panel(snapshot: DashboardSnapshot) -> str:
+    health = snapshot.mcp_health
+    registrations = "".join(
+        "<tr>"
+        f"<td>{_e(item.scope)}</td>"
+        f"<td><span class=\"pill {_status_class(item.status)}\">{_e(item.status)}</span></td>"
+        f"<td><code>{_e(item.path)}</code></td>"
+        f"<td>{_e(item.detail)}</td>"
+        "</tr>"
+        for item in health.registrations
+    ) or '<tr><td colspan="4">No MCP registration checks found.</td></tr>'
+    tools = " ".join(f'<span class="pill">{_e(tool)}</span>' for tool in health.expected_tools[:24]) or "No tools reported."
+    remediation = "".join(f"<li><code>{_e(command)}</code></li>" for command in health.remediation) or "<li>No repair action needed.</li>"
+    return f"""
+  <section id="integrations" class="section">
+    <div class="section-header"><h2>Integrations</h2><span class="pill {_status_class(health.status)}">{_e(health.status)}</span></div>
+    <div class="section-body">
+      <div class="grid">
+        <div class="metric"><strong>MCP Runtime</strong><span>{_e(health.runtime_status or "unknown")}</span></div>
+        <div class="metric"><strong>Runtime OK</strong><span>{'yes' if health.runtime_ok else 'no'}</span></div>
+        <div class="metric"><strong>Registered</strong><span>{'yes' if health.registered else 'no'}</span></div>
+        <div class="metric"><strong>Live Exposure</strong><span>{_e(health.live_exposure)}</span></div>
+      </div>
+      <p class="callout"><small>{_e(health.runtime_detail or "No runtime detail captured.")} Live host exposure cannot be proven by static dashboard; call agentpack_readiness() from the host.</small></p>
+      <h3>MCP Registrations</h3>
+      <div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Path</th><th>Detail</th></tr></thead><tbody>{registrations}</tbody></table></div>
+      <h3>Expected Tools</h3>
+      <p>{tools}</p>
+      <h3>Repair Path</h3>
+      <ul>{remediation}</ul>
+    </div>
+  </section>"""
 
 
 def _task_map_rows(snapshot: DashboardSnapshot) -> str:
@@ -605,7 +643,15 @@ def _stale_reason(snapshot: DashboardSnapshot) -> str:
 
 def _status_class(value: object) -> str:
     text = str(value)
-    risk_map = {"low": "fresh", "medium": "stale", "high": "missing"}
+    risk_map = {
+        "low": "fresh",
+        "medium": "stale",
+        "high": "missing",
+        "healthy": "fresh",
+        "warning": "stale",
+        "present": "fresh",
+        "invalid": "stale",
+    }
     if text in risk_map:
         return risk_map[text]
     return text if text in {"fresh", "stale", "missing", "unknown"} else "unknown"

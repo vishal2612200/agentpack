@@ -15,6 +15,8 @@ SkillFeedbackStatus = Literal[
     "ignored",
     "bad_recommendation",
 ]
+McpHealthStatus = Literal["healthy", "warning", "missing", "unknown"]
+McpLiveExposure = Literal["confirmed", "unknown"]
 DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "review", "action"]
 DashboardEdgeType = Literal[
     "contains",
@@ -256,6 +258,25 @@ class ThreadSummary(BaseModel):
     conflicts: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class McpRegistration(BaseModel):
+    scope: str
+    path: str
+    status: str = "unknown"
+    detail: str = ""
+
+
+class McpHealth(BaseModel):
+    status: McpHealthStatus = "unknown"
+    runtime_status: str = ""
+    runtime_ok: bool = False
+    runtime_detail: str = ""
+    registered: bool = False
+    registrations: list[McpRegistration] = Field(default_factory=list)
+    live_exposure: McpLiveExposure = "unknown"
+    expected_tools: list[str] = Field(default_factory=list)
+    remediation: list[str] = Field(default_factory=list)
+
+
 class LoopSummary(BaseModel):
     exists: bool = False
     status: str = ""
@@ -389,6 +410,7 @@ class DashboardSnapshot(BaseModel):
     observer: ObserverSummary = Field(default_factory=ObserverSummary)
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)
+    mcp_health: McpHealth = Field(default_factory=McpHealth)
     loop: LoopSummary = Field(default_factory=LoopSummary)
     review_runs: list[ReviewRunRow] = Field(default_factory=list)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)

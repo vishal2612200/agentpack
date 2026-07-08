@@ -4,10 +4,13 @@ import json
 
 from agentpack.core.config import LoopConfig
 from agentpack.core.loop_protocol import LoopCommandResult, initialize_loop, save_loop_state
+from agentpack.core.mcp_runtime import McpRuntimeCheck
 from agentpack.dashboard.collectors import build_project_dashboard_snapshot
 from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
+    McpHealth,
+    McpRegistration,
     ProjectInfo,
     SelectedFileRow,
     SkillRow,
@@ -44,6 +47,22 @@ def test_dashboard_snapshot_is_json_safe() -> None:
                 retrieve_ref="src__auth.py:abc123",
             )
         ],
+        mcp_health=McpHealth(
+            status="healthy",
+            runtime_status="stdio_waiting",
+            runtime_ok=True,
+            runtime_detail="agentpack mcp started and waited for MCP stdio",
+            registered=True,
+            registrations=[
+                McpRegistration(
+                    scope="Codex",
+                    path="/Users/example/.codex/config.toml",
+                    status="present",
+                    detail="agentpack server registered.",
+                )
+            ],
+            expected_tools=["readiness", "get_context"],
+        ),
         skills=SkillSection(
             task_specific=[
                 SkillRow(
@@ -65,20 +84,45 @@ def test_dashboard_snapshot_is_json_safe() -> None:
     assert payload["project"]["name"] == "repo"
     assert payload["selected_files"][0]["path"] == "src/auth.py"
     assert payload["task_map"][0]["risk_level"] == "medium"
+    assert payload["mcp_health"]["status"] == "healthy"
+    assert payload["mcp_health"]["registrations"][0]["scope"] == "Codex"
     assert payload["skills"]["task_specific"][0]["status"] == "used_helpful"
 
 
-def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path) -> None:
+def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
+    monkeypatch.setattr(
+        "agentpack.dashboard.collectors.check_mcp_runtime",
+        lambda **_kwargs: McpRuntimeCheck(
+            status="command_missing",
+            ok=False,
+            detail="agentpack command not found on PATH",
+        ),
+    )
     snapshot = build_project_dashboard_snapshot(tmp_path)
 
     assert snapshot.project.name == tmp_path.name
     assert snapshot.context.status == "missing"
+    assert snapshot.mcp_health.status == "missing"
     assert any(action.command == "agentpack init --yes" for action in snapshot.suggested_actions)
 
 
-def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
+def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "agentpack.dashboard.collectors.check_mcp_runtime",
+        lambda **_kwargs: McpRuntimeCheck(
+            status="stdio_waiting",
+            ok=True,
+            detail="agentpack mcp started and waited for MCP stdio",
+        ),
+    )
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"agentpack": {"command": "agentpack", "args": ["mcp"]}}}),
+        encoding="utf-8",
+    )
     (agentpack / "task.md").write_text("fix auth token expiry\n", encoding="utf-8")
     (agentpack / "pack_metadata.json").write_text(
         json.dumps(
@@ -145,6 +189,9 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
     assert snapshot.selected_files[0].symbols[0].start_line == 12
     assert snapshot.task_map[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].risk_level == "high"
+    assert snapshot.mcp_health.status == "healthy"
+    assert snapshot.mcp_health.registered is True
+    assert "readiness" in snapshot.mcp_health.expected_tools
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8
 
 
