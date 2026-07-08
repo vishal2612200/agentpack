@@ -13,11 +13,13 @@ from pathlib import Path
 from typing import Any
 
 from agentpack.core.project_index import register_project
+from agentpack.dashboard.action_history import read_action_history, record_dashboard_action
 from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
 from agentpack.dashboard.app_shell import DASHBOARD_APP_DIR, render_dashboard_shell
 from agentpack.dashboard.collectors import build_project_dashboard_snapshot
 from agentpack.dashboard.graph import build_dashboard_graph
-from agentpack.dashboard.terminal import TerminalSessionManager
+from agentpack.dashboard.map import build_dashboard_map
+from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 
 
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
@@ -34,16 +36,20 @@ class DashboardServerState:
     def __post_init__(self) -> None:
         self.root = self.root.resolve()
         self.lock = threading.RLock()
-        self.terminal = TerminalSessionManager(self.root)
+        self.terminal = TerminalSessionManager(self.root, on_event=self._record_terminal_event)
 
     def payload(self) -> dict[str, Any]:
         with self.lock:
             root = self.root
         snapshot = build_project_dashboard_snapshot(root)
         graph = build_dashboard_graph(snapshot, root)
+        dashboard_map = build_dashboard_map(snapshot, graph)
+        action_history = read_action_history(root)
         return {
             "snapshot": snapshot.model_dump(mode="json"),
             "graph": graph.model_dump(mode="json"),
+            "map": dashboard_map.model_dump(mode="json"),
+            "action_history": [row.model_dump(mode="json") for row in action_history],
         }
 
     def switch_root(self, path: str) -> dict[str, Any]:
@@ -57,12 +63,37 @@ class DashboardServerState:
             raise ValueError("project path must contain .git or .agentpack/config.toml")
         with self.lock:
             self.root = resolved
-            self.terminal = TerminalSessionManager(resolved)
+            self.terminal = TerminalSessionManager(resolved, on_event=self._record_terminal_event)
         try:
             register_project(resolved)
         except Exception:
             pass
         return self.payload()
+
+    def _record_terminal_event(self, session: TerminalSession, event: TerminalEvent) -> None:
+        status = event.status or session.status
+        root = Path(session.cwd).resolve()
+        if event.type == "status" and status == "running":
+            record_dashboard_action(
+                root,
+                action_id=session.id,
+                session_id=session.id,
+                command=session.command,
+                cwd=session.cwd,
+                status=status,
+                confirmed=session.confirmed,
+            )
+        elif event.type in {"exit", "error"}:
+            record_dashboard_action(
+                root,
+                action_id=session.id,
+                session_id=session.id,
+                command=session.command,
+                cwd=session.cwd,
+                status=status,
+                confirmed=session.confirmed,
+                returncode=event.returncode,
+            )
 
 
 class DashboardHTTPServer(ThreadingHTTPServer):
@@ -90,6 +121,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
             self._send_json(self.server.state.payload())
+            return
+        if parsed.path in {"/api/map", "/api/actions/history"}:
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            self._send_json(self._section_payload(parsed.path))
             return
         if parsed.path in {"/api/config", "/api/tasks", "/api/threads"}:
             if not self._authorized(parsed):
@@ -215,6 +252,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _section_payload(self, path: str) -> dict[str, Any]:
         snapshot = build_project_dashboard_snapshot(self.server.state.root)
+        if path == "/api/map":
+            graph = build_dashboard_graph(snapshot, self.server.state.root)
+            return {"map": build_dashboard_map(snapshot, graph).model_dump(mode="json")}
+        if path == "/api/actions/history":
+            return {"action_history": [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]}
         if path == "/api/config":
             return {"config": snapshot.config.model_dump(mode="json")}
         if path == "/api/tasks":

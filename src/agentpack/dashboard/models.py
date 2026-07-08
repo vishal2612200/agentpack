@@ -410,6 +410,99 @@ class DashboardGraph(BaseModel):
     edges: list[DashboardEdge] = Field(default_factory=list)
 
 
+class MapDistrict(BaseModel):
+    id: str
+    label: str
+    path: str = ""
+    x: float = 0.0
+    z: float = 0.0
+    building_count: int = 0
+    selected_count: int = 0
+
+
+class MapBuilding(BaseModel):
+    id: str
+    node_id: str
+    label: str
+    path: str
+    district_id: str
+    score: float = 0.0
+    confidence: float = 0.08
+    height: float = 7.36
+    risk: str = "unknown"
+    selected: bool = False
+    include_mode: str = ""
+    memory_linked: bool = False
+    tests: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    actions: list[DashboardAction] = Field(default_factory=list)
+    x: float = 0.0
+    z: float = 0.0
+    color: str = "#6b7280"
+
+
+class MapRoad(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str
+    confidence: float = 0.0
+    reason: str = ""
+
+
+class MapLandmark(BaseModel):
+    id: str
+    label: str
+    type: str
+    status: str = ""
+    detail: str = ""
+    tone: str = "neutral"
+    x: float = 0.0
+    z: float = 0.0
+
+
+class MapWeather(BaseModel):
+    id: str
+    label: str
+    tone: str = "neutral"
+    detail: str = ""
+
+
+class DashboardMapSummary(BaseModel):
+    district_count: int = 0
+    building_count: int = 0
+    road_count: int = 0
+    selected_buildings: int = 0
+    high_risk_buildings: int = 0
+    max_score: float = 0.0
+    stale: bool = False
+
+
+class DashboardMap(BaseModel):
+    schema_version: int = 1
+    generated_at: str = ""
+    summary: DashboardMapSummary = Field(default_factory=DashboardMapSummary)
+    districts: list[MapDistrict] = Field(default_factory=list)
+    buildings: list[MapBuilding] = Field(default_factory=list)
+    roads: list[MapRoad] = Field(default_factory=list)
+    landmarks: list[MapLandmark] = Field(default_factory=list)
+    weather: list[MapWeather] = Field(default_factory=list)
+
+
+class ActionHistoryRow(BaseModel):
+    action_id: str
+    label: str = ""
+    command: str = ""
+    cwd: str = ""
+    status: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    returncode: int | None = None
+    confirmed: bool = False
+    source: str = "dashboard"
+    session_id: str = ""
+
+
 class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""

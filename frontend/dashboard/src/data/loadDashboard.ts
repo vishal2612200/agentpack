@@ -1,4 +1,4 @@
-import type { DashboardGraph, DashboardSnapshot } from "./schema";
+import type { ActionHistoryRow, DashboardGraph, DashboardMap, DashboardSnapshot } from "./schema";
 
 declare global {
   interface Window {
@@ -10,6 +10,8 @@ declare global {
 export interface DashboardPayload {
   snapshot: DashboardSnapshot;
   graph: DashboardGraph;
+  map: DashboardMap;
+  action_history: ActionHistoryRow[];
 }
 
 export async function loadDashboardPayload(): Promise<DashboardPayload> {

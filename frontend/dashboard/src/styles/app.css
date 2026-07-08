@@ -1069,6 +1069,50 @@ small {
   gap: 10px;
 }
 
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 10px;
+}
+
+.preset-card {
+  min-width: 0;
+  min-height: 76px;
+  display: grid;
+  gap: 5px;
+  align-content: start;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-md);
+  background: var(--card-bg);
+  color: var(--text);
+  padding: 11px;
+  text-align: left;
+  box-shadow: var(--card-shadow);
+  transition: border-color 140ms ease, background 140ms ease, box-shadow 140ms ease, transform 140ms ease;
+}
+
+.preset-card:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--primary) 36%, var(--border));
+  background: var(--card-bg-strong);
+  box-shadow: var(--card-shadow-hover);
+  transform: translateY(-1px);
+}
+
+.preset-card:disabled,
+.command-chip:disabled {
+  cursor: not-allowed;
+  opacity: 0.58;
+}
+
+.preset-card strong,
+.preset-card small {
+  overflow-wrap: anywhere;
+}
+
+.preset-card small {
+  color: var(--text-muted);
+}
+
 .artifact-card {
   min-width: 0;
   display: grid;
@@ -1336,6 +1380,250 @@ code {
 
 .empty {
   color: var(--text-muted);
+}
+
+.map-view {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.map-view.demo {
+  gap: 10px;
+}
+
+.map-view.demo .metric-grid {
+  display: none;
+}
+
+.map-hero {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 14px;
+  align-items: center;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 14% 0%, color-mix(in srgb, var(--primary) 18%, transparent), transparent 30%),
+    radial-gradient(circle at 92% 8%, color-mix(in srgb, var(--memory) 14%, transparent), transparent 32%),
+    var(--card-bg);
+  padding: 18px;
+  box-shadow: var(--card-shadow);
+  overflow: visible;
+}
+
+.map-hero h1 {
+  margin: 4px 0 6px;
+  color: var(--text);
+  font-size: 44px;
+  line-height: 1.03;
+  letter-spacing: 0;
+  overflow-wrap: anywhere;
+}
+
+.map-hero p {
+  overflow-wrap: anywhere;
+}
+
+.map-hero-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.map-hero-actions .toolbar-button {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 10px;
+}
+
+.map-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 360px);
+  gap: 14px;
+  align-items: start;
+  min-width: 0;
+}
+
+.map-view.demo .map-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.map-stage,
+.map-side {
+  min-width: 0;
+}
+
+.map-side {
+  display: grid;
+  gap: 12px;
+}
+
+.city-canvas-wrap {
+  height: min(780px, calc(100dvh - 246px));
+  min-height: 540px;
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--card-border);
+  border-radius: var(--radius-lg);
+  background:
+    radial-gradient(circle at 48% 0%, rgba(128, 169, 255, 0.14), transparent 38%),
+    linear-gradient(180deg, #08111f 0%, #0a1220 100%);
+  box-shadow: var(--card-shadow);
+}
+
+.city-canvas-wrap canvas {
+  outline: none;
+  touch-action: none;
+}
+
+.district-label {
+  max-width: 220px;
+  border: 1px solid rgba(128, 169, 255, 0.28);
+  border-radius: 999px;
+  background: rgba(9, 17, 31, 0.78);
+  color: #dce8ff;
+  padding: 3px 8px;
+  font-size: 11px;
+  font-weight: 720;
+  line-height: 1.15;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  pointer-events: none;
+  box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+}
+
+.map-legend {
+  display: grid;
+  gap: 8px;
+}
+
+.map-legend span {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--text-muted);
+  overflow-wrap: anywhere;
+}
+
+.map-legend i {
+  width: 18px;
+  height: 10px;
+  flex: 0 0 18px;
+  border-radius: 999px;
+  box-shadow: inset 0 0 0 1px rgba(255, 255, 255, 0.14);
+}
+
+.legend-height {
+  background: linear-gradient(90deg, #41546f, #80a9ff);
+}
+
+.legend-selected {
+  background: #80a9ff;
+  box-shadow: 0 0 0 4px rgba(128, 169, 255, 0.18);
+}
+
+.legend-risk {
+  background: #ff7a7f;
+}
+
+.legend-memory {
+  background: #38cfd3;
+}
+
+.map-building-detail {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+}
+
+.map-building-detail strong,
+.map-building-detail small,
+.map-building-detail p {
+  overflow-wrap: anywhere;
+}
+
+.map-building-detail p {
+  margin: 0;
+  color: var(--text-muted);
+}
+
+.catalog-grid.compact {
+  grid-template-columns: repeat(auto-fit, minmax(118px, 1fr));
+}
+
+.command-chip {
+  min-width: 0;
+  min-height: 34px;
+  border: 1px solid var(--control-border);
+  border-radius: var(--radius-md);
+  background: var(--button-secondary-bg);
+  color: var(--text);
+  padding: 7px 9px;
+  text-align: left;
+  font-weight: 660;
+  overflow-wrap: anywhere;
+  box-shadow: var(--control-shadow);
+  transition: border-color 140ms ease, background 140ms ease, transform 140ms ease;
+}
+
+.command-chip:hover {
+  border-color: var(--control-border-hover);
+  background: var(--button-secondary-hover);
+  transform: translateY(-1px);
+}
+
+.action-history {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.action-history li {
+  min-width: 0;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr);
+  gap: 8px;
+  align-items: start;
+}
+
+.action-history strong,
+.action-history small,
+.action-history code {
+  display: block;
+  overflow-wrap: anywhere;
+}
+
+.action-history code {
+  margin-top: 4px;
+}
+
+.map-table {
+  height: min(780px, calc(100dvh - 246px));
+  min-height: 420px;
+  background: var(--card-bg);
+}
+
+.map-table tbody tr {
+  transition: background 120ms ease;
+}
+
+@media (max-width: 1500px) {
+  .map-layout {
+    grid-template-columns: 1fr;
+  }
+
+  .map-side {
+    grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  }
 }
 
 .graph-shell {
@@ -2047,6 +2335,7 @@ pre {
 
   .topbar,
   .hero-row,
+  .map-hero,
   .section-title {
     grid-template-columns: 1fr;
     display: grid;
@@ -2080,8 +2369,21 @@ pre {
     white-space: normal;
   }
 
-  .hero-actions {
+  .hero-actions,
+  .map-hero-actions {
     justify-items: stretch;
+  }
+
+  .map-hero h1 {
+    font-size: 32px;
+  }
+
+  .map-hero-actions {
+    justify-content: stretch;
+  }
+
+  .map-hero-actions .toolbar-button {
+    justify-content: center;
   }
 
   .hero-tag {
@@ -2101,10 +2403,17 @@ pre {
   .metric-grid,
   .content-grid,
   .control-grid,
+  .map-layout,
   .settings-grid,
   .settings-docs,
   .raw-grid {
     grid-template-columns: 1fr;
+  }
+
+  .city-canvas-wrap,
+  .map-table {
+    height: 520px;
+    min-height: 420px;
   }
 
   .project-menu {

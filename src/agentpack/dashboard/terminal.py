@@ -11,7 +11,7 @@ import time
 import uuid
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 
 
 FORBIDDEN_SHELL_TOKENS = {"&&", "||", ";", "|", ">", ">>", "<", "2>", "&"}
@@ -73,11 +73,19 @@ class TerminalEvent:
 
 
 class TerminalSession:
-    def __init__(self, inspection: CommandInspection) -> None:
+    def __init__(
+        self,
+        inspection: CommandInspection,
+        *,
+        confirmed: bool = False,
+        on_event: Callable[["TerminalSession", TerminalEvent], None] | None = None,
+    ) -> None:
         self.id = uuid.uuid4().hex
         self.inspection = inspection
         self.command = inspection.command
         self.cwd = inspection.cwd
+        self.confirmed = confirmed
+        self.on_event = on_event
         self.status = "starting"
         self.returncode: int | None = None
         self.started_at = time.time()
@@ -131,6 +139,7 @@ class TerminalSession:
             "returncode": self.returncode,
             "started_at": self.started_at,
             "finished_at": self.finished_at,
+            "confirmed": self.confirmed,
             "inspection": self.inspection.model_dump(),
         }
 
@@ -195,17 +204,22 @@ class TerminalSession:
             self._master_fd = None
 
     def _emit(self, event_type: str, *, data: str = "", status: str = "", returncode: int | None = None) -> None:
+        event: TerminalEvent
         with self._condition:
             self._seq += 1
-            self._events.append(TerminalEvent(seq=self._seq, type=event_type, data=data, status=status, returncode=returncode))
+            event = TerminalEvent(seq=self._seq, type=event_type, data=data, status=status, returncode=returncode)
+            self._events.append(event)
             if len(self._events) > MAX_EVENTS:
                 self._events = self._events[-MAX_EVENTS:]
             self._condition.notify_all()
+        if self.on_event is not None:
+            self.on_event(self, event)
 
 
 class TerminalSessionManager:
-    def __init__(self, root: Path) -> None:
+    def __init__(self, root: Path, *, on_event: Callable[[TerminalSession, TerminalEvent], None] | None = None) -> None:
         self.root = root.resolve()
+        self.on_event = on_event
         self._sessions: dict[str, TerminalSession] = {}
         self._lock = threading.Lock()
 
@@ -218,7 +232,7 @@ class TerminalSessionManager:
             raise ValueError(inspection.reason)
         if inspection.confirm_required and not confirmed:
             raise PermissionError("confirmation required")
-        session = TerminalSession(inspection)
+        session = TerminalSession(inspection, confirmed=confirmed, on_event=self.on_event)
         with self._lock:
             self._sessions[session.id] = session
         session.start()

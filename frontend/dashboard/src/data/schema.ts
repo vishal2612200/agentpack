@@ -70,6 +70,97 @@ export interface DashboardGraph {
   edges: DashboardEdge[];
 }
 
+export interface MapDistrict {
+  id: string;
+  label: string;
+  path?: string;
+  x: number;
+  z: number;
+  building_count: number;
+  selected_count: number;
+}
+
+export interface MapBuilding {
+  id: string;
+  node_id: string;
+  label: string;
+  path: string;
+  district_id: string;
+  score: number;
+  confidence: number;
+  height: number;
+  risk: string;
+  selected: boolean;
+  include_mode?: string;
+  memory_linked?: boolean;
+  tests?: string[];
+  reasons?: string[];
+  actions?: DashboardAction[];
+  x: number;
+  z: number;
+  color: string;
+}
+
+export interface MapRoad {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+  confidence?: number;
+  reason?: string;
+}
+
+export interface MapLandmark {
+  id: string;
+  label: string;
+  type: string;
+  status?: string;
+  detail?: string;
+  tone?: string;
+  x: number;
+  z: number;
+}
+
+export interface MapWeather {
+  id: string;
+  label: string;
+  tone?: string;
+  detail?: string;
+}
+
+export interface DashboardMap {
+  schema_version: number;
+  generated_at?: string;
+  summary: {
+    district_count: number;
+    building_count: number;
+    road_count: number;
+    selected_buildings: number;
+    high_risk_buildings: number;
+    max_score: number;
+    stale: boolean;
+  };
+  districts: MapDistrict[];
+  buildings: MapBuilding[];
+  roads: MapRoad[];
+  landmarks: MapLandmark[];
+  weather: MapWeather[];
+}
+
+export interface ActionHistoryRow {
+  action_id: string;
+  label?: string;
+  command?: string;
+  cwd?: string;
+  status?: string;
+  started_at?: string;
+  ended_at?: string;
+  returncode?: number | null;
+  confirmed?: boolean;
+  source?: string;
+  session_id?: string;
+}
+
 export interface DashboardSnapshot {
   schema_version: number;
   generated_at?: string;

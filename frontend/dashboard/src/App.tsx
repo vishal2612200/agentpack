@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
   Brain,
+  Building2,
   CheckCircle2,
   CircleDot,
   ClipboardList,
@@ -12,13 +13,16 @@ import {
   FolderKanban,
   GitBranch,
   ListFilter,
+  Map as MapIcon,
   Network,
   PlayCircle,
+  RefreshCcw,
   Search,
   Send,
   Settings,
   ShieldAlert,
   SlidersHorizontal,
+  Table2,
   TerminalSquare,
   Workflow,
   X
@@ -34,9 +38,12 @@ import {
   type OnNodeDrag,
   useReactFlow
 } from "@xyflow/react";
+import { Canvas, useFrame } from "@react-three/fiber";
+import { Html, OrbitControls } from "@react-three/drei";
+import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { DashboardEdge, DashboardGraph, DashboardNode, DashboardSnapshot } from "./data/schema";
+import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding } from "./data/schema";
 
 type View = "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
 
@@ -69,7 +76,7 @@ const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "tasks", label: "Tasks", icon: ClipboardList },
   { id: "threads", label: "Threads", icon: GitBranch },
   { id: "context", label: "Context", icon: Database },
-  { id: "graph", label: "Graph", icon: Network },
+  { id: "graph", label: "Map", icon: MapIcon },
   { id: "files", label: "Files", icon: FileText },
   { id: "settings", label: "Settings", icon: Settings },
   { id: "integrations", label: "Integrations", icon: TerminalSquare },
@@ -81,7 +88,7 @@ const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
 export function App() {
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
   const [error, setError] = useState<string>("");
-  const [view, setView] = useState<View>("cockpit");
+  const [view, setView] = useState<View>("graph");
   const [selectedId, setSelectedId] = useState<string>("task:active");
   const [query, setQuery] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -339,7 +346,17 @@ export function App() {
           {view === "threads" && <ThreadsView snapshot={payload.snapshot} onRunAction={handleRunAction} />}
           {view === "context" && <ContextView snapshot={payload.snapshot} onSelect={setSelectedId} onRunAction={handleRunAction} onRunCommand={handleRunCommand} />}
           {view === "graph" && (
-            <TaskGraph graph={payload.graph} query={query} selectedId={selectedId} onSelect={setSelectedId} />
+            <MapView
+              dashboardMap={payload.map}
+              graph={payload.graph}
+              snapshot={payload.snapshot}
+              actionHistory={payload.action_history || []}
+              query={query}
+              selectedId={selectedId}
+              onSelect={setSelectedId}
+              onRunAction={handleRunAction}
+              onRunCommand={handleRunCommand}
+            />
           )}
           {view === "files" && <FilesView snapshot={payload.snapshot} onSelect={setSelectedId} onRunAction={handleRunAction} />}
           {view === "settings" && <SettingsView snapshot={payload.snapshot} onSaveConfig={handleSaveConfig} />}
@@ -404,7 +421,7 @@ function TopBar({
       <ProjectDropdown snapshot={snapshot} onSwitchProject={onSwitchProject} />
       <label className="search-box">
         <Search size={16} aria-hidden="true" />
-        <span className="sr-only">Search graph</span>
+        <span className="sr-only">Search map</span>
         <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search paths, memory, tests" />
       </label>
       <div className="topbar-status" aria-label="Dashboard health">
@@ -440,7 +457,7 @@ function ProjectDropdown({
           <strong>{current.name}</strong>
           <small>{current.branch || "unknown branch"}{current.git_sha ? ` · ${current.git_sha}` : ""}</small>
         </span>
-        <span className="badge neutral">Project</span>
+        <span className="badge neutral">Atlas</span>
       </button>
       {open ? (
         <div className="project-menu">
@@ -462,7 +479,7 @@ function ProjectDropdown({
               >
                 <span>
                   <strong>{project.name}</strong>
-                  <small>{project.source || "candidate"} · {project.detail || (project.valid ? "ready" : "unavailable")}</small>
+                  <small>{project.source || "candidate"} · {project.detail || (project.valid ? "map-ready" : "unavailable")}</small>
                   <code>{project.path}</code>
                 </span>
                 <span className={`badge ${project.valid ? "good" : "warn"}`}>{project.current ? "current" : project.valid ? "open" : "skip"}</span>
@@ -527,8 +544,8 @@ function CockpitView({
         <div className="hero-actions">
           <span className="hero-tag">Local-first control plane</span>
           <button className="primary-action" type="button" onClick={onOpenGraph}>
-            <Network size={17} aria-hidden="true" />
-            Open graph
+            <MapIcon size={17} aria-hidden="true" />
+            Open map
           </button>
           <button className="secondary-action inverse" type="button" onClick={() => onRunAction("next")}>
             <PlayCircle size={17} aria-hidden="true" />
@@ -808,6 +825,383 @@ function ContextView({
   );
 }
 
+type MapMode = "city" | "network" | "table";
+
+function MapView({
+  dashboardMap,
+  graph,
+  snapshot,
+  actionHistory,
+  query,
+  selectedId,
+  onSelect,
+  onRunAction,
+  onRunCommand
+}: {
+  dashboardMap: DashboardMap;
+  graph: DashboardGraph;
+  snapshot: DashboardSnapshot;
+  actionHistory: ActionHistoryRow[];
+  query: string;
+  selectedId: string;
+  onSelect: (id: string) => void;
+  onRunAction: (action: string, body?: Record<string, unknown>) => void;
+  onRunCommand: (command: string) => void;
+}) {
+  const [mode, setMode] = useState<MapMode>(() => (hasWebGLSupport() ? "city" : "table"));
+  const [demoMode, setDemoMode] = useState(false);
+  const [cameraSignal, setCameraSignal] = useState(0);
+  const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
+  const payloadRequiredActions = new Set(["work", "route_task", "retrieve"]);
+  const primaryCatalog = (snapshot.command_catalog || []).filter((item) => item.primary && !payloadRequiredActions.has(item.id)).slice(0, 8);
+  const weather = dashboardMap.weather || [];
+
+  return (
+    <div className={demoMode ? "map-view demo" : "map-view"}>
+      <section className="map-hero">
+        <div>
+          <p className="eyebrow">AgentPack Map</p>
+          <h1>Live context city for this local task</h1>
+          <p className="muted">Buildings are files. Height is confidence. Color is risk. Glow marks selected context.</p>
+        </div>
+        <div className="map-hero-actions">
+          <button type="button" className={demoMode ? "toolbar-button active" : "toolbar-button"} onClick={() => setDemoMode((value) => !value)}>Demo</button>
+            <button type="button" className={mode === "city" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode(hasWebGLSupport() ? "city" : "table")}>
+              <Building2 size={14} aria-hidden="true" /> 3D City
+            </button>
+          <button type="button" className={mode === "network" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("network")}>
+            <Network size={14} aria-hidden="true" /> Network
+          </button>
+          <button type="button" className={mode === "table" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("table")}>
+            <Table2 size={14} aria-hidden="true" /> Table
+          </button>
+          <button type="button" className="toolbar-button" onClick={() => setCameraSignal((value) => value + 1)}>
+            <RefreshCcw size={14} aria-hidden="true" /> Reset
+          </button>
+        </div>
+      </section>
+
+      <div className="metric-grid">
+        <Metric label="Districts" value={dashboardMap.summary.district_count} tone="neutral" />
+        <Metric label="Buildings" value={dashboardMap.summary.building_count} tone="good" />
+        <Metric label="Selected" value={dashboardMap.summary.selected_buildings} tone="good" />
+        <Metric label="High risk" value={dashboardMap.summary.high_risk_buildings} tone={dashboardMap.summary.high_risk_buildings ? "risk" : "good"} />
+        <Metric label="Max score" value={formatNumber(Math.round(dashboardMap.summary.max_score || 0))} tone="memory" />
+      </div>
+
+      <div className="map-layout">
+        <section className="map-stage" aria-label="AgentPack context map">
+          {mode === "city" ? (
+            hasWebGLSupport() ? (
+              <MapErrorBoundary resetKey={`${dashboardMap.generated_at}:${cameraSignal}`} onError={() => setMode("table")} fallback={<MapTable dashboardMap={dashboardMap} onSelect={onSelect} />}>
+                <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} />
+              </MapErrorBoundary>
+            ) : (
+              <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
+            )
+          ) : mode === "network" ? (
+            <TaskGraph graph={graph} query={query} selectedId={selectedId} onSelect={onSelect} />
+          ) : (
+            <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
+          )}
+        </section>
+
+        {!demoMode ? (
+          <aside className="map-side">
+            <Panel title="Map Legend" icon={MapIcon}>
+              <div className="map-legend">
+                <span><i className="legend-height" /> Height = confidence</span>
+                <span><i className="legend-selected" /> Glow = selected context</span>
+                <span><i className="legend-risk" /> Red = high risk</span>
+                <span><i className="legend-memory" /> Cyan = memory linked</span>
+              </div>
+            </Panel>
+            <Panel title="Why This File" icon={Search}>
+              {selectedBuilding ? (
+                <div className="map-building-detail">
+                  <strong>{selectedBuilding.path}</strong>
+                  <span className={`badge ${riskTone(selectedBuilding.risk)}`}>{selectedBuilding.risk || "unknown"}</span>
+                  <small>score {Math.round(selectedBuilding.score)} · confidence {Math.round(selectedBuilding.confidence * 100)}% · {selectedBuilding.include_mode || "mode unknown"}</small>
+                  {(selectedBuilding.reasons || []).slice(0, 5).map((reason) => <p key={reason}>{reason}</p>)}
+                  {(selectedBuilding.tests || []).slice(0, 3).map((test) => (
+                    <CommandAction key={test} label="Run validation" command={test.endsWith(".py") ? `pytest ${test}` : test} compact onRunCommand={onRunCommand} />
+                  ))}
+                </div>
+              ) : (
+                <p className="empty">Select a building to inspect score, risk, tests, and actions.</p>
+              )}
+            </Panel>
+            <Panel title="Weather" icon={AlertTriangle}>
+              <div className="stack-sm">
+                {weather.map((item) => (
+                  <div key={item.id} className="list-row passive">
+                    <span>
+                      <strong>{item.label}</strong>
+                      <small>{item.detail || "No detail"}</small>
+                    </span>
+                    <span className={`badge ${riskTone(item.tone)}`}>{item.tone || "info"}</span>
+                  </div>
+                ))}
+                {!weather.length ? <p className="empty">No active map alerts.</p> : null}
+              </div>
+            </Panel>
+            <Panel title="Command Palette" icon={TerminalSquare}>
+              <div className="catalog-grid compact">
+                {(primaryCatalog.length ? primaryCatalog : snapshot.command_catalog?.slice(0, 6) || []).map((item) => (
+                  <button key={item.id} type="button" className="command-chip" onClick={() => onRunAction(item.id)}>
+                    {item.label}
+                  </button>
+                ))}
+                <button type="button" className="command-chip" onClick={() => onRunAction("doctor")}>Doctor</button>
+                <button type="button" className="command-chip" onClick={() => onRunAction("refresh_context", { agent: "codex", thread: "global" })}>Refresh context</button>
+              </div>
+            </Panel>
+            <Panel title="Action History" icon={Activity}>
+              <ActionHistoryList rows={actionHistory} />
+            </Panel>
+          </aside>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+class MapErrorBoundary extends Component<
+  { children: ReactNode; fallback: ReactNode; onError: () => void; resetKey: string },
+  { hasError: boolean }
+> {
+  state = { hasError: false };
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch() {
+    this.props.onError();
+  }
+
+  componentDidUpdate(previous: { resetKey: string }) {
+    if (previous.resetKey !== this.props.resetKey && this.state.hasError) {
+      this.setState({ hasError: false });
+    }
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return this.props.fallback;
+    }
+    return this.props.children;
+  }
+}
+
+function ContextCityMap({
+  dashboardMap,
+  selectedId,
+  cameraSignal,
+  demoMode,
+  onSelect
+}: {
+  dashboardMap: DashboardMap;
+  selectedId: string;
+  cameraSignal: number;
+  demoMode: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const reducedMotion = useReducedMotion();
+  const controlsRef = useRef<OrbitControlsImpl | null>(null);
+  useEffect(() => {
+    controlsRef.current?.reset();
+  }, [cameraSignal]);
+
+  return (
+    <div className="city-canvas-wrap">
+      <Canvas camera={{ position: [76, 82, 118], fov: 36 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true }}>
+        <color attach="background" args={["#08111f"]} />
+        <ambientLight intensity={0.55} />
+        <directionalLight position={[30, 42, 28]} intensity={1.1} />
+        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} />
+        <OrbitControls ref={controlsRef} makeDefault target={[0, 10, 0]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={18} maxDistance={210} maxPolarAngle={Math.PI / 2.12} />
+      </Canvas>
+    </div>
+  );
+}
+
+function CityScene({
+  dashboardMap,
+  selectedId,
+  reducedMotion,
+  onSelect
+}: {
+  dashboardMap: DashboardMap;
+  selectedId: string;
+  reducedMotion: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const center = useMemo(() => mapCenter(dashboardMap), [dashboardMap]);
+  const points = useMemo(() => mapPoints(dashboardMap), [dashboardMap]);
+  return (
+    <group position={[-center.x, 0, -center.z]}>
+      <mesh position={[center.x, -0.08, center.z]} receiveShadow>
+        <boxGeometry args={[Math.max(42, center.width + 28), 0.12, Math.max(34, center.depth + 28)]} />
+        <meshStandardMaterial color="#0f1b2d" roughness={0.92} metalness={0.05} />
+      </mesh>
+      {dashboardMap.districts.map((district) => (
+        <group key={district.id}>
+          <mesh position={[district.x + 6, 0.02, district.z + 4]}>
+            <boxGeometry args={[18, 0.08, 13]} />
+            <meshStandardMaterial color={district.selected_count ? "#182c46" : "#131f30"} roughness={0.9} />
+          </mesh>
+          <Html position={[district.x, 0.35, district.z - 4]} center className="district-label">
+            {district.label}
+          </Html>
+        </group>
+      ))}
+      {dashboardMap.roads.slice(0, 80).map((road) => (
+        <RoadMesh key={road.id} road={road} points={points} />
+      ))}
+      {dashboardMap.landmarks.map((landmark) => (
+        <group key={landmark.id} position={[landmark.x, 0, landmark.z]}>
+          <mesh>
+            <cylinderGeometry args={[1.6, 1.6, 1.8, 18]} />
+            <meshStandardMaterial color={landmark.tone === "risk" ? "#ff7a7f" : landmark.tone === "good" ? "#6ed49a" : "#80a9ff"} emissive="#1b355d" emissiveIntensity={0.28} />
+          </mesh>
+          <Html position={[0, 2.4, 0]} center className="district-label">
+            {landmark.label}
+          </Html>
+        </group>
+      ))}
+      {dashboardMap.buildings.map((building) => (
+        <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} />
+      ))}
+    </group>
+  );
+}
+
+function BuildingMesh({
+  building,
+  selected,
+  reducedMotion,
+  onSelect
+}: {
+  building: MapBuilding;
+  selected: boolean;
+  reducedMotion: boolean;
+  onSelect: (id: string) => void;
+}) {
+  const ref = useRef<any>(null);
+  useFrame(({ clock }) => {
+    if (!ref.current || reducedMotion || !selected) return;
+    ref.current.position.y = building.height / 2 + Math.sin(clock.elapsedTime * 2.4) * 0.22;
+  });
+  return (
+    <group>
+      {selected ? (
+        <mesh position={[building.x, 0.05, building.z]}>
+          <cylinderGeometry args={[2.7, 2.7, 0.08, 32]} />
+          <meshBasicMaterial color="#80a9ff" transparent opacity={0.38} />
+        </mesh>
+      ) : null}
+      <mesh
+        ref={ref}
+        position={[building.x, building.height / 2, building.z]}
+        onClick={(event) => {
+          event.stopPropagation();
+          onSelect(building.node_id);
+        }}
+      >
+        <boxGeometry args={[3.4, building.height, 3.4]} />
+        <meshStandardMaterial
+          color={building.color}
+          roughness={0.66}
+          metalness={0.12}
+          emissive={selected ? "#80a9ff" : building.memory_linked ? "#38cfd3" : "#000000"}
+          emissiveIntensity={selected ? 0.36 : building.memory_linked ? 0.18 : 0}
+        />
+      </mesh>
+    </group>
+  );
+}
+
+function RoadMesh({
+  road,
+  points
+}: {
+  road: { source: string; target: string; type: string };
+  points: Map<string, { x: number; z: number }>;
+}) {
+  const source = points.get(road.source);
+  const target = points.get(road.target);
+  if (!source || !target) return null;
+  const sx = source.x;
+  const sz = source.z;
+  const tx = target.x;
+  const tz = target.z;
+  const dx = tx - sx;
+  const dz = tz - sz;
+  const length = Math.sqrt(dx * dx + dz * dz);
+  const angle = Math.atan2(dz, dx);
+  return (
+    <mesh position={[sx + dx / 2, 0.12, sz + dz / 2]} rotation={[0, -angle, 0]}>
+      <boxGeometry args={[length, 0.08, 0.12]} />
+      <meshBasicMaterial color={road.type === "memory_influenced" ? "#38cfd3" : "#607da8"} transparent opacity={road.type === "selected_because" ? 0.42 : 0.24} />
+    </mesh>
+  );
+}
+
+function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSelect: (id: string) => void }) {
+  return (
+    <div className="table-wrap map-table">
+      <table>
+        <thead>
+          <tr>
+            <th>File</th>
+            <th>District</th>
+            <th>Confidence</th>
+            <th>Risk</th>
+            <th>Mode</th>
+            <th>Tests</th>
+          </tr>
+        </thead>
+        <tbody>
+          {dashboardMap.buildings.map((building) => (
+            <tr key={building.id} onClick={() => onSelect(building.node_id)}>
+              <td><code>{building.path}</code></td>
+              <td>{building.district_id}</td>
+              <td>{Math.round(building.confidence * 100)}%</td>
+              <td><span className={`badge ${riskTone(building.risk)}`}>{building.risk || "unknown"}</span></td>
+              <td>{building.include_mode || "unknown"}</td>
+              <td>{(building.tests || []).slice(0, 2).join(", ") || "none"}</td>
+            </tr>
+          ))}
+          {!dashboardMap.buildings.length ? (
+            <tr><td colSpan={6}>No map buildings found.</td></tr>
+          ) : null}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function ActionHistoryList({ rows }: { rows: ActionHistoryRow[] }) {
+  if (!rows.length) {
+    return <p className="empty">No dashboard actions recorded yet.</p>;
+  }
+  return (
+    <ol className="action-history">
+      {rows.slice(0, 8).map((row) => (
+        <li key={row.action_id}>
+          <span className={`timeline-dot ${riskTone(row.status)}`} />
+          <div>
+            <strong>{row.label || row.command || "AgentPack action"}</strong>
+            <small>{row.status || "recorded"} · {row.started_at || row.ended_at || "no timestamp"}</small>
+            {row.command ? <code>{row.command}</code> : null}
+          </div>
+        </li>
+      ))}
+    </ol>
+  );
+}
+
 function TaskGraph({
   graph,
   query,
@@ -900,7 +1294,7 @@ function MemoryView({
     <div className="view-stack">
       <SectionTitle title="Memory Influence" subtitle="Episodic and procedural memory connected to this context decision." />
       <div className="content-grid">
-        <Panel title="Graph Memory" icon={Brain}>
+        <Panel title="Map Memory" icon={Brain}>
           <ItemList
             items={memoryNodes.map((node) => ({
               id: node.id,
@@ -1053,6 +1447,43 @@ function SettingsView({
     () => (config?.sections || []).flatMap((section) => section.fields.filter((field) => field.editable).map((field) => ({ ...field, field_id: `${field.section}.${field.key}` }))),
     [config]
   );
+  const editableFieldIds = useMemo(() => new Set(editableFields.map((field) => field.field_id)), [editableFields]);
+  const settingsPresets = useMemo(
+    () => [
+      {
+        id: "local-dev",
+        label: "Local dev",
+        description: "Balanced context with tests included for daily local work.",
+        updates: {
+          "context.default_mode": "balanced",
+          "context.default_budget": 12000,
+          "context.include_tests": true
+        }
+      },
+      {
+        id: "review-mode",
+        label: "Review mode",
+        description: "Broader context and receipts for review-heavy workflows.",
+        updates: {
+          "context.default_mode": "deep",
+          "context.default_budget": 20000,
+          "context.include_tests": true,
+          "context.include_receipts": true
+        }
+      },
+      {
+        id: "fast-context",
+        label: "Fast context",
+        description: "Smaller context for fast iteration and quick routing.",
+        updates: {
+          "context.default_mode": "lite",
+          "context.default_budget": 8000,
+          "context_lite.max_selected_files": 8
+        }
+      }
+    ],
+    []
+  );
   const [selectedField, setSelectedField] = useState("");
   useEffect(() => setValues(initial), [initial]);
   useEffect(() => {
@@ -1061,6 +1492,17 @@ function SettingsView({
     }
   }, [editableFields, selectedField]);
   const update = (field: string, value: unknown) => setValues((current) => ({ ...current, [field]: value }));
+  const applyPreset = (updates: Record<string, unknown>) => {
+    setValues((current) => {
+      const next = { ...current };
+      Object.entries(updates).forEach(([key, value]) => {
+        if (editableFieldIds.has(key)) {
+          next[key] = value;
+        }
+      });
+      return next;
+    });
+  };
   const dirty = Object.keys(values).filter((key) => JSON.stringify(values[key]) !== JSON.stringify(initial[key]));
   const selectedDocs = editableFields.find((field) => field.field_id === selectedField);
 
@@ -1090,6 +1532,19 @@ function SettingsView({
           {selectedDocs?.doc_ref ? <code>{selectedDocs.doc_ref}</code> : null}
         </div>
       </div>
+      <Panel title="Recommended Presets" icon={SlidersHorizontal}>
+        <div className="preset-grid">
+          {settingsPresets.map((preset) => {
+            const available = Object.keys(preset.updates).some((key) => editableFieldIds.has(key));
+            return (
+              <button key={preset.id} type="button" className="preset-card" disabled={!available} onClick={() => applyPreset(preset.updates)}>
+                <strong>{preset.label}</strong>
+                <small>{preset.description}</small>
+              </button>
+            );
+          })}
+        </div>
+      </Panel>
       <div className="inline-actions">
         <span className={`badge ${config?.valid === false ? "risk" : "good"}`}>{config?.valid === false ? "invalid config" : "config valid"}</span>
         {config?.path ? <code>{config.path}</code> : null}
@@ -1367,8 +1822,14 @@ function RawDataView({ payload }: { payload: DashboardPayload }) {
       <Panel title="Snapshot JSON" icon={Code2}>
         <pre>{JSON.stringify(payload.snapshot, null, 2)}</pre>
       </Panel>
+      <Panel title="Map JSON" icon={MapIcon}>
+        <pre>{JSON.stringify(payload.map, null, 2)}</pre>
+      </Panel>
       <Panel title="Graph JSON" icon={Network}>
         <pre>{JSON.stringify(payload.graph, null, 2)}</pre>
+      </Panel>
+      <Panel title="Action History JSON" icon={Activity}>
+        <pre>{JSON.stringify(payload.action_history, null, 2)}</pre>
       </Panel>
     </div>
   );
@@ -1855,6 +2316,73 @@ function stringifyValue(value: unknown) {
 
 function configFieldDomId(fieldId: string) {
   return `config-field-${fieldId.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
+}
+
+let cachedWebGLSupport: boolean | null = null;
+
+function hasWebGLSupport() {
+  if (cachedWebGLSupport !== null) return cachedWebGLSupport;
+  if (typeof document === "undefined") {
+    cachedWebGLSupport = false;
+    return cachedWebGLSupport;
+  }
+  try {
+    const canvas = document.createElement("canvas");
+    cachedWebGLSupport = Boolean(canvas.getContext("webgl2") || canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
+  } catch {
+    cachedWebGLSupport = false;
+  }
+  return cachedWebGLSupport;
+}
+
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(() => {
+    if (typeof window === "undefined") return false;
+    return window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  });
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const handleChange = () => setReduced(query.matches);
+    handleChange();
+    query.addEventListener("change", handleChange);
+    return () => query.removeEventListener("change", handleChange);
+  }, []);
+
+  return reduced;
+}
+
+function mapPoints(dashboardMap: DashboardMap) {
+  const points = new Map<string, { x: number; z: number }>();
+  dashboardMap.buildings.forEach((building) => {
+    points.set(building.id, { x: building.x, z: building.z });
+    points.set(building.node_id, { x: building.x, z: building.z });
+  });
+  dashboardMap.landmarks.forEach((landmark) => {
+    points.set(landmark.id, { x: landmark.x, z: landmark.z });
+  });
+  return points;
+}
+
+function mapCenter(dashboardMap: DashboardMap) {
+  const coordinates = [
+    ...dashboardMap.buildings.map((building) => ({ x: building.x, z: building.z })),
+    ...dashboardMap.landmarks.map((landmark) => ({ x: landmark.x, z: landmark.z })),
+    ...dashboardMap.districts.map((district) => ({ x: district.x, z: district.z }))
+  ];
+  if (!coordinates.length) {
+    return { x: 0, z: 0, width: 48, depth: 36 };
+  }
+  const minX = Math.min(...coordinates.map((item) => item.x));
+  const maxX = Math.max(...coordinates.map((item) => item.x));
+  const minZ = Math.min(...coordinates.map((item) => item.z));
+  const maxZ = Math.max(...coordinates.map((item) => item.z));
+  return {
+    x: (minX + maxX) / 2,
+    z: (minZ + maxZ) / 2,
+    width: Math.max(12, maxX - minX),
+    depth: Math.max(12, maxZ - minZ)
+  };
 }
 
 function isRunnableAgentPackCommand(value: string) {
