@@ -834,6 +834,7 @@ interface MapHoverInfo {
   title: string;
   subtitle: string;
   tone: string;
+  position: [number, number, number];
   rows: Array<{ label: string; value: string }>;
 }
 
@@ -865,7 +866,7 @@ function MapView({
   const [hoverInfo, setHoverInfo] = useState<MapHoverInfo | null>(null);
   const mapRootRef = useRef<HTMLDivElement | null>(null);
   const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
-  const activeMapInfo = hoverInfo || (selectedBuilding ? buildingHoverInfo(selectedBuilding) : null);
+  const activeMapInfo = selectedBuilding ? buildingHoverInfo(selectedBuilding) : null;
   const payloadRequiredActions = new Set(["work", "route_task", "retrieve"]);
   const primaryCatalog = (snapshot.command_catalog || []).filter((item) => item.primary && !payloadRequiredActions.has(item.id)).slice(0, 8);
   const weather = dashboardMap.weather || [];
@@ -933,7 +934,7 @@ function MapView({
           {mode === "city" ? (
             hasWebGLSupport() ? (
               <MapErrorBoundary resetKey={`${dashboardMap.generated_at}:${cameraSignal}`} onError={() => setMode("table")} fallback={<MapTable dashboardMap={dashboardMap} onSelect={onSelect} />}>
-                <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
+                <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
               </MapErrorBoundary>
             ) : (
               <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
@@ -1056,6 +1057,7 @@ class MapErrorBoundary extends Component<
 function ContextCityMap({
   dashboardMap,
   selectedId,
+  hoverInfo,
   cameraSignal,
   demoMode,
   onSelect,
@@ -1063,6 +1065,7 @@ function ContextCityMap({
 }: {
   dashboardMap: DashboardMap;
   selectedId: string;
+  hoverInfo: MapHoverInfo | null;
   cameraSignal: number;
   demoMode: boolean;
   onSelect: (id: string) => void;
@@ -1080,7 +1083,7 @@ function ContextCityMap({
         <color attach="background" args={["#08111f"]} />
         <ambientLight intensity={0.62} />
         <directionalLight castShadow position={[34, 54, 34]} intensity={1.18} />
-        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} onHover={onHover} />
+        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} onHover={onHover} />
         <OrbitControls ref={controlsRef} makeDefault target={[32, 5, 22]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={24} maxDistance={320} maxPolarAngle={Math.PI / 2.08} />
       </Canvas>
     </div>
@@ -1090,12 +1093,14 @@ function ContextCityMap({
 function CityScene({
   dashboardMap,
   selectedId,
+  hoverInfo,
   reducedMotion,
   onSelect,
   onHover
 }: {
   dashboardMap: DashboardMap;
   selectedId: string;
+  hoverInfo: MapHoverInfo | null;
   reducedMotion: boolean;
   onSelect: (id: string) => void;
   onHover: (info: MapHoverInfo | null) => void;
@@ -1135,6 +1140,7 @@ function CityScene({
           )}
         </group>
       ))}
+      {hoverInfo ? <MapSceneTooltip info={hoverInfo} /> : null}
       {dashboardMap.buildings.map((building) => (
         <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
       ))}
@@ -1275,13 +1281,14 @@ function RoadMesh({
   const length = Math.sqrt(dx * dx + dz * dz);
   const angle = Math.atan2(dz, dx);
   const visual = routeVisual(road);
+  const midpoint: [number, number, number] = [sx + dx / 2, visual.y + 0.75, sz + dz / 2];
   return (
     <mesh
       position={[sx + dx / 2, visual.y, sz + dz / 2]}
       rotation={[0, -angle, 0]}
       onPointerOver={(event) => {
         event.stopPropagation();
-        onHover(roadHoverInfo(road));
+        onHover(roadHoverInfo(road, midpoint));
       }}
       onPointerOut={(event) => {
         event.stopPropagation();
@@ -1294,6 +1301,24 @@ function RoadMesh({
   );
 }
 
+function MapSceneTooltip({ info }: { info: MapHoverInfo }) {
+  return (
+    <Html position={info.position} center className="map-scene-tooltip">
+      <span className={`badge ${riskTone(info.tone)}`}>{info.kind}</span>
+      <strong>{info.title}</strong>
+      <small>{info.subtitle}</small>
+      <dl>
+        {info.rows.slice(0, 4).map((row) => (
+          <div key={`${row.label}:${row.value}`}>
+            <dt>{row.label}</dt>
+            <dd>{row.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </Html>
+  );
+}
+
 function buildingHoverInfo(building: MapBuilding): MapHoverInfo {
   const tier = buildingTier(building.confidence);
   return {
@@ -1301,6 +1326,7 @@ function buildingHoverInfo(building: MapBuilding): MapHoverInfo {
     title: building.path,
     subtitle: `${tier.label} in ${building.district_id}`,
     tone: building.risk || tier.tone,
+    position: [building.x, 16 + building.confidence * 8, building.z],
     rows: [
       { label: "Confidence", value: `${Math.round(building.confidence * 100)}% (${tier.label})` },
       { label: "Score", value: String(Math.round(building.score || 0)) },
@@ -1313,13 +1339,14 @@ function buildingHoverInfo(building: MapBuilding): MapHoverInfo {
   };
 }
 
-function roadHoverInfo(road: MapRoad): MapHoverInfo {
+function roadHoverInfo(road: MapRoad, position: [number, number, number]): MapHoverInfo {
   const visual = routeVisual(road);
   return {
     kind: "road",
     title: visual.label,
     subtitle: `${road.type.replace(/_/g, " ")} route`,
     tone: visual.tone,
+    position,
     rows: [
       { label: "Confidence", value: `${Math.round(routeConfidence(road) * 100)}%` },
       { label: "Class", value: visual.label },

@@ -1439,10 +1439,6 @@ code {
   overflow: auto;
 }
 
-.map-view.fullscreen .map-side .panel:not(:first-child):not(:nth-child(2)) {
-  display: none;
-}
-
 .map-view:fullscreen {
   background: var(--bg);
 }
@@ -1547,6 +1543,58 @@ code {
   white-space: nowrap;
   pointer-events: none;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
+}
+
+.map-scene-tooltip {
+  width: 260px;
+  max-width: min(260px, 40vw);
+  display: grid;
+  gap: 6px;
+  border: 1px solid rgba(128, 169, 255, 0.28);
+  border-radius: var(--radius-md);
+  background: rgba(8, 16, 30, 0.9);
+  color: #f5f8ff;
+  padding: 10px;
+  pointer-events: none;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.36);
+}
+
+.map-scene-tooltip strong,
+.map-scene-tooltip small,
+.map-scene-tooltip dd {
+  overflow-wrap: anywhere;
+}
+
+.map-scene-tooltip strong {
+  line-height: 1.2;
+}
+
+.map-scene-tooltip small {
+  color: #b9c7dd;
+}
+
+.map-scene-tooltip dl {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.map-scene-tooltip dl div {
+  display: grid;
+  grid-template-columns: 82px minmax(0, 1fr);
+  gap: 8px;
+}
+
+.map-scene-tooltip dt,
+.map-scene-tooltip dd {
+  margin: 0;
+  font-size: 12px;
+  line-height: 1.25;
+}
+
+.map-scene-tooltip dt {
+  color: #8fa0b8;
+  font-weight: 720;
 }
 
 .map-legend {
