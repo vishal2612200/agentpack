@@ -14,6 +14,8 @@ import {
   GitBranch,
   ListFilter,
   Map as MapIcon,
+  Maximize2,
+  Minimize2,
   Network,
   PlayCircle,
   RefreshCcw,
@@ -39,7 +41,7 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, OrbitControls } from "@react-three/drei";
+import { Html, OrbitControls, RoundedBox } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
@@ -850,14 +852,37 @@ function MapView({
 }) {
   const [mode, setMode] = useState<MapMode>(() => (hasWebGLSupport() ? "city" : "table"));
   const [demoMode, setDemoMode] = useState(false);
+  const [fullscreen, setFullscreen] = useState(false);
   const [cameraSignal, setCameraSignal] = useState(0);
+  const mapRootRef = useRef<HTMLDivElement | null>(null);
   const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
   const payloadRequiredActions = new Set(["work", "route_task", "retrieve"]);
   const primaryCatalog = (snapshot.command_catalog || []).filter((item) => item.primary && !payloadRequiredActions.has(item.id)).slice(0, 8);
   const weather = dashboardMap.weather || [];
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setFullscreen(document.fullscreenElement === mapRootRef.current);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
+  const toggleFullscreen = async () => {
+    const element = mapRootRef.current;
+    if (!element) return;
+    if (document.fullscreenElement === element) {
+      await document.exitFullscreen().catch(() => undefined);
+      setFullscreen(false);
+      return;
+    }
+    if (element.requestFullscreen) {
+      await element.requestFullscreen().catch(() => setFullscreen(true));
+    } else {
+      setFullscreen((value) => !value);
+    }
+  };
 
   return (
-    <div className={demoMode ? "map-view demo" : "map-view"}>
+    <div ref={mapRootRef} className={["map-view", demoMode ? "demo" : "", fullscreen ? "fullscreen" : ""].filter(Boolean).join(" ")}>
       <section className="map-hero">
         <div>
           <p className="eyebrow">AgentPack Map</p>
@@ -866,9 +891,13 @@ function MapView({
         </div>
         <div className="map-hero-actions">
           <button type="button" className={demoMode ? "toolbar-button active" : "toolbar-button"} onClick={() => setDemoMode((value) => !value)}>Demo</button>
-            <button type="button" className={mode === "city" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode(hasWebGLSupport() ? "city" : "table")}>
-              <Building2 size={14} aria-hidden="true" /> 3D City
-            </button>
+          <button type="button" className={fullscreen ? "toolbar-button active" : "toolbar-button"} onClick={toggleFullscreen}>
+            {fullscreen ? <Minimize2 size={14} aria-hidden="true" /> : <Maximize2 size={14} aria-hidden="true" />}
+            {fullscreen ? "Exit full screen" : "Full screen"}
+          </button>
+          <button type="button" className={mode === "city" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode(hasWebGLSupport() ? "city" : "table")}>
+            <Building2 size={14} aria-hidden="true" /> 3D City
+          </button>
           <button type="button" className={mode === "network" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("network")}>
             <Network size={14} aria-hidden="true" /> Network
           </button>
@@ -906,7 +935,7 @@ function MapView({
           )}
         </section>
 
-        {!demoMode ? (
+        {!demoMode && !fullscreen ? (
           <aside className="map-side">
             <Panel title="Map Legend" icon={MapIcon}>
               <div className="map-legend">
@@ -1015,12 +1044,12 @@ function ContextCityMap({
 
   return (
     <div className="city-canvas-wrap">
-      <Canvas camera={{ position: [76, 82, 118], fov: 36 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true }}>
+      <Canvas shadows camera={{ position: [122, 118, 172], fov: 34 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true }}>
         <color attach="background" args={["#08111f"]} />
-        <ambientLight intensity={0.55} />
-        <directionalLight position={[30, 42, 28]} intensity={1.1} />
+        <ambientLight intensity={0.62} />
+        <directionalLight castShadow position={[34, 54, 34]} intensity={1.18} />
         <CityScene dashboardMap={dashboardMap} selectedId={selectedId} reducedMotion={reducedMotion || demoMode} onSelect={onSelect} />
-        <OrbitControls ref={controlsRef} makeDefault target={[0, 10, 0]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={18} maxDistance={210} maxPolarAngle={Math.PI / 2.12} />
+        <OrbitControls ref={controlsRef} makeDefault target={[32, 5, 22]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={24} maxDistance={320} maxPolarAngle={Math.PI / 2.08} />
       </Canvas>
     </div>
   );
@@ -1047,11 +1076,11 @@ function CityScene({
       </mesh>
       {dashboardMap.districts.map((district) => (
         <group key={district.id}>
-          <mesh position={[district.x + 6, 0.02, district.z + 4]}>
-            <boxGeometry args={[18, 0.08, 13]} />
+          <mesh position={[district.x + 8, 0.02, district.z + 8]} rotation={[0, Math.PI / 8, 0]}>
+            <cylinderGeometry args={[22, 22, 0.1, 8]} />
             <meshStandardMaterial color={district.selected_count ? "#182c46" : "#131f30"} roughness={0.9} />
           </mesh>
-          <Html position={[district.x, 0.35, district.z - 4]} center className="district-label">
+          <Html position={[district.x + 4, 0.35, district.z - 12]} center className="district-label">
             {district.label}
           </Html>
         </group>
@@ -1062,12 +1091,14 @@ function CityScene({
       {dashboardMap.landmarks.map((landmark) => (
         <group key={landmark.id} position={[landmark.x, 0, landmark.z]}>
           <mesh>
-            <cylinderGeometry args={[1.6, 1.6, 1.8, 18]} />
+            <cylinderGeometry args={landmark.type === "action" ? [0.72, 0.72, 0.7, 16] : [1.6, 1.6, 1.8, 18]} />
             <meshStandardMaterial color={landmark.tone === "risk" ? "#ff7a7f" : landmark.tone === "good" ? "#6ed49a" : "#80a9ff"} emissive="#1b355d" emissiveIntensity={0.28} />
           </mesh>
-          <Html position={[0, 2.4, 0]} center className="district-label">
-            {landmark.label}
-          </Html>
+          {landmark.type === "action" ? null : (
+            <Html position={[0, 2.4, 0]} center className="district-label">
+              {landmark.label}
+            </Html>
+          )}
         </group>
       ))}
       {dashboardMap.buildings.map((building) => (
@@ -1089,34 +1120,91 @@ function BuildingMesh({
   onSelect: (id: string) => void;
 }) {
   const ref = useRef<any>(null);
+  const width = 6.0 + building.confidence * 3.2 + (building.selected ? 0.5 : 0);
+  const depth = 5.4 + building.confidence * 2.6 + (building.memory_linked ? 0.35 : 0);
+  const moduleHeight = 2.8 + building.confidence * 7.2;
+  const domeHeight = 0.85 + building.confidence * 1.2;
+  const antennaHeight = building.selected || building.memory_linked ? 2.4 + building.confidence * 3.2 : 1.1 + building.confidence * 1.8;
+  const podiumHeight = 0.42;
+  const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : "#d9e7ff";
+  const roofColor = selected ? "#cfe0ff" : building.memory_linked ? "#b5f7f5" : "#d7e2ef";
+  const windowRows = Math.min(4, Math.max(2, Math.floor(moduleHeight / 2.4)));
   useFrame(({ clock }) => {
     if (!ref.current || reducedMotion || !selected) return;
-    ref.current.position.y = building.height / 2 + Math.sin(clock.elapsedTime * 2.4) * 0.22;
+    ref.current.position.y = Math.sin(clock.elapsedTime * 2.4) * 0.18;
   });
   return (
-    <group>
+    <group
+      ref={ref}
+      onClick={(event) => {
+        event.stopPropagation();
+        onSelect(building.node_id);
+      }}
+    >
       {selected ? (
         <mesh position={[building.x, 0.05, building.z]}>
-          <cylinderGeometry args={[2.7, 2.7, 0.08, 32]} />
-          <meshBasicMaterial color="#80a9ff" transparent opacity={0.38} />
+          <cylinderGeometry args={[Math.max(width, depth) * 0.82, Math.max(width, depth) * 0.82, 0.08, 48]} />
+          <meshBasicMaterial color="#80a9ff" transparent opacity={0.32} />
+        </mesh>
+      ) : null}
+      {building.selected ? (
+        <mesh position={[building.x, 0.09, building.z]}>
+          <cylinderGeometry args={[Math.max(width, depth) * 0.68, Math.max(width, depth) * 0.68, 0.06, 40]} />
+          <meshBasicMaterial color={accentColor} transparent opacity={0.22} />
         </mesh>
       ) : null}
       <mesh
-        ref={ref}
-        position={[building.x, building.height / 2, building.z]}
-        onClick={(event) => {
-          event.stopPropagation();
-          onSelect(building.node_id);
-        }}
+        castShadow
+        receiveShadow
+        position={[building.x, podiumHeight / 2, building.z]}
       >
-        <boxGeometry args={[3.4, building.height, 3.4]} />
+        <cylinderGeometry args={[Math.max(width, depth) * 0.68, Math.max(width, depth) * 0.76, podiumHeight, 8]} />
+        <meshStandardMaterial
+          color="#182940"
+          roughness={0.76}
+          metalness={0.12}
+        />
+      </mesh>
+      <RoundedBox castShadow receiveShadow args={[width, moduleHeight, depth]} radius={0.52} smoothness={7} position={[building.x, podiumHeight + moduleHeight / 2, building.z]}>
         <meshStandardMaterial
           color={building.color}
-          roughness={0.66}
+          roughness={0.64}
           metalness={0.12}
-          emissive={selected ? "#80a9ff" : building.memory_linked ? "#38cfd3" : "#000000"}
-          emissiveIntensity={selected ? 0.36 : building.memory_linked ? 0.18 : 0}
+          emissive={selected ? "#294f91" : building.memory_linked ? "#0f5d61" : "#000000"}
+          emissiveIntensity={selected ? 0.22 : building.memory_linked ? 0.18 : 0}
         />
+      </RoundedBox>
+      <mesh position={[building.x, podiumHeight + moduleHeight + domeHeight * 0.12, building.z]} scale={[width * 0.44, domeHeight * 0.42, depth * 0.44]}>
+        <sphereGeometry args={[1, 28, 14]} />
+        <meshStandardMaterial color={roofColor} roughness={0.42} metalness={0.24} emissive={accentColor} emissiveIntensity={selected || building.memory_linked ? 0.2 : 0.05} />
+      </mesh>
+      <mesh position={[building.x - width * 0.62, podiumHeight + moduleHeight * 0.42, building.z]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[Math.max(1.05, depth * 0.16), Math.max(1.05, depth * 0.16), width * 0.38, 20]} />
+        <meshStandardMaterial color={building.color} roughness={0.66} metalness={0.1} emissive={building.memory_linked ? "#0f5d61" : "#000000"} emissiveIntensity={building.memory_linked ? 0.14 : 0} />
+      </mesh>
+      <mesh position={[building.x + width * 0.62, podiumHeight + moduleHeight * 0.38, building.z + depth * 0.08]} rotation={[0, 0, Math.PI / 2]}>
+        <cylinderGeometry args={[Math.max(0.95, depth * 0.14), Math.max(0.95, depth * 0.14), width * 0.32, 20]} />
+        <meshStandardMaterial color={building.color} roughness={0.66} metalness={0.1} />
+      </mesh>
+      {Array.from({ length: windowRows }).map((_, index) => (
+        <mesh key={`${building.id}:window-front:${index}`} position={[building.x, podiumHeight + 1.25 + index * Math.max(1.35, moduleHeight / (windowRows + 1)), building.z + depth / 2 + 0.016]}>
+          <boxGeometry args={[Math.max(1.2, width * 0.42), 0.09, 0.035]} />
+          <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.78 : 0.46} />
+        </mesh>
+      ))}
+      {Array.from({ length: Math.min(5, windowRows) }).map((_, index) => (
+        <mesh key={`${building.id}:window-side:${index}`} position={[building.x + width / 2 + 0.016, podiumHeight + 1.45 + index * Math.max(1.45, moduleHeight / (windowRows + 1)), building.z]} rotation={[0, Math.PI / 2, 0]}>
+          <boxGeometry args={[Math.max(1.0, depth * 0.42), 0.075, 0.035]} />
+          <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.68 : 0.38} />
+        </mesh>
+      ))}
+      <mesh position={[building.x, podiumHeight + moduleHeight + domeHeight + antennaHeight / 2, building.z]}>
+        <cylinderGeometry args={[0.045, 0.045, antennaHeight, 10]} />
+        <meshBasicMaterial color={accentColor} transparent opacity={0.74} />
+      </mesh>
+      <mesh position={[building.x, podiumHeight + moduleHeight + domeHeight + antennaHeight + 0.16, building.z]}>
+        <sphereGeometry args={[0.2, 12, 8]} />
+        <meshBasicMaterial color={accentColor} transparent opacity={selected || building.memory_linked ? 0.95 : 0.56} />
       </mesh>
     </group>
   );
@@ -1141,9 +1229,9 @@ function RoadMesh({
   const length = Math.sqrt(dx * dx + dz * dz);
   const angle = Math.atan2(dz, dx);
   return (
-    <mesh position={[sx + dx / 2, 0.12, sz + dz / 2]} rotation={[0, -angle, 0]}>
-      <boxGeometry args={[length, 0.08, 0.12]} />
-      <meshBasicMaterial color={road.type === "memory_influenced" ? "#38cfd3" : "#607da8"} transparent opacity={road.type === "selected_because" ? 0.42 : 0.24} />
+    <mesh position={[sx + dx / 2, 0.11, sz + dz / 2]} rotation={[0, -angle, 0]}>
+      <boxGeometry args={[length, 0.06, road.type === "selected_because" ? 0.42 : 0.24]} />
+      <meshBasicMaterial color={road.type === "memory_influenced" ? "#38cfd3" : "#6d86ae"} transparent opacity={road.type === "selected_because" ? 0.34 : 0.2} />
     </mesh>
   );
 }

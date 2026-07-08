@@ -1396,6 +1396,49 @@ code {
   display: none;
 }
 
+.map-view.fullscreen {
+  width: 100vw;
+  min-height: 100vh;
+  background:
+    radial-gradient(circle at 20% 0%, color-mix(in srgb, var(--primary) 14%, transparent), transparent 34%),
+    var(--bg);
+  padding: 12px;
+  overflow: auto;
+}
+
+.map-view.fullscreen .metric-grid,
+.map-view.fullscreen .map-side {
+  display: none;
+}
+
+.map-view.fullscreen .map-hero {
+  padding: 12px 14px;
+}
+
+.map-view.fullscreen .map-hero h1 {
+  font-size: 28px;
+  line-height: 1.1;
+}
+
+.map-view.fullscreen .map-hero .muted {
+  display: none;
+}
+
+.map-view.fullscreen .map-layout {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+.map-view.fullscreen .city-canvas-wrap,
+.map-view.fullscreen .map-table,
+.map-view.fullscreen .graph-shell {
+  height: calc(100vh - 106px);
+  min-height: 620px;
+}
+
+.map-view:fullscreen {
+  background: var(--bg);
+}
+
 .map-hero {
   min-width: 0;
   display: grid;

@@ -104,12 +104,14 @@ def _position_districts(grouped: dict[str, list[MapBuilding]]) -> tuple[list[Map
     buildings: list[MapBuilding] = []
     for index, district_id in enumerate(sorted(grouped)):
         district_buildings = sorted(grouped[district_id], key=lambda item: (-int(item.selected), -item.score, item.path))
-        district_x = (index % 4) * 32.0
-        district_z = (index // 4) * 28.0
-        columns = max(2, min(5, int(len(district_buildings) ** 0.5) + 1))
+        district_x = (index % 3) * 72.0
+        district_z = (index // 3) * 58.0
+        columns = max(2, min(3, int(len(district_buildings) ** 0.5) + 1))
         for building_index, building in enumerate(district_buildings):
-            local_x = (building_index % columns) * 5.4
-            local_z = (building_index // columns) * 5.4
+            row = building_index // columns
+            column = building_index % columns
+            local_x = column * 14.8 + (6.8 if row % 2 else 0.0)
+            local_z = row * 13.2
             building.x = round(district_x + local_x, 2)
             building.z = round(district_z + local_z, 2)
             buildings.append(building)
