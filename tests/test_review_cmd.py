@@ -466,6 +466,46 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
     assert findings_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
 
 
+def test_review_check_reports_code_discipline_warnings(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    (repo / "src" / "foo.py").write_text(
+        "def foo():\n"
+        "    return 2\n\n"
+        "def load_config(path):\n"
+        "    data = path.read_text()\n"
+        "    return data.strip()\n",
+        encoding="utf-8",
+    )
+    subprocess.run(["git", "add", "src/foo.py"], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "add config loader"], cwd=repo, check=True)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["review", "--allow-local-fallback", "discipline check"])
+    assert first.exit_code == 0, first.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_authoring_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        json.dumps({"intent": {"requirement": "placeholder"}, "change_units": [], "open_questions": []}),
+        encoding="utf-8",
+    )
+    ready = runner.invoke(app, ["review", "--check"])
+    assert ready.exit_code == 0, ready.output
+
+    findings = repo / preflight["paths"]["findings_authoring_output"]
+    findings.write_text(json.dumps({"findings": [], "coverage": "complete"}), encoding="utf-8")
+
+    complete = runner.invoke(app, ["review", "--check"])
+
+    assert complete.exit_code == 0, complete.output
+    assert "Stage 2 valid" in complete.output
+    assert "Code discipline warnings" in complete.output
+    assert "missing-intent-anchor" in complete.output
+
+
 def test_review_validation_uses_pr_head_citation_source_when_worktree_drifts(tmp_path) -> None:
     repo = _init_repo(tmp_path)
     head_sha = subprocess.run(

@@ -3,6 +3,7 @@ from __future__ import annotations
 import typer
 
 from agentpack.commands._shared import console, _root, run_refresh
+from agentpack.core.code_discipline import assess_code_discipline, format_code_discipline_report
 from agentpack.core.git_preflight import GitPreflight, run_git_preflight
 from agentpack.core.modes import MODE_HELP, invalid_mode_message, is_requested_mode
 from agentpack.core.thread_context import resolve_session_thread_option
@@ -37,6 +38,16 @@ def register(app: typer.Typer) -> None:
             False,
             "--allow-dirty-targets",
             help="Continue when tracked local changes are confirmed to be part of the current task.",
+        ),
+        check_code_discipline: bool = typer.Option(
+            False,
+            "--check-code-discipline",
+            help="Print advisory warnings for missing definition intent anchors, bloated diffs, and missing tests.",
+        ),
+        strict_code_discipline: bool = typer.Option(
+            False,
+            "--strict-code-discipline",
+            help="Fail guard when code-discipline warnings are present. Implies --check-code-discipline.",
         ),
         mode: str = typer.Option("balanced", "--mode", help=f"Refresh mode ({MODE_HELP})."),
         budget: int = typer.Option(0, "--budget", help="Refresh token budget (0 = config default)."),
@@ -116,6 +127,19 @@ def register(app: typer.Typer) -> None:
                 repair_command=repair_command,
                 safe_to_continue="no; refresh or use direct rg/git evidence as source of truth",
             )
+
+        if check_code_discipline or strict_code_discipline:
+            discipline = assess_code_discipline(root)
+            for line in format_code_discipline_report(discipline):
+                console.print(line)
+            if discipline.has_issues and strict_code_discipline:
+                ok = False
+                _print_action(
+                    what_failed="code discipline warnings are present",
+                    why_it_matters="review agents will judge unnecessary code and missing intent anchors before trusting the change",
+                    repair_command="add meaningful definition anchors, trim bloat, or document validation/test coverage",
+                    safe_to_continue="no; fix code discipline findings or rerun without --strict-code-discipline",
+                )
 
         if not ok:
             raise typer.Exit(1)

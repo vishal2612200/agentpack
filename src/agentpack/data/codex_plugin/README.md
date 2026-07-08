@@ -2,7 +2,7 @@
 
 Thin Codex plugin for AgentPack ranked repo context.
 
-AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, and learning from current local session context.
+AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, auditing codebase folders, and learning from current local session context.
 
 Install AgentPack first:
 
@@ -32,5 +32,13 @@ TOON; malformed output gets a local repair guide. For PR-bound reviews,
 `agentpack review --check --dry-run-post` validates and writes the inline
 review payload without calling GitHub; `--post-inline-comments` performs the
 real GitHub review post.
+
+Use `@agentpack-audit <scope>` to prepare a loop-based codebase audit atlas and
+developer report for refactoring, performance, infrastructure/config,
+reliability, or testability exploration. It writes
+`.agentpack/audit.prompt.md`, `.agentpack/audit-report.md`,
+`.agentpack/audit-atlas.json`, and `.agentpack/audit-findings.json`; agents
+must separate hypotheses from findings and keep performance/config claims
+behind usage evidence plus measurement or a validation plan.
 
 The plugin delegates to local AgentPack CLI and MCP behavior. It does not upload source code or call hosted model APIs.

@@ -20,5 +20,8 @@ If MCP tools are unavailable: run `agentpack mcp` once with a short timeout. If 
 CLI fallback: `agentpack guard --agent codex --repair-stale --refresh-context --thread global`, `agentpack route --task "<task>"`, `agentpack pack --task auto`, then `rg` / direct file reads.
 
 Prompt hygiene: for agent-mode coding work, prefer `Task`, `Files`, `Acceptance criteria`, `Constraints`, `Validation`, and `Output` sections. For short/simple questions, use Ask/Chat mode instead of agent mode. Keep routine responses concise unless the user asks for detail.
+Code philosophy: think before editing; prefer the smallest correct change; do not add abstractions, branches, files, dependencies, or lines unless they remove real complexity or are required for correctness. Use existing local patterns and SOLID principles where they make the code simpler, not larger.
+Definition intent anchors: when adding or materially changing a non-trivial object, function, class, module-level variable, config schema, command, or public contract, leave a short docstring or nearby comment that records the why/contract/invariant so AST and symbol summaries preserve developer intent. Do not write comments that merely restate the name, type, or obvious control flow.
+Review posture: assume every new line will be reviewed for necessity, clarity, rollback safety, and testability; more code is not better code.
 For multiple agent threads in one repo, keep legacy global mode unless a thread is explicit. Use `AGENTPACK_THREAD_ID=<stable-id> agentpack guard --agent codex --repair-stale --refresh-context --thread auto` to write/read `.agentpack/threads/<id>/...` and get overlap warnings.
 <!-- agentpack:end -->

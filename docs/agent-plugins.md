@@ -17,7 +17,7 @@ tests, rules, skills, and compact task context without hosted indexing.
 
 | Host | Current path | What it does |
 |---|---|---|
-| Codex | `.codex-plugin/` and `skills/` | Adds `@agentpack-*` commands for local routing, packing, refresh, review, and learning |
+| Codex | `.codex-plugin/` and `skills/` | Adds `@agentpack-*` commands for local routing, packing, refresh, review, audit, and learning |
 | Codex repo setup | `agentpack init --agent auto` or `agentpack init --agent codex` | Auto-detects Codex or explicitly writes `AGENTS.md`, `.codex/hooks.json`, git hooks, MCP config, enables `agentpack@local`, and refreshes the local plugin cache package |
 | Claude Code | `agentpack init --agent claude` | Writes `CLAUDE.md`, Claude hooks, and MCP config |
 | Cursor | `.cursorrules`, `.cursor/rules/agentpack.mdc`, and `native-integrations/cursor-extension/` | Portable Cursor rules, repo installer, VS Code task, git hooks, and extension skeleton |
@@ -145,9 +145,11 @@ skills/
 Codex setup installs the package under
 `~/.codex/plugins/cache/local/agentpack/<version>/`, enables
 `agentpack@local`, and disables older enabled AgentPack marketplace copies so
-new skills such as `@agentpack-review` come from the same version as the local
-CLI. Run `agentpack doctor --agent codex` after upgrades to verify the active
-plugin source.
+new skills such as `@agentpack-review` and `@agentpack-audit` come from the
+same version as the local CLI. The audit skill includes the current
+atlas/report contract, including infrastructure/config usage signals. Run
+`agentpack doctor --agent codex` after upgrades to verify the active plugin
+source.
 
 See [`codex-plugin.md`](codex-plugin.md).
 

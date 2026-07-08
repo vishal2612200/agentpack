@@ -90,11 +90,23 @@ def mcp_diagnostic_guidance(agent: str = "auto") -> str:
 
 
 def prompt_quality_guidance() -> str:
+    """Return shared agent-output and code-discipline rules for generated integrations."""
     return (
         "Prompt hygiene: for agent-mode coding work, prefer `Task`, `Files`, "
         "`Acceptance criteria`, `Constraints`, `Validation`, and `Output` sections. "
         "For short/simple questions, use Ask/Chat mode instead of agent mode. "
-        "Keep routine responses concise unless the user asks for detail."
+        "Keep routine responses concise unless the user asks for detail.\n"
+        "Code philosophy: think before editing; prefer the smallest correct change; "
+        "do not add abstractions, branches, files, dependencies, or lines unless they "
+        "remove real complexity or are required for correctness. Use existing local "
+        "patterns and SOLID principles where they make the code simpler, not larger.\n"
+        "Definition intent anchors: when adding or materially changing a non-trivial "
+        "object, function, class, module-level variable, config schema, command, or "
+        "public contract, leave a short docstring or nearby comment that records the "
+        "why/contract/invariant so AST and symbol summaries preserve developer intent. "
+        "Do not write comments that merely restate the name, type, or obvious control flow.\n"
+        "Review posture: assume every new line will be reviewed for necessity, clarity, "
+        "rollback safety, and testability; more code is not better code."
     )
 
 
