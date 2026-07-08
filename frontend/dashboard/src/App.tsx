@@ -855,7 +855,7 @@ function TaskGraph({
         minZoom={0.12}
         zoomOnDoubleClick={false}
       >
-        <GraphViewportController fitSignal={fitSignal} />
+        <GraphViewportController fitSignal={fitSignal} nodeCount={nodes.length} />
         <Background />
         {showOverview ? <MiniMap pannable zoomable className="graph-minimap" maskColor="rgba(8, 13, 22, 0.72)" nodeColor="#4b668a" nodeStrokeColor="#80a9ff" /> : null}
         <Controls />
@@ -864,13 +864,14 @@ function TaskGraph({
   );
 }
 
-function GraphViewportController({ fitSignal }: { fitSignal: number }) {
+function GraphViewportController({ fitSignal, nodeCount }: { fitSignal: number; nodeCount: number }) {
   const { fitView } = useReactFlow();
   useEffect(() => {
-    if (fitSignal > 0) {
-      fitView({ duration: 220, padding: 0.16 });
-    }
-  }, [fitSignal, fitView]);
+    const timeout = window.setTimeout(() => {
+      fitView({ duration: fitSignal > 0 ? 220 : 0, padding: 0.22 });
+    }, 80);
+    return () => window.clearTimeout(timeout);
+  }, [fitSignal, fitView, nodeCount]);
   return null;
 }
 
@@ -1749,8 +1750,8 @@ function nodeLabel(node: DashboardNode) {
 function positionFor(index: number, type: string) {
   const lane = type === "task" ? 0 : type === "episode" || type === "procedure" ? -1 : type === "test" || type === "action" ? 1 : 0;
   return {
-    x: 120 + (index % 5) * 270,
-    y: 120 + lane * 150 + Math.floor(index / 5) * 190
+    x: 120 + (index % 5) * 285,
+    y: 240 + lane * 170 + Math.floor(index / 5) * 205
   };
 }
 

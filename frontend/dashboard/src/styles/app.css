@@ -1339,8 +1339,8 @@ code {
 }
 
 .graph-shell {
-  height: calc(100dvh - 96px);
-  min-height: 520px;
+  height: calc(100dvh - 132px);
+  min-height: 0;
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
   background: var(--card-bg);
@@ -1378,6 +1378,7 @@ code {
 }
 
 .react-flow {
+  min-height: 0;
   background:
     linear-gradient(180deg, var(--surface) 0, var(--surface-soft) 100%);
   --xy-node-color: var(--text);
