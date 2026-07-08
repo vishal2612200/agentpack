@@ -282,6 +282,24 @@ def extract_rust_symbols(path: Path) -> list[Symbol]:
 
 
 def extract_symbols(path: Path, language: str | None) -> list[Symbol]:
+    # Optional tree-sitter path: activates only when the `[tree-sitter]` extra
+    # is installed and the language has no first-class extractor here. Failures
+    # fall through so behavior with the extra installed can never be worse than
+    # without it.
+    if language is not None:
+        try:
+            from agentpack.analysis.tree_sitter_backend import (
+                TS_SYMBOL_LANGS,
+                extract_symbols_ts,
+                is_available,
+            )
+            if language in TS_SYMBOL_LANGS and is_available():
+                ts_syms = extract_symbols_ts(path, language)
+                if ts_syms:
+                    return ts_syms
+        except Exception:
+            pass
+
     if language == "python":
         return extract_python_symbols(path)
     if language in ("javascript", "typescript"):

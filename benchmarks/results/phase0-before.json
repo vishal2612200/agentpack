@@ -1,0 +1,35 @@
+{
+  "php": {
+    "repo": "laravel-framework",
+    "ok": true,
+    "cases": 15,
+    "avg_recall": 0.1333,
+    "avg_token_precision": 0.0577,
+    "reason_graph_precision": 0.0,
+    "reason_content_precision": 0.0578,
+    "reason_symbol_precision": 0.0,
+    "median_wall_seconds": 7.043
+  },
+  "ruby": {
+    "repo": "rails",
+    "ok": true,
+    "cases": 15,
+    "avg_recall": 0.0667,
+    "avg_token_precision": 0.0167,
+    "reason_graph_precision": 0.0,
+    "reason_content_precision": 0.0167,
+    "reason_symbol_precision": 0.0,
+    "median_wall_seconds": 8.665
+  },
+  "java": {
+    "repo": "spring-petclinic",
+    "ok": true,
+    "cases": 20,
+    "avg_recall": 0.6167,
+    "avg_token_precision": 0.2848,
+    "reason_graph_precision": 0.3137,
+    "reason_content_precision": 0.3353,
+    "reason_symbol_precision": 0.0,
+    "median_wall_seconds": 0.276
+  }
+}

@@ -138,6 +138,18 @@ expected_files = [
 ]
 
 [[repos]]
+name = "express"
+url = "https://github.com/expressjs/express.git"
+ref = "master"
+sample_history = 15
+task_type = "javascript"
+mode = "balanced"
+budget = 3000
+include_globs = ["*.js", "lib/**/*.js", "test/**/*.js"]
+exclude_globs = ["docs/**", "examples/**", "node_modules/**"]
+max_changed_files = 8
+
+[[repos]]
 name = "vite"
 url = "https://github.com/vitejs/vite.git"
 ref = "main"
@@ -183,4 +195,117 @@ mode = "balanced"
 budget = 5000
 include_globs = ["packages/**/*.ts", "integration/**/*.ts", "sample/**/*.ts"]
 exclude_globs = ["docs/**", "**/*.d.ts"]
+max_changed_files = 8
+
+# ---------------------------------------------------------------------------
+# Languages added to measure the tree-sitter symbol/import backend.
+# Ruby and PHP get no structural analysis today (regex extractors return []),
+# so the baseline recall floor is the "filename + content-token only" signal.
+# Java has spring-petclinic above; spring-boot exercises more idioms.
+# History depth kept modest on the giants (rails, laravel, symfony) so total
+# benchmark runtime stays reasonable.
+# ---------------------------------------------------------------------------
+
+[[repos]]
+name = "spring-boot"
+url = "https://github.com/spring-projects/spring-boot.git"
+ref = "main"
+sample_history = 40
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+# spring-boot 4.x restructured away from the old spring-boot-project/ layout;
+# java now lives under core/, module/, starter/, smoke-test/, etc.
+include_globs = [
+  "core/**/*.java",
+  "module/**/*.java",
+  "starter/**/*.java",
+  "loader/**/*.java",
+  "test-support/**/*.java",
+]
+exclude_globs = [
+  "**/build/**",
+  "smoke-test/**",
+  "**/src/*Test/resources/**",
+]
+max_changed_files = 8
+
+[[repos]]
+name = "rails"
+url = "https://github.com/rails/rails.git"
+ref = "main"
+sample_history = 15
+task_type = "ruby-rails"
+mode = "balanced"
+budget = 4000
+include_globs = [
+  "activerecord/**/*.rb",
+  "actionpack/**/*.rb",
+  "activesupport/**/*.rb",
+  "actionview/**/*.rb",
+  "railties/**/*.rb",
+]
+exclude_globs = [
+  "**/test/fixtures/**",
+  "guides/**",
+  "**/vendor/**",
+]
+max_changed_files = 8
+
+[[repos]]
+name = "fastlane"
+url = "https://github.com/fastlane/fastlane.git"
+ref = "master"
+sample_history = 20
+task_type = "ruby-library"
+mode = "balanced"
+budget = 3500
+include_globs = [
+  "fastlane/**/*.rb",
+  "spaceship/**/*.rb",
+  "gym/**/*.rb",
+  "match/**/*.rb",
+]
+exclude_globs = [
+  "**/spec/fixtures/**",
+  "docs/**",
+  "**/vendor/**",
+]
+max_changed_files = 8
+
+[[repos]]
+name = "laravel-framework"
+url = "https://github.com/laravel/framework.git"
+ref = "13.x"
+sample_history = 15
+task_type = "php-framework"
+mode = "balanced"
+budget = 4000
+include_globs = [
+  "src/Illuminate/**/*.php",
+]
+exclude_globs = [
+  "tests/Fixtures/**",
+  "**/vendor/**",
+  "docs/**",
+]
+max_changed_files = 8
+
+[[repos]]
+name = "symfony"
+url = "https://github.com/symfony/symfony.git"
+ref = "8.2"
+sample_history = 15
+task_type = "php-framework"
+mode = "balanced"
+budget = 4000
+include_globs = [
+  "src/Symfony/Component/**/*.php",
+  "src/Symfony/Bundle/**/*.php",
+]
+exclude_globs = [
+  "**/Tests/Fixtures/**",
+  "**/vendor/**",
+  "docs/**",
+]
 max_changed_files = 8

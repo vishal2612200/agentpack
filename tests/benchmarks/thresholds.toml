@@ -1,0 +1,109 @@
+# Per-language ranking-quality thresholds for the continuous benchmark suite.
+#
+# Each test in tests/benchmarks/test_lang_*.py runs the AgentPack public
+# benchmark harness on the named repo, then asserts that the aggregate
+# metrics meet the mins below. To lock in an improvement, raise the min.
+#
+# Baseline metrics (as of the tree-sitter Phase 1 shipment) are the numbers
+# recorded in benchmarks/results/tree-sitter-comparison.md and the control
+# runs under benchmarks/results/control/. Thresholds are set 1-2 pp below
+# those numbers so sampling noise on rerun does not spuriously fail CI.
+#
+# Fields per language:
+#   repo                       — must match a name in benchmarks/public-repos.toml
+#   min_recall                 — avg recall across the sampled cases (0-1)
+#   min_token_precision        — avg token precision (0-1)
+#   min_reason_graph_precision — share of files selected via import-graph signal
+#                                that were expected. 0.0 = signal effectively dark.
+#   min_reason_content_precision — same, for content-keyword signal (drives from
+#                                symbols entering the keyword pool)
+#   max_median_wall_seconds    — per-case wall time budget guard
+#   min_cases                  — must run at least this many cases; guards against
+#                                sampling collapse (e.g. all commits filtered out)
+
+[php]
+repo = "laravel-framework"
+# Observed (two runs, sample_history=15): recall 16.7/16.7, tp 8.4/7.8,
+# reason_graph 7.1/5.6, reason_content 8.2/7.8. Thresholds set ~2 pp below
+# the lower of the two to give sampling headroom. Raise these as the PHP
+# query and PSR-4 resolution improve.
+min_recall = 0.14
+min_token_precision = 0.06
+min_reason_graph_precision = 0.03
+min_reason_content_precision = 0.05
+max_median_wall_seconds = 30.0
+min_cases = 10
+
+[python]
+repo = "pallets-click"
+min_recall = 0.70
+min_token_precision = 0.50
+min_reason_graph_precision = 0.30
+min_reason_content_precision = 0.35
+max_median_wall_seconds = 5.0
+min_cases = 20
+
+[typescript]
+repo = "vite"
+min_recall = 0.34
+min_token_precision = 0.22
+min_reason_graph_precision = 0.10
+min_reason_content_precision = 0.15
+max_median_wall_seconds = 25.0
+min_cases = 15
+
+[javascript]
+repo = "express"
+min_recall = 0.50
+min_token_precision = 0.18
+min_reason_graph_precision = 0.30
+min_reason_content_precision = 0.18
+max_median_wall_seconds = 10.0
+min_cases = 12
+
+[go]
+repo = "gin"
+min_recall = 0.60
+min_token_precision = 0.35
+min_reason_graph_precision = 0.20
+min_reason_content_precision = 0.25
+max_median_wall_seconds = 5.0
+min_cases = 15
+
+[java]
+repo = "spring-petclinic"
+# spring-boot was tried first but rejected: its `main` mainline is
+# dominated by "Merge branch '4.0.x'" merge commits (a dual-branch
+# maintenance workflow), so --first-parent --no-merges sampling yields
+# ~5% java-touching commits regardless of clone depth. spring-petclinic
+# has a simple linear history and was already in the pre-tree-sitter
+# suite.
+# Observed (two identical runs, sample_history=20, tree-sitter Phase 1
+# active): 20 cases, recall 61.7%, tp 28.5%, reason_graph 31.4%,
+# reason_content 33.5%, reason_symbol 0.0%. Thresholds set ~2 pp below.
+min_recall = 0.58
+min_token_precision = 0.25
+min_reason_graph_precision = 0.28
+min_reason_content_precision = 0.30
+max_median_wall_seconds = 5.0
+min_cases = 15
+
+[ruby]
+repo = "rails"
+# Observed (two identical runs, sample_history=15, tree-sitter Phase 1
+# active): 15 cases, recall 13.3%, tp 3.0%, reason_graph 1.4%,
+# reason_content 3.0%. Numbers are genuinely low — inspected a
+# zero-recall case and found candidate_recall_at_100=0.0 (expected file
+# ranked #1176 of thousands; Rails is a huge monorepo spanning
+# activesupport/activerecord/actionpack/etc, and single-file low-context
+# commit subjects are a hard case for keyword-based ranking regardless
+# of language). This is real difficulty, not a config bug. Thresholds
+# set ~2 pp below observed; Phase 2 (import resolution, since
+# require_relative is already resolved for Ruby) and Phase 4 (call-graph)
+# are the levers expected to move this.
+min_recall = 0.11
+min_token_precision = 0.02
+min_reason_graph_precision = 0.01
+min_reason_content_precision = 0.02
+max_median_wall_seconds = 20.0
+min_cases = 10

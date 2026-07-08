@@ -10,6 +10,9 @@ from agentpack.analysis.js_ts_imports import resolve_relative_import as js_resol
 from agentpack.analysis.go_imports import extract_imports as go_imports
 from agentpack.analysis.rust_imports import extract_imports as rust_imports
 from agentpack.analysis.java_imports import extract_imports as java_imports
+from agentpack.analysis.ruby_imports import extract_imports as ruby_imports
+from agentpack.analysis.ruby_imports import resolve_relative_import as ruby_resolve
+from agentpack.analysis.php_imports import extract_imports as php_imports
 
 _GRAPH_CACHE: dict[tuple[tuple[tuple[str, str | None], ...], bool], DependencyGraph] = {}
 
@@ -68,6 +71,10 @@ def build(
             raw_imports = rust_imports(fi.abs_path, cached)
         elif lang in ("java", "kotlin"):
             raw_imports = java_imports(fi.abs_path, cached)
+        elif lang == "ruby":
+            raw_imports = ruby_imports(fi.abs_path, cached)
+        elif lang == "php":
+            raw_imports = php_imports(fi.abs_path, cached)
 
         resolved = _resolve_imports(fi.path, lang, raw_imports, root, path_set)
 
@@ -94,10 +101,17 @@ def _resolve_imports(
                 r = py_resolve(importer, imp, root)
             elif language in ("javascript", "typescript"):
                 r = js_resolve(importer, imp, root)
+            elif language == "ruby":
+                r = ruby_resolve(importer, imp, root)
             else:
                 r = None
             if r and r in path_set:
                 resolved.append(r)
+        elif language == "ruby":
+            # Ruby's `require "foo/bar"` (no dot prefix) may also be an
+            # in-repo path — try to resolve; fall back to raw string if not.
+            r = ruby_resolve(importer, imp, root)
+            resolved.append(r if r and r in path_set else imp)
         else:
             resolved.append(imp)
     return resolved
