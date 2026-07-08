@@ -1339,7 +1339,7 @@ code {
 }
 
 .graph-shell {
-  height: calc(100dvh - 132px);
+  height: min(820px, calc(100dvh - 132px));
   min-height: 0;
   border: 1px solid var(--card-border);
   border-radius: var(--radius-lg);
@@ -1347,14 +1347,15 @@ code {
   box-shadow: var(--card-shadow);
   overflow: hidden;
   display: grid;
-  grid-template-rows: 44px minmax(0, 1fr);
+  grid-template-rows: auto minmax(0, 1fr);
 }
 
 .graph-toolbar {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 8px 12px;
+  min-height: 44px;
+  padding: 7px 12px;
   border-bottom: 1px solid var(--border);
   color: var(--text-muted);
   flex-wrap: wrap;
@@ -1379,6 +1380,8 @@ code {
 
 .react-flow {
   min-height: 0;
+  width: 100%;
+  height: 100%;
   background:
     linear-gradient(180deg, var(--surface) 0, var(--surface-soft) 100%);
   --xy-node-color: var(--text);
@@ -1424,7 +1427,7 @@ code {
 }
 
 .flow-node {
-  width: 240px;
+  width: 248px;
   position: relative;
   border: 1px solid var(--card-border);
   border-radius: var(--radius-md);
@@ -1491,9 +1494,10 @@ code {
 
 .node-label {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   text-align: left;
   font-size: 12px;
+  line-height: 1.28;
 }
 
 .node-body {
@@ -1505,7 +1509,7 @@ code {
 }
 
 .node-drag-handle {
-  min-height: 30px;
+  min-height: 28px;
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1515,7 +1519,7 @@ code {
   background: linear-gradient(135deg, color-mix(in srgb, var(--primary-soft) 58%, var(--surface)), color-mix(in srgb, var(--memory-soft) 24%, var(--surface)));
   color: var(--primary);
   cursor: grab;
-  padding: 6px 10px;
+  padding: 5px 10px;
   font-size: 11px;
   font-weight: 760;
   letter-spacing: 0.04em;

@@ -830,6 +830,10 @@ function TaskGraph({
       [node.id]: node.position
     }));
   };
+  const resetLayout = () => {
+    setNodePositions({});
+    setFitSignal((value) => value + 1);
+  };
 
   return (
     <div className="graph-shell">
@@ -839,21 +843,22 @@ function TaskGraph({
         <span>Drag grip to move nodes</span>
         {graph.summary.truncated ? <span className="badge warn">Truncated</span> : null}
         <button type="button" className="toolbar-button" onClick={() => setFitSignal((value) => value + 1)}>Fit view</button>
-        <button type="button" className="toolbar-button" onClick={() => setNodePositions({})}>Reset layout</button>
+        <button type="button" className="toolbar-button" onClick={resetLayout}>Reset layout</button>
         <button type="button" className={showOverview ? "toolbar-button active" : "toolbar-button"} onClick={() => setShowOverview((value) => !value)}>{showOverview ? "Hide overview" : "Overview"}</button>
       </div>
       <ReactFlow
         nodes={nodes}
         edges={edges}
         fitView
-        fitViewOptions={{ padding: 0.18 }}
+        fitViewOptions={{ padding: 0.14, includeHiddenNodes: false }}
         onNodeClick={handleClick}
         onNodeDragStop={handleNodeDragStop}
         nodesDraggable
         nodesConnectable={false}
         panOnScroll
-        minZoom={0.12}
+        minZoom={0.2}
         zoomOnDoubleClick={false}
+        onlyRenderVisibleElements
       >
         <GraphViewportController fitSignal={fitSignal} nodeCount={nodes.length} />
         <Background />
@@ -865,13 +870,19 @@ function TaskGraph({
 }
 
 function GraphViewportController({ fitSignal, nodeCount }: { fitSignal: number; nodeCount: number }) {
-  const { fitView } = useReactFlow();
+  const { fitView, setCenter, getNodes } = useReactFlow();
   useEffect(() => {
     const timeout = window.setTimeout(() => {
-      fitView({ duration: fitSignal > 0 ? 220 : 0, padding: 0.22 });
+      const nodes = getNodes();
+      const taskNode = nodes.find((node) => node.id === "task:active");
+      if (nodes.length <= 1 && taskNode) {
+        setCenter(taskNode.position.x + 130, taskNode.position.y + 44, { duration: 0, zoom: 1 });
+        return;
+      }
+      fitView({ duration: fitSignal > 0 ? 220 : 0, padding: 0.16, includeHiddenNodes: false });
     }, 80);
     return () => window.clearTimeout(timeout);
-  }, [fitSignal, fitView, nodeCount]);
+  }, [fitSignal, fitView, getNodes, nodeCount, setCenter]);
   return null;
 }
 
@@ -1708,11 +1719,12 @@ function toFlowGraph(
       .map((node) => node.id)
   );
 
-  const nodes = graph.nodes
-    .filter((node) => visible.has(node.id))
-    .map((node, index) => ({
+  const visibleNodes = graph.nodes.filter((node) => visible.has(node.id));
+  const layout = layoutGraphNodes(visibleNodes);
+  const nodes = visibleNodes
+    .map((node) => ({
       id: node.id,
-      position: nodePositions[node.id] || positionFor(index, node.type),
+      position: nodePositions[node.id] || layout[node.id],
       data: { label: nodeLabel(node) },
       className: `flow-node ${node.type} ${node.selected ? "selected" : ""} ${node.stale ? "stale" : ""} ${node.id === selectedId ? "active" : ""}`,
       dragHandle: ".node-drag-handle",
@@ -1731,6 +1743,66 @@ function toFlowGraph(
   return { nodes, edges };
 }
 
+function layoutGraphNodes(nodes: DashboardNode[]): Record<string, { x: number; y: number }> {
+  const layout: Record<string, { x: number; y: number }> = {};
+  const groups = {
+    task: nodes.filter((node) => node.type === "task"),
+    memory: nodes.filter((node) => node.type === "episode" || node.type === "procedure"),
+    selectedFiles: nodes.filter((node) => node.type === "file" && node.selected),
+    omittedFiles: nodes.filter((node) => node.type === "file" && !node.selected),
+    tests: nodes.filter((node) => node.type === "test"),
+    actions: nodes.filter((node) => node.type === "action"),
+    other: nodes.filter((node) => !["task", "episode", "procedure", "file", "test", "action"].includes(node.type))
+  };
+
+  placeStack(groups.task, layout, { x: 80, y: 230, rowGap: 118 });
+  placeStack(groups.memory, layout, { x: 80, y: 390, rowGap: 116 });
+  placeGrid(groups.selectedFiles, layout, { x: 390, y: 80, columns: 3, columnGap: 286, rowGap: 118 });
+
+  const selectedRows = Math.max(1, Math.ceil(groups.selectedFiles.length / 3));
+  placeGrid(groups.omittedFiles, layout, {
+    x: 390,
+    y: 80 + selectedRows * 118 + 78,
+    columns: 3,
+    columnGap: 286,
+    rowGap: 118
+  });
+
+  placeGrid([...groups.tests, ...groups.actions, ...groups.other], layout, {
+    x: 1260,
+    y: 100,
+    columns: 2,
+    columnGap: 286,
+    rowGap: 118
+  });
+
+  return layout;
+}
+
+function placeStack(
+  nodes: DashboardNode[],
+  layout: Record<string, { x: number; y: number }>,
+  options: { x: number; y: number; rowGap: number }
+) {
+  nodes.forEach((node, index) => {
+    layout[node.id] = { x: options.x, y: options.y + index * options.rowGap };
+  });
+}
+
+function placeGrid(
+  nodes: DashboardNode[],
+  layout: Record<string, { x: number; y: number }>,
+  options: { x: number; y: number; columns: number; columnGap: number; rowGap: number }
+) {
+  const columns = Math.max(1, options.columns);
+  nodes.forEach((node, index) => {
+    layout[node.id] = {
+      x: options.x + (index % columns) * options.columnGap,
+      y: options.y + Math.floor(index / columns) * options.rowGap
+    };
+  });
+}
+
 function nodeLabel(node: DashboardNode) {
   const detail = node.path || node.summary || node.type;
   return (
@@ -1745,14 +1817,6 @@ function nodeLabel(node: DashboardNode) {
       </div>
     </div>
   );
-}
-
-function positionFor(index: number, type: string) {
-  const lane = type === "task" ? 0 : type === "episode" || type === "procedure" ? -1 : type === "test" || type === "action" ? 1 : 0;
-  return {
-    x: 120 + (index % 5) * 285,
-    y: 240 + lane * 170 + Math.floor(index / 5) * 205
-  };
 }
 
 function findSelected(graph: DashboardGraph, selectedId: string): DashboardNode | DashboardEdge | null {
