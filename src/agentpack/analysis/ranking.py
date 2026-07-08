@@ -11,6 +11,7 @@ from typing import Any
 from agentpack.core.models import DependencyGraph, FileInfo
 from agentpack.core.config import ScoringWeights
 from agentpack.analysis.monorepo import workspace_for_path, workspace_tokens
+from agentpack.analysis.task_classifier import classify_task
 
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -238,6 +239,7 @@ class KeywordPlan:
     workspace_roots: tuple[str, ...] = ()
     task_kind: str = ""
     task_scope_terms: tuple[str, ...] = ()
+    task_class: str = "general"
 
 _IMPLEMENTATION_ROLE_TOKENS = {
     "api", "apis", "route", "routes", "router", "endpoint", "endpoints",
@@ -746,6 +748,7 @@ def build_keyword_plan(
         workspace_roots=tuple(workspace_roots or ()),
         task_kind=task_kind,
         task_scope_terms=task_scope_terms,
+        task_class=classify_task(task).kind,
     )
 
 
@@ -1100,20 +1103,33 @@ def _direct_content_evidence_bonus(reasons: list[str], content_hits: int) -> flo
         return 0.0
     if "filename keyword match" in reasons or "symbol keyword match" in reasons:
         return 0.0
-    has_direct_evidence = any(
+    strong_evidence = any(
         reason.startswith((
             "matched call:",
             "matched define:",
             "literal definition match:",
             "multi-token defines match",
             "matched entrypoint:",
-            "keyword phrase match:",
         ))
         for reason in reasons
     )
-    if not has_direct_evidence:
+    phrase_only_evidence = not strong_evidence and any(
+        reason.startswith("keyword phrase match:") for reason in reasons
+    )
+    if not strong_evidence and not phrase_only_evidence:
         return 0.0
     bonus = 120.0 + (50.0 * min(3, content_hits - 2))
+    if phrase_only_evidence:
+        # A bare phrase match (e.g. a generic tech-stack term like "spring
+        # boot") is much weaker evidence than an actual call/define/entrypoint
+        # match sourced from the file's own summary — it fires on any file
+        # that happens to mention the phrase, which build/config files do
+        # reliably regardless of what the task is actually about (a
+        # build.gradle for a Spring project always mentions "spring boot").
+        # Cap it low enough that phrase-only evidence can still contribute
+        # but can't alone push a generic file above real candidates that
+        # have symbol/filename/structural evidence.
+        bonus = min(bonus, 45.0)
     return min(270.0, bonus)
 
 
@@ -1132,7 +1148,19 @@ def _path_concrete_term_bonus(path: str, plan: KeywordPlan | None) -> float:
         return 0.0
     bonus = 70.0 + (35.0 * min(2, len(concrete_matches) - 2))
     if _is_config_file(path):
-        bonus += 105.0
+        # Config/build files (build.gradle, pom.xml, package.json, ...) get a
+        # large addon here because their path often legitimately matches
+        # concrete task terms (e.g. a task about "database migration" makes
+        # a config file's path terms line up). But on repos where a generic
+        # tech-stack phrase match is common in every build file (e.g. "spring
+        # boot" appearing in every Spring project's build.gradle), this addon
+        # let build files systematically outscore real source/test files even
+        # when the task has nothing to do with the build itself. Full addon
+        # is reserved for tasks that plausibly ARE about config/build/release;
+        # for everything else it's reduced so a config file only wins when it
+        # has genuinely strong evidence beyond the config-file bonus alone.
+        config_addon = 105.0 if plan.task_class in ("infra", "release") else 20.0
+        bonus += config_addon
     return min(210.0 if _is_config_file(path) else 150.0, bonus)
 
 
