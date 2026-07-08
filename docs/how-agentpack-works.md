@@ -66,7 +66,7 @@ what proof still needs to be checked.
 
 9. **Visualize**
 
-   `agentpack dashboard` turns the same local artifacts into a context cockpit. It writes a bundled React/Vite HTML view plus `.agentpack/dashboard-data.json` for the normalized snapshot and `.agentpack/dashboard-graph.json` for the task-scoped graph. The view is local-only, uses packaged assets, and keeps graph nodes tied to source paths, retrieve refs, risks, tests, memory evidence, and suggested next actions.
+   `agentpack dashboard` turns the same local artifacts into a served context cockpit at `127.0.0.1:8765`. The loopback-only Python server provides the normalized snapshot, task-scoped graph, and PTY-backed AgentPack command runner. The view uses packaged assets and keeps graph nodes tied to source paths, retrieve refs, risks, tests, memory evidence, integrations, and suggested next actions.
 
 10. **Measure**
 

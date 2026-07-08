@@ -5,6 +5,7 @@ import json
 from agentpack.core.config import LoopConfig
 from agentpack.core.loop_protocol import LoopCommandResult, initialize_loop, save_loop_state
 from agentpack.core.mcp_runtime import McpRuntimeCheck
+from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
 from agentpack.dashboard.collectors import build_project_dashboard_snapshot
 from agentpack.dashboard.models import (
     ContextHealth,
@@ -90,8 +91,6 @@ def test_dashboard_snapshot_is_json_safe() -> None:
 
 
 def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path, monkeypatch) -> None:
-    monkeypatch.setenv("HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("CODEX_HOME", str(tmp_path / "codex-home"))
     monkeypatch.setattr(
         "agentpack.dashboard.collectors.check_mcp_runtime",
         lambda **_kwargs: McpRuntimeCheck(
@@ -100,6 +99,7 @@ def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path, monkeypa
             detail="agentpack command not found on PATH",
         ),
     )
+    monkeypatch.setattr("agentpack.dashboard.collectors._mcp_registrations", lambda _root: [])
     snapshot = build_project_dashboard_snapshot(tmp_path)
 
     assert snapshot.project.name == tmp_path.name
@@ -140,19 +140,6 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch
                         "score": 120,
                         "tokens": 450,
                         "reasons": ["task keyword match", "related test"],
-                        "symbols": [
-                            {
-                                "name": "refresh_token",
-                                "kind": "function",
-                                "start_line": 12,
-                                "end_line": 24,
-                                "signature": "def refresh_token(user_id: str) -> Token",
-                                "summary": "Refreshes an expired auth token.",
-                                "node_id": "node:refresh-token",
-                                "signature_hash": "sig123",
-                                "source_hash": "filehash",
-                            }
-                        ],
                     }
                 ],
                 "task_map": {
@@ -185,62 +172,136 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch
     assert snapshot.context.packed_tokens == 1450
     assert snapshot.context.raw_tokens == 40000
     assert snapshot.selected_files[0].path == "src/auth/token.py"
-    assert snapshot.selected_files[0].symbols[0].name == "refresh_token"
-    assert snapshot.selected_files[0].symbols[0].start_line == 12
     assert snapshot.task_map[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].risk_level == "high"
     assert snapshot.mcp_health.status == "healthy"
     assert snapshot.mcp_health.registered is True
     assert "readiness" in snapshot.mcp_health.expected_tools
+    assert "agentpack_readiness()" not in " ".join(snapshot.mcp_health.remediation)
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8
 
 
-def test_project_dashboard_indexes_sibling_agentpack_projects(tmp_path) -> None:
-    current = tmp_path / "current"
-    sibling = tmp_path / "sibling"
-    for project in (current, sibling):
-        (project / ".agentpack").mkdir(parents=True)
-    (current / ".agentpack" / "task.md").write_text("fix current task\n", encoding="utf-8")
-    (current / ".agentpack" / "pack_metadata.json").write_text(
+def test_project_dashboard_includes_control_plane_sections(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (agentpack / "config.toml").write_text("[context]\ndefault_budget = 12000\ninclude_tests = false\n", encoding="utf-8")
+    (agentpack / "task.md").write_text("build dashboard control plane\n", encoding="utf-8")
+    (agentpack / "task_state.md").write_text("Status: in_progress\nSummary: wiring UI\n", encoding="utf-8")
+    (agentpack / "thread_index.jsonl").write_text(
         json.dumps(
             {
-                "task": "fix current task",
-                "token_estimate": 100,
-                "raw_tokens": 1000,
-                "saving_pct": 90,
-                "selected_files_meta": [{"path": "src/current.py"}],
-                "freshness": {"status": "fresh"},
+                "thread_id": "abc",
+                "task": "thread task",
+                "status": "active",
+                "branch": "main",
+                "worktree": str(tmp_path),
+                "selected_files": ["src/app.py"],
+                "dirty_files": ["tests/test_app.py"],
+                "updated_at": "2026-07-08T00:00:00+00:00",
             }
-        ),
+        )
+        + "\n",
         encoding="utf-8",
     )
-    (sibling / ".agentpack" / "task.md").write_text("fix sibling task\n", encoding="utf-8")
-    (sibling / ".agentpack" / "pack_metadata.json").write_text(
+    (agentpack / "task-starts.jsonl").write_text(
         json.dumps(
             {
-                "task": "fix sibling task",
-                "token_estimate": 200,
-                "raw_tokens": 2000,
-                "saving_pct": 90,
-                "selected_files_meta": [{"path": "src/sibling.py"}, {"path": "tests/test_sibling.py"}],
-                "freshness": {"status": "stale", "reason": "task changed"},
+                "task": "history task",
+                "thread": "hist-thread",
+                "agent": "codex",
+                "started_at": "2026-07-07T00:00:00+00:00",
+                "branch": "main",
+                "git_sha": "abcdef123456",
+                "context_path": ".agentpack/context.md",
+                "provenance": {"cwd": str(tmp_path)},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (agentpack / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-08T00:00:00+00:00",
+                "task": "memory task",
+                "thread": "mem-thread",
+                "stage": "finish",
+                "status": "done",
+                "summary": "finished",
+                "provenance": {"cwd": str(tmp_path)},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".cursor" / "rules").mkdir(parents=True)
+    (tmp_path / ".cursor" / "rules" / "agentpack.mdc").write_text("rule\n", encoding="utf-8")
+    indexed_repo = tmp_path.parent / "indexed-repo"
+    (indexed_repo / ".agentpack").mkdir(parents=True)
+    (indexed_repo / ".agentpack" / "config.toml").write_text("[context]\ndefault_budget = 8000\n", encoding="utf-8")
+    (tmp_path / "home" / ".agentpack").mkdir(parents=True)
+    (tmp_path / "home" / ".agentpack" / "projects.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "projects": [
+                    {
+                        "path": str(indexed_repo),
+                        "name": "indexed-repo",
+                        "last_seen_at": "2026-07-08T00:00:00+00:00",
+                    }
+                ],
             }
         ),
         encoding="utf-8",
     )
 
-    snapshot = build_project_dashboard_snapshot(current)
-    projects = {row.name: row for row in snapshot.project_index.projects}
+    snapshot = build_project_dashboard_snapshot(tmp_path)
 
-    assert snapshot.project_index.project_count == 2
-    assert snapshot.project_index.total_raw_tokens == 3000
-    assert snapshot.project_index.total_packed_tokens == 300
-    assert snapshot.project_index.estimated_saved_tokens == 2700
-    assert projects["current"].current is True
-    assert projects["current"].selected_files_count == 1
-    assert projects["sibling"].context_status == "stale"
-    assert projects["sibling"].selected_files_count == 2
-    assert projects["sibling"].open_command == f"cd {sibling} && agentpack dashboard --open"
+    context = next(section for section in snapshot.config.sections if section.name == "context")
+    budget = next(field for field in context.fields if field.key == "default_budget")
+    assert budget.value == 12000
+    assert budget.description
+    assert "context.default_budget" in snapshot.config.editable_fields
+    assert snapshot.task_control[0].task == "build dashboard control plane"
+    assert snapshot.task_control[0].state == "in_progress"
+    assert snapshot.thread_rows[0].thread_id == "abc"
+    assert snapshot.thread_rows[0].selected_count == 1
+    assert any(item.task == "history task" and item.thread_id == "hist-thread" for item in snapshot.task_history)
+    assert any(item.task == "memory task" and item.status == "done" for item in snapshot.task_history)
+    assert any(item.path == str(tmp_path) and item.current and item.valid for item in snapshot.projects)
+    assert any(item.path == str(indexed_repo.resolve()) and item.source == "global index" and item.valid for item in snapshot.projects)
+    assert any(item.label == "Cursor rule" and item.status == "present" for item in snapshot.integrations)
+    assert any(item.id == "guard_refresh" for item in snapshot.command_catalog)
+    assert any(item.path == ".agentpack/config.toml" and item.exists for item in snapshot.artifacts)
+
+
+def test_dashboard_config_update_only_allows_safe_fields(tmp_path) -> None:
+    summary = update_dashboard_config(tmp_path, {"context.default_budget": 16000, "skills.always_recommend": ["qa"]})
+
+    context = next(section for section in summary.sections if section.name == "context")
+    skills = next(section for section in summary.sections if section.name == "skills")
+    assert next(field for field in context.fields if field.key == "default_budget").value == 16000
+    assert next(field for field in skills.fields if field.key == "always_recommend").value == ["qa"]
+
+    try:
+        update_dashboard_config(tmp_path, {"scoring.modified": 1})
+    except DashboardActionError as exc:
+        assert "invalid config field" in str(exc)
+    else:
+        raise AssertionError("read-only config field should be rejected")
+
+
+def test_dashboard_action_builder_generates_agentpack_commands() -> None:
+    command = build_dashboard_action_command(
+        "set_task",
+        {"task": "fix auth", "thread": "global", "refresh": True, "mode": "balanced"},
+    )
+
+    assert command == "agentpack task set 'fix auth' --thread global --guard --mode balanced"
 
 
 def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
@@ -268,53 +329,6 @@ def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
 
     assert snapshot.learning_memories[0].task == "Fix cache ttl bug"
     assert snapshot.learning_memories[0].concepts == ["caching"]
-
-
-def test_project_dashboard_reads_review_runs(tmp_path) -> None:
-    agentpack = tmp_path / ".agentpack"
-    run_dir = agentpack / "reviews" / "pr-42" / "20260707T120000-abcd1234"
-    run_dir.mkdir(parents=True)
-    (run_dir / "understanding.toon").write_text("@root review_understanding\n", encoding="utf-8")
-    (run_dir / "preflight.json").write_text(
-        json.dumps(
-            {
-                "generated_at": "2026-07-07T12:00:00Z",
-                "review_context": "review auth PR",
-                "review": {
-                    "run_id": "20260707T120000-abcd1234",
-                    "branch_prefix": "pr-42",
-                    "scaffold": "strict",
-                    "target": {"number": 42, "url": "https://github.com/acme/repo/pull/42"},
-                },
-                "diff": {"source": "pr-target", "changed_files_count": 5},
-                "paths": {
-                    "run_dir": ".agentpack/reviews/pr-42/20260707T120000-abcd1234",
-                    "understanding_canonical_output": ".agentpack/reviews/pr-42/20260707T120000-abcd1234/understanding.toon",
-                    "findings_canonical_output": ".agentpack/reviews/pr-42/20260707T120000-abcd1234/findings.toon",
-                },
-            }
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    snapshot = build_project_dashboard_snapshot(tmp_path)
-    review = snapshot.review_runs[0]
-
-    assert review.run_id == "20260707T120000-abcd1234"
-    assert review.target_number == 42
-    assert review.changed_files_count == 5
-    assert review.status == "understanding_ready"
-    assert review.resume_command == "agentpack review --resume 20260707T120000-abcd1234"
-    assert any(action.command == review.resume_command for action in snapshot.suggested_actions)
-
-
-def test_project_dashboard_suggests_review_when_no_runs_exist(tmp_path) -> None:
-    (tmp_path / ".agentpack").mkdir()
-
-    snapshot = build_project_dashboard_snapshot(tmp_path)
-
-    assert any(action.command == "agentpack review --pr <number>" for action in snapshot.suggested_actions)
 
 
 def test_project_dashboard_reads_observer_summary(tmp_path) -> None:
@@ -374,46 +388,6 @@ def test_project_dashboard_summarizes_learning_weak_spots(tmp_path) -> None:
     assert snapshot.learning_weak_spots[0].mode == "quiz"
     assert snapshot.learning_weak_spots[0].latest_task == "Fix cache ttl bug"
     assert snapshot.learning_weak_spots[0].evidence_files == ["src/cache.py"]
-
-
-def test_project_dashboard_summarizes_learning_prep_sessions(tmp_path) -> None:
-    agentpack = tmp_path / ".agentpack"
-    agentpack.mkdir()
-    sessions = [
-        LearningSession(
-            task="Fix cache ttl bug",
-            request="interview me on last task",
-            mode="interview",
-            topic="Cache Correctness",
-            question="How would you explain TTL invalidation tradeoffs?",
-            expected_points=["TTL expires stale entries"],
-            evidence_files=["src/cache.py"],
-            concepts=["caching"],
-        ),
-        LearningSession(
-            task="Fix auth token refresh",
-            request="quiz me on last task",
-            mode="quiz",
-            topic="Authentication",
-            question="What breaks when refresh tokens expire early?",
-            status="done",
-            score=90,
-            evidence_files=["src/auth.py"],
-            concepts=["authentication"],
-        ),
-    ]
-    agentpack.joinpath("learning-sessions.jsonl").write_text(
-        "\n".join(json.dumps(session.model_dump(mode="json")) for session in sessions) + "\n",
-        encoding="utf-8",
-    )
-
-    snapshot = build_project_dashboard_snapshot(tmp_path)
-
-    assert snapshot.learning_prep.queued_count == 1
-    assert snapshot.learning_prep.completed_count == 1
-    assert snapshot.learning_prep.top_concepts[:2] == ["caching", "authentication"]
-    assert snapshot.learning_prep.sessions[0].question == "What breaks when refresh tokens expire early?"
-    assert snapshot.learning_prep.interview_command == 'agentpack learn "interview me on last task"'
 
 
 def test_project_dashboard_summarizes_skill_feedback(tmp_path) -> None:

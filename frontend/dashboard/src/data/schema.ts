@@ -1,14 +1,12 @@
 export type ContextStatus = "fresh" | "stale" | "missing" | "unknown";
-export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "review" | "action";
+export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "action";
 export type EdgeType =
-  | "contains"
   | "selected_because"
   | "omitted_because"
   | "imports"
   | "tested_by"
   | "memory_influenced"
   | "procedure_applies"
-  | "reviewed_by"
   | "may_break"
   | "retrieve_ref";
 
@@ -24,7 +22,6 @@ export interface DashboardAction {
   label: string;
   command?: string;
   kind?: string;
-  reason?: string;
 }
 
 export interface DashboardNode {
@@ -67,8 +64,6 @@ export interface DashboardGraph {
     omitted_files: number;
     memory_nodes: number;
     high_risk_files: number;
-    max_nodes?: number;
-    truncated_reason?: string;
     truncated: boolean;
   };
   nodes: DashboardNode[];
@@ -83,35 +78,6 @@ export interface DashboardSnapshot {
     path: string;
     branch?: string;
     git_sha?: string;
-  };
-  project_index: {
-    root_path?: string;
-    project_count?: number;
-    stale_count?: number;
-    missing_count?: number;
-    total_raw_tokens?: number;
-    total_packed_tokens?: number;
-    estimated_saved_tokens?: number;
-    average_saving_pct?: number;
-    projects?: Array<{
-      name: string;
-      path: string;
-      current?: boolean;
-      branch?: string;
-      git_sha?: string;
-      task?: string;
-      context_status?: ContextStatus;
-      packed_tokens?: number;
-      raw_tokens?: number;
-      saving_pct?: number;
-      selected_files_count?: number;
-      review_runs_count?: number;
-      memory_count?: number;
-      weak_spots_count?: number;
-      dashboard_path?: string;
-      open_command?: string;
-      refresh_command?: string;
-    }>;
   };
   task: {
     text?: string;
@@ -134,17 +100,6 @@ export interface DashboardSnapshot {
     score?: number;
     tokens?: number;
     reasons?: string[];
-    symbols?: Array<{
-      name: string;
-      kind?: string;
-      start_line?: number;
-      end_line?: number;
-      signature?: string;
-      summary?: string;
-      node_id?: string;
-      signature_hash?: string;
-      source_hash?: string;
-    }>;
   }>;
   task_map: Array<{
     path: string;
@@ -176,27 +131,6 @@ export interface DashboardSnapshot {
     latest_question?: string;
     evidence_files?: string[];
   }>;
-  learning_prep: {
-    queued_count?: number;
-    needs_review_count?: number;
-    completed_count?: number;
-    top_concepts?: string[];
-    sessions?: Array<{
-      task: string;
-      request?: string;
-      mode?: string;
-      topic?: string;
-      question?: string;
-      status?: string;
-      score?: number | null;
-      concepts?: string[];
-      evidence_files?: string[];
-      created_at?: string;
-    }>;
-    quiz_command?: string;
-    interview_command?: string;
-    failure_drill_command?: string;
-  };
   observer: {
     events?: number;
     insights?: Array<{
@@ -225,6 +159,10 @@ export interface DashboardSnapshot {
     expected_tools?: string[];
     remediation?: string[];
   };
+  threads?: {
+    active_count?: number;
+    conflicts?: Array<Record<string, unknown>>;
+  };
   benchmarks: {
     latest?: Record<string, unknown>;
     averages?: Record<string, number>;
@@ -233,27 +171,112 @@ export interface DashboardSnapshot {
   loop: {
     exists?: boolean;
     status?: string;
+    task?: string;
+    iteration?: number;
+    max_iterations?: number;
+    runner?: string;
     blocked_reason?: string;
     next_action?: string;
   };
-  review_runs: Array<{
-    run_id: string;
-    branch_prefix?: string;
-    generated_at?: string;
-    review_context?: string;
-    target_number?: number | null;
-    target_url?: string;
-    diff_source?: string;
-    changed_files_count?: number;
-    scaffold?: string;
-    status?: string;
-    run_dir?: string;
-    preflight_path?: string;
-    understanding_path?: string;
-    findings_path?: string;
-    resume_command?: string;
-    check_command?: string;
-    post_command?: string;
-  }>;
   suggested_actions: DashboardAction[];
+  config?: {
+    path?: string;
+    exists?: boolean;
+    valid?: boolean;
+    error?: string;
+    editable_fields?: string[];
+    sections?: Array<{
+      name: string;
+      fields: Array<{
+        section: string;
+        key: string;
+        value: unknown;
+        default?: unknown;
+        value_type?: string;
+        editable?: boolean;
+        source?: string;
+        description?: string;
+        allowed_values?: string[];
+        doc_ref?: string;
+      }>;
+    }>;
+  };
+  task_control?: Array<{
+    scope: "global" | "thread";
+    thread_id?: string | null;
+    task?: string;
+    task_path?: string;
+    state?: string;
+    state_path?: string;
+    status?: string;
+    summary?: string;
+    done?: boolean;
+    exists?: boolean;
+  }>;
+  thread_rows?: Array<{
+    thread_id: string;
+    task?: string;
+    status?: string;
+    summary?: string;
+    branch?: string;
+    updated_at?: string;
+    worktree?: string;
+    selected_count?: number;
+    dirty_count?: number;
+    conflicts?: string[];
+    overlap_files?: string[];
+    prune_eligible?: boolean;
+  }>;
+  integrations?: Array<{
+    agent: string;
+    label: string;
+    path: string;
+    exists?: boolean;
+    status?: string;
+    detail?: string;
+    repair_command?: string;
+  }>;
+  command_catalog?: Array<{
+    id: string;
+    group: string;
+    label: string;
+    command: string;
+    description?: string;
+    risk?: "low" | "medium" | "high";
+    confirm_required?: boolean;
+    primary?: boolean;
+  }>;
+  artifacts?: Array<{
+    label: string;
+    path: string;
+    exists?: boolean;
+    kind?: string;
+    modified_at?: string;
+    size?: number;
+    destination?: string;
+  }>;
+  projects?: Array<{
+    name: string;
+    path: string;
+    branch?: string;
+    git_sha?: string;
+    source?: string;
+    current?: boolean;
+    exists?: boolean;
+    valid?: boolean;
+    detail?: string;
+  }>;
+  task_history?: Array<{
+    task: string;
+    source: string;
+    observed_at?: string;
+    thread_id?: string;
+    agent?: string;
+    branch?: string;
+    git_sha?: string;
+    cwd?: string;
+    context_path?: string;
+    status?: string;
+    summary?: string;
+  }>;
 }

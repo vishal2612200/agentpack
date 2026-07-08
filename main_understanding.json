@@ -1,0 +1,208 @@
+{
+  "intent": {
+    "issue_ref": "#20",
+    "requirement": "Add a focused symbol-extraction slice for Rust, mirroring the existing regex-based Go extractor.",
+    "author_decisions": [
+      "extract_rust_symbols(path) in src/agentpack/analysis/symbols.py extracts: free functions (fn, including pub/pub(crate), async fn, const fn, unsafe fn, extern \"C\" fn), impl/trait methods qualified by their owning type (Type.method), and type constructs (kind=\"class\") — struct (named, tuple, and unit), enum, and trait.",
+      "A running brace-depth container stack attributes methods correctly, so impl Trait for Type assigns methods to the concrete Type, and both declared and defaulted trait methods are owned by the trait.",
+      "The language-neutral brace helper _go_symbol_end_line was renamed to _brace_block_end_line and shared with the Rust extractor. Go behavior is unchanged.",
+      "A small _rust_symbol_end_line helper returns single-line ends for body-less declarations (unit/tuple structs, ;-terminated trait method signatures) and brace-scans everything else.",
+      "rust added to the extract_symbols dispatcher (so naming_signals picks it up automatically).",
+      "New _rust_summary in src/agentpack/summaries/offline.py (uses the existing rust_imports extractor), plus a rust branch in summarize.",
+      "Additive change: no behavior change to existing languages. Rollback = revert the commit."
+    ]
+  },
+  "change_units": [
+    {
+      "id": "cu1",
+      "location": "src/agentpack/analysis/symbols.py:99-119",
+      "kind": "core",
+      "what_changed": "Added six compiled regex constants for Rust symbol patterns: _RUST_VIS (visibility prefix), _RUST_FN (function declarations including pub/async/const/unsafe/extern modifiers), _RUST_STRUCT, _RUST_ENUM, _RUST_TRAIT, _RUST_IMPL (captures concrete type name from `impl Type`, `impl<T> Type<T>`, or `impl Trait for Type`).",
+      "code": "_RUST_VIS = r\"(?:pub(?:\\s*\\([^)]*\\))?\\s+)?\"\n_RUST_FN = re.compile(\n    rf\"^{_RUST_VIS}(?:default\\s+)?(?:async\\s+)?(?:unsafe\\s+)?(?:const\\s+)?\"\n    r\"(?:extern\\s+\\\"[^\\\"]*\\\"\\s+)?fn\\s+(\\w+)\"\n)\n_RUST_STRUCT = re.compile(rf\"^{_RUST_VIS}struct\\s+(\\w+)\")\n_RUST_ENUM = re.compile(rf\"^{_RUST_VIS}enum\\s+(\\w+)\")\n_RUST_TRAIT = re.compile(rf\"^{_RUST_VIS}(?:unsafe\\s+)?trait\\s+(\\w+)\")\n_RUST_IMPL = re.compile(\n    r\"^impl(?:\\s*<[^>]*>)?\\s+(?:[\\w:]+(?:\\s*<[^>]*>)?\\s+for\\s+)?(\\w+)\"\n)",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": [
+        {
+          "pattern": "Go regex constants _GO_FUNC and _GO_TYPE defined at module level, same file",
+          "example_at": "src/agentpack/analysis/symbols.py:100-101"
+        }
+      ]
+    },
+    {
+      "id": "cu2",
+      "location": "src/agentpack/analysis/symbols.py:190-213",
+      "kind": "core",
+      "what_changed": "Renamed _go_symbol_end_line to _brace_block_end_line. Body is unchanged. Updated both call sites in extract_go_symbols (lines 171 and 185 in the diff) to use the new name.",
+      "code": "def _brace_block_end_line(lines: list[str], start_line: int) -> int:\n    depth = 0\n    saw_open = False\n    for index in range(start_line - 1, len(lines)):\n        line = lines[index]\n        depth += line.count(\"{\") - line.count(\"}\")\n        saw_open = saw_open or \"{\" in line\n        if saw_open and depth <= 0:\n            return index + 1\n    return start_line",
+      "referenced_symbols": [],
+      "callers": [
+        {
+          "at": "src/agentpack/analysis/symbols.py:171",
+          "call_site_behavior": "extract_go_symbols calls _brace_block_end_line(lines, i) for function/method end_line"
+        },
+        {
+          "at": "src/agentpack/analysis/symbols.py:185",
+          "call_site_behavior": "extract_go_symbols calls _brace_block_end_line(lines, i) for type (struct/interface) end_line"
+        },
+        {
+          "at": "src/agentpack/analysis/symbols.py:243",
+          "call_site_behavior": "_rust_symbol_end_line delegates to _brace_block_end_line for brace-delimited Rust items"
+        }
+      ],
+      "contracts_touched": [
+        "_go_symbol_end_line (private) -> renamed to _brace_block_end_line; signature and behavior unchanged"
+      ],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu3",
+      "location": "src/agentpack/analysis/symbols.py:215-286",
+      "kind": "core",
+      "what_changed": "Added _rust_symbol_end_line helper and extract_rust_symbols function. _rust_symbol_end_line returns start_line for body-less declarations (no '{' AND ends with ';'), else delegates to _brace_block_end_line. extract_rust_symbols iterates lines, maintains a depth counter and a containers stack of (owner_type, brace_depth_at_open). At each line: pops exhausted containers (depth <= their opening depth), determines owner. Matches fn first (creates Symbol with kind=method if owner else function), then impl (pushes to containers but creates no Symbol), then struct/enum/trait (creates kind=class Symbol; trait additionally pushes to containers). Depth is updated at end of each iteration with line.count('{') - line.count('}').",
+      "code": "def _rust_symbol_end_line(lines: list[str], start_line: int, signature: str) -> int:\n    if \"{\" not in signature and signature.rstrip().endswith(\";\"):\n        return start_line\n    return _brace_block_end_line(lines, start_line)\n\n\ndef extract_rust_symbols(path: Path) -> list[Symbol]:\n    try:\n        lines = path.read_text(errors=\"replace\").splitlines()\n    except OSError:\n        return []\n\n    symbols: list[Symbol] = []\n    depth = 0\n    containers: list[tuple[str, int]] = []\n\n    for i, line in enumerate(lines, 1):\n        stripped = line.strip()\n        while containers and depth <= containers[-1][1]:\n            containers.pop()\n        owner = containers[-1][0] if containers else None\n\n        fn_match = _RUST_FN.match(stripped)\n        impl_match = _RUST_IMPL.match(stripped)\n        if fn_match:\n            name = fn_match.group(1)\n            symbols.append(\n                Symbol(\n                    name=f\"{owner}.{name}\" if owner else name,\n                    kind=\"method\" if owner else \"function\",\n                    start_line=i,\n                    end_line=_rust_symbol_end_line(lines, i, stripped),\n                    signature=stripped[:120],\n                    body=\"\\n\".join(lines[i - 1 : min(i + 49, len(lines))]),\n                )\n            )\n        elif impl_match:\n            containers.append((impl_match.group(1), depth))\n        else:\n            for pattern, type_kind in ((_RUST_STRUCT, \"struct\"), (_RUST_ENUM, \"enum\"), (_RUST_TRAIT, \"trait\")):\n                type_match = pattern.match(stripped)\n                if type_match:\n                    name = type_match.group(1)\n                    symbols.append(\n                        Symbol(\n                            name=name,\n                            kind=\"class\",\n                            start_line=i,\n                            end_line=_rust_symbol_end_line(lines, i, stripped),\n                            signature=stripped[:120],\n                            summary=f\"Rust {type_kind}\",\n                            body=\"\\n\".join(lines[i - 1 : min(i + 49, len(lines))]),\n                        )\n                    )\n                    if type_kind == \"trait\":\n                        containers.append((name, depth))\n                    break\n\n        depth += line.count(\"{\") - line.count(\"}\")\n\n    return symbols",
+      "referenced_symbols": [
+        {
+          "name": "Symbol",
+          "defined_at": "src/agentpack/core/models.py",
+          "signature": "class Symbol(BaseModel): name: str; kind: str; start_line: int; end_line: int; signature: str; summary: str | None; body: str | None",
+          "code": "(not inlined — model class in models.py)",
+          "confidence": "high"
+        },
+        {
+          "name": "_brace_block_end_line",
+          "defined_at": "src/agentpack/analysis/symbols.py:190",
+          "signature": "def _brace_block_end_line(lines: list[str], start_line: int) -> int",
+          "code": "(see cu2)",
+          "confidence": "high"
+        },
+        {
+          "name": "_RUST_FN, _RUST_IMPL, _RUST_STRUCT, _RUST_ENUM, _RUST_TRAIT",
+          "defined_at": "src/agentpack/analysis/symbols.py:102-119",
+          "signature": "compiled re.Pattern objects",
+          "code": "(see cu1)",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/analysis/symbols.py:291",
+          "call_site_behavior": "extract_symbols dispatcher calls extract_rust_symbols(path) when language == 'rust'"
+        },
+        {
+          "at": "src/agentpack/summaries/offline.py:230",
+          "call_site_behavior": "_rust_summary calls extract_rust_symbols(abs_path) to populate symbols field"
+        },
+        {
+          "at": "src/agentpack/analysis/naming_signals.py:91",
+          "call_site_behavior": "collect_public_name_candidates calls extract_symbols(path, language) which now routes to extract_rust_symbols for rust"
+        }
+      ],
+      "contracts_touched": [
+        "extract_symbols(path, language='rust'): [] (falls through to empty) -> extract_rust_symbols(path) return"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "extract_go_symbols uses same brace-depth scan pattern, same Symbol fields, same 50-line body slice",
+          "example_at": "src/agentpack/analysis/symbols.py:142-180"
+        }
+      ]
+    },
+    {
+      "id": "cu4",
+      "location": "src/agentpack/summaries/offline.py:12-30",
+      "kind": "core",
+      "what_changed": "Added import of extract_rust_symbols from analysis.symbols and rust_imports from analysis.rust_imports. Added rust branch in summarize() dispatcher calling _rust_summary. Added _rust_summary function (lines 227-294 in the PR diff) as near-exact mirror of _go_summary with language='rust', using rust_imports extractor.",
+      "code": "from agentpack.analysis.symbols import extract_python_symbols, extract_js_symbols, extract_go_symbols, extract_rust_symbols\nfrom agentpack.analysis.rust_imports import extract_imports as rust_imports\n\ndef summarize(...):\n    ...\n    if language == \"rust\":\n        return _rust_summary(path, abs_path, file_hash)\n    return _generic_summary(path, abs_path, language, file_hash)\n\ndef _rust_summary(path: str, abs_path: Path, file_hash: str) -> FileSummary:\n    text = _read_sample(abs_path)\n    imports = rust_imports(abs_path, text=text)\n    symbols = extract_rust_symbols(abs_path)\n    intel = extract_code_intelligence(path=path, language=\"rust\", text=text, symbols=symbols)\n    effects = extract_side_effects(path=path, language=\"rust\", text=text, imports=imports)\n    role_info = infer_role_domain(path=path, language=\"rust\", symbols=symbols, imports=imports, text=text,\n        entrypoints=intel.entrypoints, external_systems=effects.external_systems)\n    role = role_info.role or _infer_responsibility(path, intel.defines)\n    failure_hints = extract_failure_hints(text)\n    public_api = _dedupe([*_infer_public_api(path, intel.defines, text), *intel.entrypoints])[:12]\n    test_hints = _infer_test_hints(path, role, intel.defines)\n    return FileSummary(path=path, hash=file_hash, language=\"rust\", provider=\"offline\",\n        schema_version=SUMMARY_SCHEMA_VERSION, ...)",
+      "referenced_symbols": [
+        {
+          "name": "rust_imports (extract_imports)",
+          "defined_at": "src/agentpack/analysis/rust_imports.py:14",
+          "signature": "def extract_imports(path: Path, text: str | None = None) -> list[str]",
+          "code": "(not inlined — pre-existing extractor)",
+          "confidence": "high"
+        },
+        {
+          "name": "_go_summary",
+          "defined_at": "src/agentpack/summaries/offline.py:164",
+          "signature": "def _go_summary(path: str, abs_path: Path, file_hash: str) -> FileSummary",
+          "code": "(see offline.py:164-224 — _rust_summary is a near-exact mirror)",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/summaries/offline.py:25",
+          "call_site_behavior": "summarize() dispatcher calls _rust_summary(path, abs_path, file_hash) when language == 'rust'"
+        }
+      ],
+      "contracts_touched": [
+        "summarize(path, abs_path, language='rust', file_hash): falls through to _generic_summary -> now returns _rust_summary FileSummary with language='rust', provider='offline', populated symbols/imports/defines/public_api"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "_go_summary structure with same FileSummary field population",
+          "example_at": "src/agentpack/summaries/offline.py:164"
+        }
+      ]
+    },
+    {
+      "id": "cu5",
+      "location": "tests/test_symbols.py:141-241",
+      "kind": "core",
+      "what_changed": "Added three test functions: test_rust_struct_function_and_impl_method_symbols (struct named/tuple/unit, async fn, const fn, impl methods qualified by type), test_rust_enum_trait_and_impl_trait_for_type (enum, trait with declared+defaulted methods, impl Trait for Type), test_rust_invalid_or_empty_source (returns [] for comment-only/invalid source). Also updated import line to add extract_rust_symbols.",
+      "code": "(see PR diff for full test bodies)",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu6",
+      "location": "tests/test_offline_intelligence.py:191-228",
+      "kind": "core",
+      "what_changed": "Added test_rust_summary_extracts_imports_symbols_and_public_api. Writes a minimal Rust source file with use imports, struct, impl block with pub fn new, and free function build_server. Asserts language='rust', provider='offline', imports contain 'std' and 'tokio', symbols contain 'Server', 'Server.new', 'build_server', defines contain 'build_server' and 'Server.new', public_api contains 'build_server', summary first line is 'Language: Rust'.",
+      "code": "(see PR diff)",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu7",
+      "location": "docs/limitations.md:111",
+      "kind": "incidental",
+      "what_changed": "Updated Symbol extraction bullet to describe the Rust slice accurately, noting it is regex-based and does not resolve macro-generated items.",
+      "code": "(see PR diff)",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu8",
+      "location": "CHANGELOG.md:12",
+      "kind": "incidental",
+      "what_changed": "Added Unreleased entry for the Rust symbol extraction slice.",
+      "code": "(see PR diff)",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    }
+  ],
+  "open_questions": [
+    {
+      "unit": "cu3",
+      "question": "Does the container pop condition `depth <= containers[-1][1]` correctly handle the case where depth transiently goes negative (e.g. unbalanced braces in string literals or comments in Rust source)? The brace counter uses raw line.count('{') - line.count('}') without filtering strings or comments.",
+      "matters_because": "Macro invocations, string literals, and doc comments containing braces could cause depth to undercount or overcount, leading to premature container pops and incorrect method attribution. The author acknowledges regex-based limits in docs/limitations.md.",
+      "status": "unresolved"
+    },
+    {
+      "unit": "cu3",
+      "question": "Does _RUST_FN match on lines that are comments or string literals (e.g. a doc comment containing 'fn foo')? The regex matches against stripped line text without filtering for '//' or '#' prefixes.",
+      "matters_because": "A line like '// pub fn example() could appear in Rust source and would be stripped to 'pub fn example()...' — however stripping removes leading whitespace not comment markers, so '// pub fn' stripped is still '// pub fn' which does NOT match _RUST_FN (starts with //). For lines that are NOT commented (no // prefix), the regex is safe.",
+      "status": "unresolved"
+    }
+  ]
+}

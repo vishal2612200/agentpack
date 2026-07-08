@@ -1063,30 +1063,10 @@ def _selected_file_metadata(selected: list[SelectedFile], task_map: dict[str, An
             "why": sf.reasons[0] if sf.reasons else "",
             "reasons": sf.reasons,
             "tokens": _sf_tokens(sf),
-            "symbols": _selected_symbol_metadata(sf),
             **_selected_task_map_metadata(task_map or {}, sf.path),
         }
         for sf in selected
     ]
-
-
-def _selected_symbol_metadata(sf: SelectedFile) -> list[dict[str, Any]]:
-    rows: list[dict[str, Any]] = []
-    for sym in sf.symbols[:20]:
-        rows.append(
-            {
-                "name": sym.name,
-                "kind": sym.kind,
-                "start_line": sym.start_line,
-                "end_line": sym.end_line,
-                "signature": sym.signature or "",
-                "summary": sym.summary or "",
-                "node_id": sym.node_id,
-                "signature_hash": sym.signature_hash,
-                "source_hash": sym.source_hash or sf.source_hash or "",
-            }
-        )
-    return rows
 
 
 def _selected_task_map_metadata(task_map: dict[str, Any], path: str) -> dict[str, Any]:

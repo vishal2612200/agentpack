@@ -1,0 +1,490 @@
+{
+  "intent": {
+    "issue_ref": null,
+    "requirement": "Add a reusable TOON validation surface for agent-facing artifacts, exposed via both CLI (agentpack toon-validate) and MCP (validate_toon), backed by shared core helpers. Add on-demand Task Coach mode to agentpack learn, backed by task memory, with session recording and dashboard integration.",
+    "author_decisions": [
+      "Keeps validation syntax-focused and schema-free so it can be used outside the review workflow.",
+      "By default the validator requires @format toon as the first non-empty line. Use --allow-missing-format only for legacy files.",
+      "Wrap invalid JSON scalar parse errors as ToonParseError.",
+      "Plain agentpack work stays on the fast path: it writes the task, refreshes context, records a bounded task_memory event, and returns. It does not generate lessons, render dashboards, call providers, or block the coding agent on coach output."
+    ]
+  },
+  "change_units": [
+    {
+      "id": "cu1",
+      "location": "src/agentpack/core/toon_parser.py:494-499",
+      "kind": "core",
+      "what_changed": "Wraps the bare json.loads call in _parse_scalar in a try/except that re-raises json.JSONDecodeError as ToonParseError.",
+      "code": "if value.startswith(('\"', '{', '[')):\n    try:\n        return json.loads(value)\n    except json.JSONDecodeError as exc:\n        raise ToonParseError(f\"invalid JSON scalar: {exc.msg}\") from exc",
+      "referenced_symbols": [
+        {
+          "name": "ToonParseError",
+          "defined_at": "src/agentpack/core/toon_parser.py:9",
+          "signature": "class ToonParseError(ValueError): pass",
+          "code": "class ToonParseError(ValueError):\n    pass",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/core/toon_validator.py:552-560",
+          "call_site_behavior": "validate_toon_text calls parse_toon(text) inside a bare except Exception block; ToonParseError (a ValueError) is caught by that block and returned as ToonValidationResult(ok=False, error=str(exc))."
+        }
+      ],
+      "contracts_touched": [
+        "_parse_scalar: previously propagated json.JSONDecodeError uncaught -> now raises ToonParseError for invalid JSON scalars"
+      ],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu2",
+      "location": "src/agentpack/core/toon_validator.py:1-86",
+      "kind": "core",
+      "what_changed": "New module. Defines ToonValidationResult frozen dataclass with ok/source/root/parsed_type/error/warnings fields. Defines validate_toon_text (text -> ToonValidationResult), validate_toon_file (Path -> ToonValidationResult), _has_format_directive (checks first non-empty line == '@format toon'), and _root_directive (scans all lines for first @root directive).",
+      "code": "@dataclass(frozen=True)\nclass ToonValidationResult:\n    ok: bool\n    source: str\n    root: str | None = None\n    parsed_type: str | None = None\n    error: str = \"\"\n    warnings: list[str] = field(default_factory=list)\n\n    def as_dict(self) -> dict[str, Any]: ...\n\ndef validate_toon_text(text: str, *, source: str = \"<string>\", require_format: bool = True) -> ToonValidationResult:\n    warnings: list[str] = []\n    root = _root_directive(text)\n    if require_format and not _has_format_directive(text):\n        return ToonValidationResult(ok=False, source=source, root=root, error=\"missing required @format toon directive\")\n    if not require_format and not _has_format_directive(text):\n        warnings.append(\"missing @format toon directive\")\n    try:\n        payload = parse_toon(text)\n    except Exception as exc:\n        return ToonValidationResult(ok=False, source=source, root=root, error=str(exc), warnings=warnings)\n    return ToonValidationResult(ok=True, source=source, root=root, parsed_type=type(payload).__name__, warnings=warnings)\n\ndef validate_toon_file(path: Path, *, require_format: bool = True) -> ToonValidationResult:\n    try:\n        text = path.read_text(encoding=\"utf-8\")\n    except OSError as exc:\n        return ToonValidationResult(ok=False, source=str(path), error=f\"unable to read file: {exc}\")\n    return validate_toon_text(text, source=str(path), require_format=require_format)\n\ndef _has_format_directive(text: str) -> bool:\n    for raw in text.splitlines():\n        line = raw.strip().lower()\n        if not line:\n            continue\n        return line == \"@format toon\"\n    return False\n\ndef _root_directive(text: str) -> str | None:\n    for raw in text.splitlines():\n        line = raw.strip()\n        if line.startswith(\"@root \"):\n            root = line.removeprefix(\"@root \").strip()\n            return root or None\n    return None",
+      "referenced_symbols": [
+        {
+          "name": "parse_toon",
+          "defined_at": "src/agentpack/core/toon_parser.py:13",
+          "signature": "def parse_toon(text: str) -> Any",
+          "code": "def parse_toon(text: str) -> Any:\n    parser = _ToonParser(text)\n    return parser.parse()",
+          "confidence": "high"
+        },
+        {
+          "name": "ToonParseError",
+          "defined_at": "src/agentpack/core/toon_parser.py:9",
+          "signature": "class ToonParseError(ValueError): pass",
+          "code": "class ToonParseError(ValueError):\n    pass",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/commands/toon_validate.py:24",
+          "call_site_behavior": "CLI command calls validate_toon_file(path, require_format=not allow_missing_format); uses result.ok to set exit code and displays result.error/result.warnings."
+        },
+        {
+          "at": "src/agentpack/mcp_server.py:607",
+          "call_site_behavior": "_validate_toon_impl calls validate_toon_file(target, require_format=require_format) for path-based validation; result.as_dict() passed to to_llm."
+        },
+        {
+          "at": "src/agentpack/mcp_server.py:609",
+          "call_site_behavior": "_validate_toon_impl calls validate_toon_text(content, source='<content>', require_format=require_format) for inline content; result.as_dict() passed to to_llm."
+        }
+      ],
+      "contracts_touched": [
+        "New public API: validate_toon_text(text, *, source, require_format) -> ToonValidationResult",
+        "New public API: validate_toon_file(path, *, require_format) -> ToonValidationResult"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "_compress_output_impl returns a string via to_llm with a structured payload dict",
+          "example_at": "src/agentpack/mcp_server.py:569-585"
+        }
+      ]
+    },
+    {
+      "id": "cu3",
+      "location": "src/agentpack/commands/toon_validate.py:1-38",
+      "kind": "core",
+      "what_changed": "New CLI command module. Registers 'toon-validate' command with path argument, --format (plain|json), --allow-missing-format flag. Calls validate_toon_file; exits 1 on invalid result.",
+      "code": "def register(app: typer.Typer) -> None:\n    @app.command(\"toon-validate\")\n    def toon_validate(\n        path: Path = typer.Argument(..., help=\"TOON file to validate.\"),\n        output_format: str = typer.Option(\"plain\", \"--format\", help=\"Output format: plain|json.\"),\n        allow_missing_format: bool = typer.Option(False, \"--allow-missing-format\", help=\"Allow files without @format toon.\"),\n    ) -> None:\n        if output_format not in {\"plain\", \"json\"}:\n            console.print(\"[red]Invalid format. Use plain|json.[/]\")\n            raise typer.Exit(1)\n        result = validate_toon_file(path, require_format=not allow_missing_format)\n        if output_format == \"json\":\n            typer.echo(json.dumps(result.as_dict(), indent=2))\n        elif result.ok:\n            root = f\" root={result.root}\" if result.root else \"\"\n            console.print(f\"[green]✓[/] valid TOON: {path}{root}\")\n            for warning in result.warnings:\n                console.print(f\"[yellow]warning:[/] {warning}\")\n        else:\n            console.print(f\"[red]invalid TOON:[/] {path}: {result.error}\")\n            for warning in result.warnings:\n                console.print(f\"[yellow]warning:[/] {warning}\")\n        if not result.ok:\n            raise typer.Exit(1)",
+      "referenced_symbols": [
+        {
+          "name": "validate_toon_file",
+          "defined_at": "src/agentpack/core/toon_validator.py:63",
+          "signature": "def validate_toon_file(path: Path, *, require_format: bool = True) -> ToonValidationResult",
+          "code": "def validate_toon_file(path: Path, *, require_format: bool = True) -> ToonValidationResult:\n    try:\n        text = path.read_text(encoding=\"utf-8\")\n    except OSError as exc:\n        return ToonValidationResult(ok=False, source=str(path), error=f\"unable to read file: {exc}\")\n    return validate_toon_text(text, source=str(path), require_format=require_format)",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/cli.py:45,81",
+          "call_site_behavior": "cli.py imports and registers the toon_validate module in the app loop alongside other command modules."
+        }
+      ],
+      "contracts_touched": [
+        "New CLI surface: agentpack toon-validate <path> [--format plain|json] [--allow-missing-format]"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "other command modules register via def register(app: typer.Typer)",
+          "example_at": "src/agentpack/commands/init.py:1"
+        }
+      ]
+    },
+    {
+      "id": "cu4",
+      "location": "src/agentpack/mcp_server.py:571-651",
+      "kind": "core",
+      "what_changed": "Adds _validate_toon_impl function and validate_toon MCP tool. _validate_toon_impl guards: if bool(content)==bool(path) returns error payload; elif path, resolves to root-relative and checks .relative_to(root.resolve()); else calls validate_toon_text on content. MCP tool exposes content, path, require_format, format params.",
+      "code": "def _validate_toon_impl(\n    root: Path,\n    *,\n    content: str = \"\",\n    path: str = \"\",\n    require_format: bool = True,\n    output_format: StructuredFormat = \"auto\",\n) -> str:\n    from agentpack.core.toon_validator import validate_toon_file, validate_toon_text\n    if bool(content) == bool(path):\n        payload = {\"ok\": False, \"source\": path or \"<string>\", \"root\": None, \"parsed_type\": None,\n                   \"error\": \"provide exactly one of content or path\", \"warnings\": []}\n    elif path:\n        target = (root / path).resolve()\n        try:\n            target.relative_to(root.resolve())\n        except ValueError:\n            payload = {\"ok\": False, \"source\": path, \"root\": None, \"parsed_type\": None,\n                       \"error\": \"path must stay inside repo root\", \"warnings\": []}\n        else:\n            payload = validate_toon_file(target, require_format=require_format).as_dict()\n    else:\n        payload = validate_toon_text(content, source=\"<content>\", require_format=require_format).as_dict()\n    return to_llm(root, payload, requested=output_format, root_name=\"agentpack_toon_validation\")\n\n@mcp.tool()\ndef validate_toon(content: str = \"\", path: str = \"\", require_format: bool = True, format: str = \"auto\") -> str:\n    return _validate_toon_impl(_repo_root(), content=content, path=path, require_format=require_format, output_format=format)",
+      "referenced_symbols": [
+        {
+          "name": "to_llm",
+          "defined_at": "src/agentpack/core/structured_format.py:1",
+          "signature": "to_llm(root, payload, *, requested, root_name) -> str",
+          "code": "",
+          "confidence": "medium"
+        },
+        {
+          "name": "_repo_root",
+          "defined_at": "src/agentpack/mcp_server.py:1",
+          "signature": "_repo_root() -> Path",
+          "code": "",
+          "confidence": "medium"
+        }
+      ],
+      "callers": [],
+      "contracts_touched": [
+        "New MCP tool: validate_toon(content='', path='', require_format=True, format='auto') -> str"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "path traversal guard pattern using .resolve() and .relative_to()",
+          "example_at": "src/agentpack/mcp_server.py:607-619"
+        }
+      ]
+    },
+    {
+      "id": "cu5",
+      "location": "src/agentpack/learning/task_memory.py:1-157",
+      "kind": "core",
+      "what_changed": "New module. record_task_memory appends bounded task facts to session-events.jsonl via record_event. build_task_memory_payload assembles git state (dirty_files, current_branch, current_sha), selected_files from pack metadata, and inferred concepts. recent_task_memories and latest_task_memory read task_memory events. learning_inputs_from_memory converts a task_memory dict to LearningInputs using concept_hint (joined concepts string) as the diffs value for each changed file.",
+      "code": "def record_task_memory(root, *, task, stage, status, thread='', summary='', loop_summary=None):\n    payload = build_task_memory_payload(root, task=task, stage=stage, status=status,\n                                        thread=thread, summary=summary, loop_summary=loop_summary)\n    record_event(root, 'task_memory', payload)\n\ndef build_task_memory_payload(root, *, task, stage, status, thread='', summary='', loop_summary=None):\n    changed = sorted(git.dirty_files(root))[:MAX_PATHS] if git.is_git_repo(root) else []\n    selected = _selected_files(root)[:MAX_SELECTED]\n    branch = git.current_branch(root) if git.is_git_repo(root) else None\n    sha = git.current_sha(root) if git.is_git_repo(root) else None\n    concepts = _infer_concepts(task, changed, selected)\n    tests = [path for path in changed if path.startswith('tests/') or '/test' in path][:10]\n    payload = {\n        'task': _clip(task, MAX_TASK_CHARS),\n        'stage': stage, 'status': status, 'thread': _clip(thread, 120),\n        'summary': _clip(summary, MAX_SUMMARY_CHARS),\n        'cwd': str(root),  # duplicated below in provenance\n        'branch': branch or '', 'git_sha': sha or '',\n        'changed_files': changed, 'selected_files': selected,\n        'concepts': concepts, 'tests': tests,\n        'provenance': {'cwd': str(root), 'branch': branch or '', 'git_sha': sha or ''},\n    }\n    if loop_summary:\n        payload['loop'] = {...}\n    return payload\n\ndef learning_inputs_from_memory(memory):\n    task = str(memory.get('task') or 'Recent task')\n    changed_files = {path: 'modified' for path in _str_list(memory.get('changed_files'))}\n    concept_hint = ' '.join(_str_list(memory.get('concepts')))\n    return LearningInputs(\n        task=task, since=None,\n        changed_files=changed_files,\n        diffs={path: concept_hint for path in changed_files},\n        selected_files=_str_list(memory.get('selected_files')),\n    )",
+      "referenced_symbols": [
+        {
+          "name": "record_event",
+          "defined_at": "src/agentpack/session/events.py:13",
+          "signature": "def record_event(root: Path, event_type: str, payload: dict[str, Any] | None = None, *, output_path: str = DEFAULT_EVENTS_PATH) -> None",
+          "code": "def record_event(root, event_type, payload=None, *, output_path=DEFAULT_EVENTS_PATH):\n    path = root / output_path\n    path.parent.mkdir(parents=True, exist_ok=True)\n    event = {'type': event_type, 'timestamp': ..., **(payload or {})}\n    with path.open('a', encoding='utf-8') as f:\n        f.write(json.dumps(event, sort_keys=True, separators=(',', ':')) + '\\n')",
+          "confidence": "high"
+        },
+        {
+          "name": "read_events",
+          "defined_at": "src/agentpack/session/events.py:31",
+          "signature": "def read_events(root: Path, *, output_path: str = DEFAULT_EVENTS_PATH, limit: int = 200) -> list[dict[str, Any]]",
+          "code": "def read_events(root, *, output_path=DEFAULT_EVENTS_PATH, limit=200):\n    path = root / output_path\n    if not path.exists(): return []\n    rows = []\n    for line in path.read_text(encoding='utf-8').splitlines()[-limit:]:\n        ...\n    return rows",
+          "confidence": "high"
+        },
+        {
+          "name": "load_pack_metadata",
+          "defined_at": "src/agentpack/core/context_pack.py:1",
+          "signature": "load_pack_metadata(root: Path) -> dict | None",
+          "code": "",
+          "confidence": "medium"
+        },
+        {
+          "name": "LearningInputs",
+          "defined_at": "src/agentpack/learning/collector.py:13",
+          "signature": "class LearningInputs: task: str; changed_files: dict[str, str]; since: ...; diffs: dict[str, str]; selected_files: list[str]",
+          "code": "@dataclass\nclass LearningInputs:\n    task: str\n    changed_files: dict[str, str]\n    since: ...\n    diffs: dict[str, str] = field(default_factory=dict)\n    selected_files: list[str] = field(default_factory=list)",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/commands/workflow_cmd.py:413-420",
+          "call_site_behavior": "_record_task_memory_safe calls record_task_memory at work_start stage."
+        },
+        {
+          "at": "src/agentpack/commands/workflow_cmd.py:428-436",
+          "call_site_behavior": "_record_task_memory_safe calls record_task_memory at work_loop stage with loop_summary."
+        },
+        {
+          "at": "src/agentpack/commands/workflow_cmd.py:444-451",
+          "call_site_behavior": "_record_task_memory_safe calls record_task_memory at finish stage."
+        },
+        {
+          "at": "src/agentpack/commands/learn.py:144",
+          "call_site_behavior": "latest_task_memory(root) called to check for task_memory event when learning_request is non-empty."
+        },
+        {
+          "at": "src/agentpack/dashboard/collectors.py:613-621",
+          "call_site_behavior": "recent_task_memories(root, limit=6) called in _learning_memories to populate dashboard LearningMemory rows."
+        }
+      ],
+      "contracts_touched": [
+        "New: record_task_memory writes 'task_memory' events to session-events.jsonl",
+        "New: recent_task_memories / latest_task_memory read those events back"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "record_event used throughout for session telemetry",
+          "example_at": "src/agentpack/commands/learn.py:111"
+        }
+      ]
+    },
+    {
+      "id": "cu6",
+      "location": "src/agentpack/commands/workflow_cmd.py:293-331,413-454",
+      "kind": "core",
+      "what_changed": "Adds _record_task_memory_safe helper (catches all Exception, returns silently) and calls it at three points: after 'start' stage (work_start), after loop (work_loop with loop_summary), and after finish (finish). Imports record_task_memory from learning.task_memory.",
+      "code": "def _record_task_memory_safe(root, *, task, stage, status, thread='', summary='', loop_summary=None):\n    try:\n        record_task_memory(root, task=task, stage=stage, status=status,\n                           thread=thread, summary=summary, loop_summary=loop_summary)\n    except Exception:\n        return",
+      "referenced_symbols": [
+        {
+          "name": "record_task_memory",
+          "defined_at": "src/agentpack/learning/task_memory.py:30",
+          "signature": "def record_task_memory(root: Path, *, task: str, stage: str, status: str, thread: str = '', summary: str = '', loop_summary: dict | None = None) -> None",
+          "code": "",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/commands/workflow_cmd.py:413,428,444",
+          "call_site_behavior": "Called inline in the work/loop/finish flow; never awaited or checked for return value."
+        }
+      ],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu7",
+      "location": "src/agentpack/learning/sessions.py:1-139",
+      "kind": "core",
+      "what_changed": "New module. record_learning_sessions persists queued coach questions from a LearningReport to .agentpack/learning-sessions.jsonl (append). sessions_from_report flattens report.learning_topics[].questions into LearningSession objects up to MAX_SESSIONS_PER_RUN=12. read_learning_sessions reads up to limit rows from the file. summarize_weak_spots aggregates sessions where score<70 or status in {queued, needs_review} into concept buckets sorted by count.",
+      "code": "SESSIONS_PATH = '.agentpack/learning-sessions.jsonl'\nMAX_SESSION_ROWS = 500\nMAX_SESSIONS_PER_RUN = 12\n\ndef record_learning_sessions(root, report, *, path=SESSIONS_PATH):\n    if not report.learning_request: return 0\n    sessions = sessions_from_report(report)\n    if not sessions: return 0\n    output = root / path\n    try:\n        output.parent.mkdir(parents=True, exist_ok=True)\n        with output.open('a', encoding='utf-8') as fh:\n            for session in sessions:\n                fh.write(json.dumps(session.model_dump(mode='json'), sort_keys=True) + '\\n')\n    except OSError: return 0\n    return len(sessions)\n\ndef sessions_from_report(report):\n    sessions = []\n    for topic in report.learning_topics:\n        for question in topic.questions:\n            sessions.append(LearningSession(...))\n            if len(sessions) >= MAX_SESSIONS_PER_RUN: return sessions\n    return sessions\n\ndef read_learning_sessions(root, *, limit=50, path=SESSIONS_PATH):\n    lines = source.read_text(encoding='utf-8').splitlines()\n    for line in lines[-min(max(limit * 3, limit), MAX_SESSION_ROWS):]:\n        ...\n    return sessions[-limit:]\n\ndef summarize_weak_spots(root, *, limit=6):\n    sessions = read_learning_sessions(root, limit=MAX_SESSION_ROWS)\n    ...",
+      "referenced_symbols": [
+        {
+          "name": "LearningSession",
+          "defined_at": "src/agentpack/learning/models.py:1",
+          "signature": "class LearningSession(BaseModel): task, request, mode, topic, question, expected_points, evidence_files, concepts, answer, score, status, source, created_at",
+          "code": "class LearningSession(BaseModel):\n    task: str\n    request: str = ''\n    mode: str = 'study'\n    topic: str = ''\n    question: str = ''\n    expected_points: list[str] = Field(default_factory=list)\n    evidence_files: list[str] = Field(default_factory=list)\n    concepts: list[str] = Field(default_factory=list)\n    answer: str = ''\n    score: int | None = None\n    status: str = 'queued'\n    source: str = 'agentpack learn'\n    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())",
+          "confidence": "high"
+        },
+        {
+          "name": "LearningReport",
+          "defined_at": "src/agentpack/learning/models.py:125",
+          "signature": "class LearningReport(BaseModel): task, scope, learning_request='', coach_mode='study', ..., learning_topics: list[LearningTopic]",
+          "code": "",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/commands/learn.py:214",
+          "call_site_behavior": "record_learning_sessions(root, report) called after report is built and quality-scored; return value stored as learning_session_count for session event."
+        },
+        {
+          "at": "src/agentpack/dashboard/collectors.py:658",
+          "call_site_behavior": "summarize_weak_spots(root, limit=6) called to populate LearningWeakSpot dashboard rows."
+        }
+      ],
+      "contracts_touched": [
+        "New: learning-sessions.jsonl file written at .agentpack/learning-sessions.jsonl",
+        "New: summarize_weak_spots aggregates sessions into concept weak-spot buckets"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "append-only JSONL pattern with OSError guard",
+          "example_at": "src/agentpack/session/events.py:13"
+        }
+      ]
+    },
+    {
+      "id": "cu8",
+      "location": "src/agentpack/learning/extractor.py:96-160,410-543",
+      "kind": "core",
+      "what_changed": "Adds apply_learning_request (patches report with learning_request, coach_mode, and per-topic questions+prompt), infer_learning_mode (keyword dispatch to five modes), _prompt_for_mode (constructs mode-specific prompt string), and _topic_questions (generates LearningQuestion list per mode). Also modifies _topic to use _prompt_for_mode and add questions field.",
+      "code": "def apply_learning_request(report, request):\n    clean = ' '.join((request or '').split())\n    if not clean: return report\n    mode = infer_learning_mode(clean)\n    topics = [topic.model_copy(update={'prompt': _prompt_for_mode(...), 'questions': _topic_questions(...)}) for topic in report.learning_topics]\n    return report.model_copy(update={'learning_request': clean, 'coach_mode': mode, 'learning_topics': topics})\n\ndef infer_learning_mode(request):\n    lowered = request.lower()\n    if any(term in lowered for term in ('interview', 'principal', 'senior engineer', 'oral')): return 'interview'\n    if any(term in lowered for term in ('quiz', 'question', 'ask me', 'test me')): return 'quiz'\n    if any(term in lowered for term in ('failure', 'debug', 'incident', 'prod', 'break')): return 'failure'\n    if any(term in lowered for term in ('review', 'pr', 'reviewer')): return 'review'\n    if any(term in lowered for term in ('system design', 'architecture', 'tradeoff', 'scale')): return 'system-design'\n    return 'study'",
+      "referenced_symbols": [
+        {
+          "name": "LearningQuestion",
+          "defined_at": "src/agentpack/learning/models.py:1",
+          "signature": "class LearningQuestion(BaseModel): mode, question, expected_points, evidence_files, difficulty='medium'",
+          "code": "class LearningQuestion(BaseModel):\n    mode: str\n    question: str\n    expected_points: list[str] = Field(default_factory=list)\n    evidence_files: list[str] = Field(default_factory=list)\n    difficulty: str = 'medium'",
+          "confidence": "high"
+        },
+        {
+          "name": "LearningReport",
+          "defined_at": "src/agentpack/learning/models.py:125",
+          "signature": "class LearningReport(BaseModel)",
+          "code": "",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/commands/learn.py:165",
+          "call_site_behavior": "apply_learning_request(report, learning_request) called after build_learning_report; result replaces report before feedback and ranking steps."
+        }
+      ],
+      "contracts_touched": [
+        "LearningTopic gains questions: list[LearningQuestion] field (default empty list)",
+        "LearningReport gains learning_request: str and coach_mode: str fields",
+        "_topic now calls _prompt_for_mode instead of inline prompt construction; prompt format changed from 'Teach me X...' to 'Task: ...\nTopic: ...\nConcepts: ...\nEvidence files: ...\n\n<instruction>'"
+      ],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu9",
+      "location": "src/agentpack/commands/learn.py:88-175",
+      "kind": "core",
+      "what_changed": "Changes `action` (str) + `value` (str) arguments to `request` (list[str]). Adds learning_request assembly from request_parts. Adds memory-preference path: latest_task_memory called when learning_request non-empty; _request_prefers_memory checks for 'last task'/'previous task'/'recent task'/'what agent changed'/'agent changed'; inputs may come from learning_inputs_from_memory. Double assignment of learning_request = '' on lines 92 and 94 (dead write). apply_learning_request called after build_learning_report. record_learning_sessions called after quality check.",
+      "code": "# lines 92-94: double assignment\nlearning_request = ''\nrequest_parts = list(request or [])\nlearning_request = ''\n# line 95-120: feedback or learning request dispatch\nif request_parts and request_parts[0] == 'feedback':\n    ...\nif request_parts:\n    learning_request = ' '.join(request_parts).strip()\n# lines 144-165: memory-backed inputs\nmemory = latest_task_memory(root) if learning_request else None\nuse_memory = memory is not None and _request_prefers_memory(learning_request)\nif use_memory and memory is not None:\n    inputs = learning_inputs_from_memory(memory)\nelse:\n    inputs = collect_learning_inputs(...)\n    if learning_request and not inputs.changed_files and memory is not None:\n        inputs = learning_inputs_from_memory(memory)\nreport = build_learning_report(inputs, ...)\nif use_memory:\n    report = report.model_copy(update={'scope': 'task-memory'})\nreport = apply_learning_request(report, learning_request)",
+      "referenced_symbols": [
+        {
+          "name": "latest_task_memory",
+          "defined_at": "src/agentpack/learning/task_memory.py:102",
+          "signature": "def latest_task_memory(root: Path) -> dict[str, Any] | None",
+          "code": "",
+          "confidence": "high"
+        },
+        {
+          "name": "learning_inputs_from_memory",
+          "defined_at": "src/agentpack/learning/task_memory.py:107",
+          "signature": "def learning_inputs_from_memory(memory: dict[str, Any]) -> LearningInputs",
+          "code": "",
+          "confidence": "high"
+        },
+        {
+          "name": "apply_learning_request",
+          "defined_at": "src/agentpack/learning/extractor.py:99",
+          "signature": "def apply_learning_request(report: LearningReport, request: str) -> LearningReport",
+          "code": "",
+          "confidence": "high"
+        },
+        {
+          "name": "record_learning_sessions",
+          "defined_at": "src/agentpack/learning/sessions.py:17",
+          "signature": "def record_learning_sessions(root: Path, report: LearningReport, *, path: str = SESSIONS_PATH) -> int",
+          "code": "",
+          "confidence": "high"
+        }
+      ],
+      "callers": [],
+      "contracts_touched": [
+        "agentpack learn: action/value arguments replaced by variadic request list; feedback path now checks request_parts[0]=='feedback' instead of action=='feedback'"
+      ],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu10",
+      "location": "src/agentpack/dashboard/collectors.py:614-671",
+      "kind": "core",
+      "what_changed": "Adds _learning_memories and _learning_weak_spots collectors. _learning_memories calls recent_task_memories(root, limit=6), maps to LearningMemory rows. _learning_weak_spots calls summarize_weak_spots(root, limit=6), maps to LearningWeakSpot rows. Both are added to DashboardSnapshot.",
+      "code": "def _learning_memories(root):\n    rows = []\n    for item in reversed(recent_task_memories(root, limit=6)):\n        rows.append(LearningMemory(task=..., stage=..., status=..., branch=..., git_sha=str(item.get('git_sha') or '')[:12], concepts=..., changed_files=..., selected_files=...))\n    return rows\n\ndef _learning_weak_spots(root):\n    rows = []\n    for item in summarize_weak_spots(root, limit=6):\n        rows.append(LearningWeakSpot(concept=..., count=..., mode=..., latest_task=..., latest_question=..., evidence_files=...))\n    return rows",
+      "referenced_symbols": [
+        {
+          "name": "recent_task_memories",
+          "defined_at": "src/agentpack/learning/task_memory.py:97",
+          "signature": "def recent_task_memories(root: Path, *, limit: int = 20) -> list[dict[str, Any]]",
+          "code": "",
+          "confidence": "high"
+        },
+        {
+          "name": "summarize_weak_spots",
+          "defined_at": "src/agentpack/learning/sessions.py:79",
+          "signature": "def summarize_weak_spots(root: Path, *, limit: int = 6) -> list[dict[str, Any]]",
+          "code": "",
+          "confidence": "high"
+        },
+        {
+          "name": "LearningMemory",
+          "defined_at": "src/agentpack/dashboard/models.py:684",
+          "signature": "class LearningMemory(BaseModel): task, stage, status, branch, git_sha, concepts, changed_files, selected_files",
+          "code": "",
+          "confidence": "high"
+        },
+        {
+          "name": "LearningWeakSpot",
+          "defined_at": "src/agentpack/dashboard/models.py:695",
+          "signature": "class LearningWeakSpot(BaseModel): concept, count, mode, latest_task, latest_question, evidence_files",
+          "code": "",
+          "confidence": "high"
+        }
+      ],
+      "callers": [
+        {
+          "at": "src/agentpack/dashboard/collectors.py:95-135",
+          "call_site_behavior": "build_project_dashboard_snapshot calls both and assigns results to snapshot.learning_memories and snapshot.learning_weak_spots."
+        }
+      ],
+      "contracts_touched": [
+        "DashboardSnapshot gains learning_memories: list[LearningMemory] and learning_weak_spots: list[LearningWeakSpot] fields"
+      ],
+      "local_convention_refs": [
+        {
+          "pattern": "_learning_artifacts builds list from directory scan",
+          "example_at": "src/agentpack/dashboard/collectors.py:606"
+        }
+      ]
+    },
+    {
+      "id": "cu11",
+      "location": "src/agentpack/learning/models.py:25-70,100-130",
+      "kind": "core",
+      "what_changed": "Adds LearningQuestion, LearningSession models. Adds questions field to LearningTopic. Adds learning_request and coach_mode fields to LearningReport.",
+      "code": "class LearningQuestion(BaseModel):\n    mode: str\n    question: str\n    expected_points: list[str] = Field(default_factory=list)\n    evidence_files: list[str] = Field(default_factory=list)\n    difficulty: str = 'medium'\n\nclass LearningSession(BaseModel):\n    task: str\n    request: str = ''\n    mode: str = 'study'\n    topic: str = ''\n    question: str = ''\n    expected_points: list[str] = Field(default_factory=list)\n    evidence_files: list[str] = Field(default_factory=list)\n    concepts: list[str] = Field(default_factory=list)\n    answer: str = ''\n    score: int | None = None\n    status: str = 'queued'\n    source: str = 'agentpack learn'\n    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())\n\nclass LearningTopic(BaseModel):\n    title: str\n    why: str\n    prompt: str\n    files: list[str] = ...\n    concepts: list[str] = ...\n    questions: list['LearningQuestion'] = Field(default_factory=list)  # NEW\n    citations: list[Citation] = ...\n\nclass LearningReport(BaseModel):\n    task: str\n    scope: str\n    learning_request: str = ''  # NEW\n    coach_mode: str = 'study'  # NEW\n    ...",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [
+        "LearningTopic schema: questions field added (default empty list — backward compatible)",
+        "LearningReport schema: learning_request and coach_mode fields added (defaults — backward compatible)"
+      ],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu12",
+      "location": "src/agentpack/commands/init.py:57-225",
+      "kind": "incidental",
+      "what_changed": "Adds .agentpack/learning-sessions.jsonl to both repo-level and agentpack-level gitignore entry lists.",
+      "code": "\".agentpack/learning-sessions.jsonl\",\n\"learning-sessions.jsonl\",",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    },
+    {
+      "id": "cu13",
+      "location": "docs/commands.md, docs/configuration.md, docs/runtime-loop.md, docs/codex-plugin.md, .claude/commands/agentpack-learn.md, skills/agentpack-learn.md, src/agentpack/data/agentpack-learn.md, src/agentpack/data/codex_plugin/skills/agentpack-learn.md",
+      "kind": "incidental",
+      "what_changed": "Documentation updates: adds agentpack toon-validate entry, updates agentpack learn description with on-demand request syntax, adds learning-sessions.jsonl to gitignore docs, updates runtime-loop.md task memory description.",
+      "code": "",
+      "referenced_symbols": [],
+      "callers": [],
+      "contracts_touched": [],
+      "local_convention_refs": []
+    }
+  ],
+  "open_questions": [
+    {
+      "unit": "cu2",
+      "question": "_has_format_directive returns True only if the first non-empty line is exactly '@format toon' (case-insensitive). _ToonParser strips all @ lines before parsing (line 27 of toon_parser.py). Does parse_toon ever see or need the @format line content, or is it purely stripped before reaching the parser?",
+      "matters_because": "If @format is consumed by the validator but also stripped by the parser, the behavior is consistent. If the parser ever needed to see it, validation would silently succeed on malformed content.",
+      "status": "unresolved"
+    },
+    {
+      "unit": "cu4",
+      "question": "The MCP tool parameter is named `format` (a Python built-in). Does the MCP framework or any linter flag `format` as a parameter name shadowing the built-in, and does this affect tool registration or introspection?",
+      "matters_because": "Using `format` as a parameter name shadows the built-in in the function body (not used here), but may trigger linter warnings or confusion for callers passing the argument.",
+      "status": "unresolved"
+    },
+    {
+      "unit": "cu5",
+      "question": "learning_inputs_from_memory sets diffs[path] = concept_hint (a joined concepts string, not an actual diff). Does build_learning_report's use of diffs.get(path, '') in _concepts_for_text matter here? The concept_hint is already a concepts string, so it may double-count concepts already in the concepts field.",
+      "matters_because": "Could cause inflated concept detection when memory-backed inputs are used, though the practical impact is benign (overcounting concepts for a learning topic).",
+      "status": "unresolved"
+    },
+    {
+      "unit": "cu9",
+      "question": "learn.py lines 92 and 94 both assign learning_request = ''. Is the first assignment on line 92 dead code (immediately overwritten on line 94)?",
+      "matters_because": "Dead write is noise; does not affect behavior but may indicate a merge artifact.",
+      "status": "unresolved"
+    },
+    {
+      "unit": "cu7",
+      "question": "read_learning_sessions with limit=MAX_SESSION_ROWS=500 computes the read window as lines[-min(max(500*3, 500), 500):] = lines[-500:]. If the file has more than 500 lines, older sessions are never returned to summarize_weak_spots. Is the 500-line window intentional as a recency cap?",
+      "matters_because": "Long-running installs could accumulate >500 sessions and lose older weak-spot data from summarization.",
+      "status": "unresolved"
+    },
+    {
+      "unit": "cu5",
+      "question": "build_task_memory_payload includes 'cwd': str(root) at the top level (line 75) and also inside 'provenance': {'cwd': str(root)} (line 83). Is the top-level 'cwd' intentional or a duplication?",
+      "matters_because": "Redundant field in every task_memory event; benign but wastes space in the JSONL file.",
+      "status": "unresolved"
+    }
+  ]
+}

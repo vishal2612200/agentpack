@@ -17,16 +17,14 @@ SkillFeedbackStatus = Literal[
 ]
 McpHealthStatus = Literal["healthy", "warning", "missing", "unknown"]
 McpLiveExposure = Literal["confirmed", "unknown"]
-DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "review", "action"]
+DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "action"]
 DashboardEdgeType = Literal[
-    "contains",
     "selected_because",
     "omitted_because",
     "imports",
     "tested_by",
     "memory_influenced",
     "procedure_applies",
-    "reviewed_by",
     "may_break",
     "retrieve_ref",
 ]
@@ -37,38 +35,6 @@ class ProjectInfo(BaseModel):
     path: str
     branch: str = ""
     git_sha: str = ""
-
-
-class ProjectIndexRow(BaseModel):
-    name: str
-    path: str
-    current: bool = False
-    branch: str = ""
-    git_sha: str = ""
-    task: str = ""
-    context_status: ContextStatus = "unknown"
-    packed_tokens: int = 0
-    raw_tokens: int = 0
-    saving_pct: float = 0.0
-    selected_files_count: int = 0
-    review_runs_count: int = 0
-    memory_count: int = 0
-    weak_spots_count: int = 0
-    dashboard_path: str = ""
-    open_command: str = ""
-    refresh_command: str = ""
-
-
-class ProjectIndexSummary(BaseModel):
-    root_path: str = ""
-    project_count: int = 0
-    stale_count: int = 0
-    missing_count: int = 0
-    total_raw_tokens: int = 0
-    total_packed_tokens: int = 0
-    estimated_saved_tokens: int = 0
-    average_saving_pct: float = 0.0
-    projects: list[ProjectIndexRow] = Field(default_factory=list)
 
 
 class TaskInfo(BaseModel):
@@ -88,25 +54,12 @@ class ContextHealth(BaseModel):
     stale_reason: str = ""
 
 
-class SelectedSymbolRow(BaseModel):
-    name: str
-    kind: str = ""
-    start_line: int = 0
-    end_line: int = 0
-    signature: str = ""
-    summary: str = ""
-    node_id: str = ""
-    signature_hash: str = ""
-    source_hash: str = ""
-
-
 class SelectedFileRow(BaseModel):
     path: str
     include_mode: str = ""
     score: float = 0.0
     tokens: int = 0
     reasons: list[str] = Field(default_factory=list)
-    symbols: list[SelectedSymbolRow] = Field(default_factory=list)
 
 
 class TaskMapFileRow(BaseModel):
@@ -205,30 +158,6 @@ class LearningWeakSpot(BaseModel):
     evidence_files: list[str] = Field(default_factory=list)
 
 
-class LearningPrepSessionRow(BaseModel):
-    task: str
-    request: str = ""
-    mode: str = ""
-    topic: str = ""
-    question: str = ""
-    status: str = ""
-    score: int | None = None
-    concepts: list[str] = Field(default_factory=list)
-    evidence_files: list[str] = Field(default_factory=list)
-    created_at: str = ""
-
-
-class LearningPrepSummary(BaseModel):
-    queued_count: int = 0
-    needs_review_count: int = 0
-    completed_count: int = 0
-    top_concepts: list[str] = Field(default_factory=list)
-    sessions: list[LearningPrepSessionRow] = Field(default_factory=list)
-    quiz_command: str = 'agentpack learn "quiz me on last task"'
-    interview_command: str = 'agentpack learn "interview me on last task"'
-    failure_drill_command: str = 'agentpack learn "failure drill on last task"'
-
-
 class ObserverInsightRow(BaseModel):
     kind: str
     title: str
@@ -301,30 +230,122 @@ class LoopSummary(BaseModel):
     next_action: str = ""
 
 
-class ReviewRunRow(BaseModel):
-    run_id: str
-    branch_prefix: str = ""
-    generated_at: str = ""
-    review_context: str = ""
-    target_number: int | None = None
-    target_url: str = ""
-    diff_source: str = ""
-    changed_files_count: int = 0
-    scaffold: str = ""
-    status: str = "prepared"
-    run_dir: str = ""
-    preflight_path: str = ""
-    understanding_path: str = ""
-    findings_path: str = ""
-    resume_command: str = ""
-    check_command: str = "agentpack review --check"
-    post_command: str = "agentpack review --check --post-inline-comments"
-
-
 class SuggestedAction(BaseModel):
     label: str
     command: str
     reason: str = ""
+
+
+class DashboardConfigField(BaseModel):
+    section: str
+    key: str
+    value: Any = None
+    default: Any = None
+    value_type: str = "unknown"
+    editable: bool = False
+    source: str = "effective"
+    description: str = ""
+    allowed_values: list[str] = Field(default_factory=list)
+    doc_ref: str = ""
+
+
+class DashboardConfigSection(BaseModel):
+    name: str
+    fields: list[DashboardConfigField] = Field(default_factory=list)
+
+
+class DashboardConfigSummary(BaseModel):
+    path: str = ""
+    exists: bool = False
+    valid: bool = True
+    error: str = ""
+    sections: list[DashboardConfigSection] = Field(default_factory=list)
+    editable_fields: list[str] = Field(default_factory=list)
+
+
+class TaskControlRow(BaseModel):
+    scope: Literal["global", "thread"] = "global"
+    thread_id: str | None = None
+    task: str = ""
+    task_path: str = ""
+    state: TaskState = "unknown"
+    state_path: str = ""
+    status: str = ""
+    summary: str = ""
+    done: bool = False
+    exists: bool = False
+
+
+class ThreadRow(BaseModel):
+    thread_id: str
+    task: str = ""
+    status: str = ""
+    summary: str = ""
+    branch: str = ""
+    updated_at: str = ""
+    worktree: str = ""
+    selected_count: int = 0
+    dirty_count: int = 0
+    conflicts: list[str] = Field(default_factory=list)
+    overlap_files: list[str] = Field(default_factory=list)
+    prune_eligible: bool = False
+
+
+class IntegrationFileRow(BaseModel):
+    agent: str
+    label: str
+    path: str
+    exists: bool = False
+    status: str = "missing"
+    detail: str = ""
+    repair_command: str = ""
+
+
+class CommandCatalogItem(BaseModel):
+    id: str
+    group: str
+    label: str
+    command: str
+    description: str = ""
+    risk: Literal["low", "medium", "high"] = "low"
+    confirm_required: bool = False
+    primary: bool = False
+
+
+class ArtifactRow(BaseModel):
+    label: str
+    path: str
+    exists: bool = False
+    kind: str = ""
+    modified_at: str = ""
+    size: int = 0
+    destination: str = ""
+
+
+class ProjectCandidate(BaseModel):
+    name: str
+    path: str
+    branch: str = ""
+    git_sha: str = ""
+    source: str = ""
+    current: bool = False
+    exists: bool = False
+    valid: bool = False
+    detail: str = ""
+
+
+class TaskHistoryRow(BaseModel):
+    task: str
+    source: str
+    observed_at: str = ""
+    thread_id: str = ""
+    agent: str = ""
+    branch: str = ""
+    git_sha: str = ""
+    cwd: str = ""
+    context_path: str = ""
+    status: str = ""
+    summary: str = ""
 
 
 class DashboardEvidence(BaseModel):
@@ -377,8 +398,6 @@ class DashboardGraphSummary(BaseModel):
     omitted_files: int = 0
     memory_nodes: int = 0
     high_risk_files: int = 0
-    max_nodes: int = 0
-    truncated_reason: str = ""
     truncated: bool = False
 
 
@@ -395,7 +414,6 @@ class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""
     project: ProjectInfo
-    project_index: ProjectIndexSummary = Field(default_factory=ProjectIndexSummary)
     task: TaskInfo = Field(default_factory=TaskInfo)
     context: ContextHealth = Field(default_factory=ContextHealth)
     selected_files: list[SelectedFileRow] = Field(default_factory=list)
@@ -406,11 +424,17 @@ class DashboardSnapshot(BaseModel):
     learning: list[LearningArtifact] = Field(default_factory=list)
     learning_memories: list[LearningMemory] = Field(default_factory=list)
     learning_weak_spots: list[LearningWeakSpot] = Field(default_factory=list)
-    learning_prep: LearningPrepSummary = Field(default_factory=LearningPrepSummary)
     observer: ObserverSummary = Field(default_factory=ObserverSummary)
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)
     mcp_health: McpHealth = Field(default_factory=McpHealth)
     loop: LoopSummary = Field(default_factory=LoopSummary)
-    review_runs: list[ReviewRunRow] = Field(default_factory=list)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
+    config: DashboardConfigSummary = Field(default_factory=DashboardConfigSummary)
+    task_control: list[TaskControlRow] = Field(default_factory=list)
+    thread_rows: list[ThreadRow] = Field(default_factory=list)
+    integrations: list[IntegrationFileRow] = Field(default_factory=list)
+    command_catalog: list[CommandCatalogItem] = Field(default_factory=list)
+    artifacts: list[ArtifactRow] = Field(default_factory=list)
+    projects: list[ProjectCandidate] = Field(default_factory=list)
+    task_history: list[TaskHistoryRow] = Field(default_factory=list)

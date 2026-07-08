@@ -76,8 +76,6 @@ MCP_TOOL_NAMES = (
     "get_stats",
 )
 
-MAX_RETRIEVE_TARGETS = 12
-
 
 def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str:
     metadata = load_pack_metadata(root) or {}
@@ -630,7 +628,6 @@ def _retrieve_context_impl(
     clean_kind = kind if kind in {"any", "selected", "omitted"} else "any"
     target_paths = [item for item in (targets or []) if item]
     if target_paths:
-        selected_targets = target_paths[:MAX_RETRIEVE_TARGETS]
         results = [
             retrieve_from_registry(
                 root,
@@ -641,19 +638,10 @@ def _retrieve_context_impl(
                 max_chars=cfg.runtime.max_retrieve_chars,
                 registry_file=root / cfg.runtime.pack_registry_output,
             )
-            for target in selected_targets
+            for target in target_paths[:12]
         ]
-        truncated_targets = len(target_paths) - len(selected_targets)
-        if truncated_targets > 0:
-            results.insert(
-                0,
-                f"Note: retrieve_context targets truncated to first {MAX_RETRIEVE_TARGETS}; "
-                f"{truncated_targets} target(s) not retrieved.",
-            )
         result = "\n\n---\n\n".join(results)
     else:
-        selected_targets = []
-        truncated_targets = 0
         result = retrieve_from_registry(
             root,
             path=path,
@@ -671,8 +659,6 @@ def _retrieve_context_impl(
             "path": path,
             "block_id": block_id,
             "targets": target_paths,
-            "retrieved_targets": selected_targets,
-            "truncated_targets": truncated_targets,
             "mode": mode,
             "kind": clean_kind,
             "allow_stale": allow_stale,
@@ -999,7 +985,7 @@ def serve() -> None:
             block_id: Stable block id from the pack registry. Optional if path is set.
             mode: as_stored | full | skeleton | symbols | summary.
             allow_stale: If false, refuse retrieval when file changed since the latest pack.
-            targets: Optional list of repo-relative paths to retrieve in one call (max 12; extras are reported).
+            targets: Optional list of repo-relative paths to retrieve in one call.
             kind: any | selected | omitted.
         """
         return _retrieve_context_impl(

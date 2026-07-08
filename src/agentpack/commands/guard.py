@@ -60,7 +60,7 @@ def register(app: typer.Typer) -> None:
         dirty_confirmed = _dirty_targets_confirmed(git_preflight, allow_dirty_targets)
         git_gate_ok = dirty_confirmed or not _git_preflight_blocks(git_preflight)
         if dirty_confirmed:
-            console.print(f"[yellow]![/] {_dirty_targets_message(refresh_context)}")
+            console.print("[yellow]![/] Dirty tracked files allowed by --allow-dirty-targets; no git sync attempted.")
         if not git_gate_ok:
             ok = False
             _print_action(
@@ -160,15 +160,6 @@ def _git_preflight_blocks(preflight: GitPreflight) -> bool:
 
 def _dirty_targets_confirmed(preflight: GitPreflight, allow_dirty_targets: bool) -> bool:
     return bool(allow_dirty_targets and preflight.action == "blocked_dirty" and preflight.behind == 0)
-
-
-def _dirty_targets_message(refresh_context: bool) -> str:
-    if refresh_context:
-        return "Dirty tracked files confirmed by --allow-dirty-targets; context refresh may proceed without git sync."
-    return (
-        "Dirty tracked files confirmed by --allow-dirty-targets; git preflight will not block. "
-        "Pass --refresh-context to refresh stale context. No git sync attempted."
-    )
 
 
 def _git_preflight_repair_command(preflight: GitPreflight) -> str:

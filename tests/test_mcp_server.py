@@ -280,36 +280,6 @@ def test_mcp_retrieve_context_supports_targets_and_kind(tmp_path):
     assert "omitted" in result
 
 
-def test_mcp_retrieve_context_reports_truncated_targets(tmp_path):
-    from agentpack.core.models import ContextPack, FileInfo, SelectedFile
-    from agentpack.core.pack_registry import save_pack_registry
-    from agentpack.core.scanner import file_hash
-
-    source = tmp_path / "src.py"
-    source.write_text("def run():\n    return 1\n", encoding="utf-8")
-    pack = ContextPack(
-        task="test",
-        agent="generic",
-        mode="balanced",
-        budget=1000,
-        token_estimate=10,
-        raw_repo_tokens=100,
-        after_ignore_tokens=100,
-        estimated_savings_percent=90,
-        changed_files=["src.py"],
-        selected_files=[SelectedFile(path="src.py", score=100, include_mode="summary", reasons=["modified"], summary="selected")],
-        omitted_relevant_files=[],
-        receipts=[],
-        freshness={"snapshot_root_hash": "abc", "generated_at": "2026-01-01T00:00:00+00:00"},
-    )
-    info = FileInfo(path="src.py", abs_path=source, size_bytes=source.stat().st_size, estimated_tokens=10, hash=file_hash(source))
-    save_pack_registry(tmp_path, pack, [info])
-
-    result = _retrieve_context_impl(tmp_path, targets=["src.py"] * 13)
-
-    assert "Note: retrieve_context targets truncated to first 12; 1 target(s) not retrieved." in result
-
-
 # ---------------------------------------------------------------------------
 # get_context — staleness signal
 # ---------------------------------------------------------------------------

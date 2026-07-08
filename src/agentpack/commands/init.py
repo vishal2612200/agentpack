@@ -14,6 +14,7 @@ from agentpack.core.ignore import (
     agentignore_sync_status,
     format_import_summary,
 )
+from agentpack.core.project_index import project_index_path, register_project
 from agentpack.commands._shared import console, _root
 from agentpack.integrations.agents import check_agent_integration, install_agent_integration
 from agentpack.session.state import load_session, create_session, SESSION_FILE, TASK_FILE
@@ -476,6 +477,13 @@ def register(app: typer.Typer) -> None:
                 results.append(InitResult(".vscode/tasks.json", action))
             else:
                 results.append(InitResult(key, action))
+
+        index_path = project_index_path()
+        try:
+            register_project(root, index_path)
+            results.append(InitResult(str(index_path), "indexed"))
+        except Exception as exc:
+            results.append(InitResult(str(index_path), f"index warning: {exc}"))
 
         if backups:
             _print_init_summary("Backups", backups)
