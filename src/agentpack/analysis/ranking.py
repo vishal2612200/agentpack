@@ -748,6 +748,13 @@ def build_keyword_plan(
         workspace_roots=tuple(workspace_roots or ()),
         task_kind=task_kind,
         task_scope_terms=task_scope_terms,
+        # Note: classify_task(task) is also called independently in
+        # FileRanker.rank() (application/pack_service.py) to populate
+        # RankResult/PackPlan/ContextPack.task_class for telemetry. The two
+        # calls are guaranteed to agree only because both are pure functions
+        # of the same `task` string — kept separate so KeywordPlan stays
+        # self-contained and callable without pack_service.py's telemetry
+        # plumbing.
         task_class=classify_task(task).kind,
     )
 
@@ -1159,6 +1166,12 @@ def _path_concrete_term_bonus(path: str, plan: KeywordPlan | None) -> float:
         # is reserved for tasks that plausibly ARE about config/build/release;
         # for everything else it's reduced so a config file only wins when it
         # has genuinely strong evidence beyond the config-file bonus alone.
+        # Note: task_class is a coarse task-INTENT proxy (bugfix/feature/
+        # infra/...), not a config-file-relevance signal — a task like "Fix
+        # broken config parsing in webpack.config.js" classifies as
+        # "bugfix" and still gets the reduced addon even though it is
+        # genuinely about the config file. Accepted tradeoff; see
+        # benchmarks/results/opt-diagnosis.md for the measured effect.
         config_addon = 105.0 if plan.task_class in ("infra", "release") else 20.0
         bonus += config_addon
     return min(210.0 if _is_config_file(path) else 150.0, bonus)

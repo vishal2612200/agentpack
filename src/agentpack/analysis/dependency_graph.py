@@ -107,11 +107,14 @@ def _resolve_imports(
                 r = None
             if r and r in path_set:
                 resolved.append(r)
-        elif language == "ruby":
-            # Ruby's `require "foo/bar"` (no dot prefix) may also be an
-            # in-repo path — try to resolve; fall back to raw string if not.
-            r = ruby_resolve(importer, imp, root)
-            resolved.append(r if r and r in path_set else imp)
         else:
+            # Bare `require "foo/bar"` (no dot prefix) resolves against
+            # Ruby's $LOAD_PATH (typically a gem's lib/ root), not relative
+            # to the importing file's directory. ruby_resolve only
+            # implements importer-relative resolution (require_relative
+            # semantics), so it isn't applied here — a coincidental file at
+            # the guessed importer-relative path would otherwise silently
+            # resolve to the wrong target. Kept as a raw string, matching
+            # how PHP's non-relative `use` imports are handled.
             resolved.append(imp)
     return resolved
