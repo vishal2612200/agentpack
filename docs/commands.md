@@ -1090,16 +1090,15 @@ claim/citation pair on stdin and rejects it when the command returns
 `{"supported": false, "reason": "..."}`.
 
 After Stage 2 validates, `agentpack review --check --dry-run-post` validates the
-same inline GitHub review payload and writes it to `inline-review-payload.json`
-without calling GitHub. `--dry-run-check` is an alias for the same validation
-path. `agentpack review --check --post-inline-comments`
-generates the same dry-run record internally, verifies the payload hash, then
-posts validated findings as one GitHub PR review with inline comments. Posting
-requires a PR-bound preflight, a GitHub repo slug, a PR head SHA, and finding
-locations that map to right-side lines in the PR diff. If any finding cannot be
-posted inline, both dry-run and posting fail closed instead of falling back to a
-broad summary comment. Successful posts are recorded in `posted-review.json` so
-re-running the check does not duplicate PR comments.
+GitHub review payload and writes it to `inline-review-payload.json` without
+calling GitHub. `--dry-run-check` is an alias for the same validation path.
+`agentpack review --check --post-inline-comments` generates the same dry-run
+record internally, verifies the payload hash, then posts validated findings as
+one GitHub PR review. GitHub only accepts inline comments on right-side lines in
+the PR diff, so AgentPack posts commentable findings inline and keeps
+non-commentable findings in the review body under `Non-inline findings`.
+Successful posts are recorded in `posted-review.json` so re-running the check
+does not duplicate PR comments.
 
 Review scaffolding adapts to PR size and risk. Small PRs default to a lighter
 scaffold; security/auth/billing/database/migration-style reviews default to

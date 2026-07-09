@@ -600,7 +600,7 @@ def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
         },
     ]
 
-    comments, skipped = _findings_to_inline_comments(findings, {"src/foo.py": {2}})
+    comments, skipped, non_inline_notes = _findings_to_inline_comments(findings, {"src/foo.py": {2}})
 
     assert comments == [
         {
@@ -622,10 +622,19 @@ def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
         }
     ]
     assert skipped == ["finding 2: src/bar.py:4 is not in the PR diff as a right-side line"]
+    assert non_inline_notes == [
+        "- Finding `f2` at `src/bar.py:4`: bar changed\n"
+        "  Reason: finding 2: src/bar.py:4 is not in the PR diff as a right-side line\n"
+        "  Evidence: src/bar.py:4 shows the change"
+    ]
 
 
 def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
+    (repo / "src" / "bar.py").write_text(
+        "def bar():\n    value = 1\n    flag = True\n    return 'supporting behavior'\n",
+        encoding="utf-8",
+    )
     monkeypatch.chdir(repo)
     runner = CliRunner()
     posted_requests: list[tuple[str, int, dict]] = []
@@ -689,6 +698,13 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
         "    claim: foo returns changed value\n"
         "    evidence: src/foo.py:2 shows the returned value\n"
         "    severity: should-fix\n"
+        "  -\n"
+        "    id: f2\n"
+        "    unit: cu1\n"
+        "    location: src/bar.py:4\n"
+        "    claim: bar returns supporting behavior\n"
+        "    evidence: src/bar.py:4 returns supporting behavior\n"
+        "    severity: should-fix\n"
         "coverage:\n"
         "  status: complete\n",
         encoding="utf-8",
@@ -704,11 +720,13 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
     assert pr_number == 98
     assert payload["commit_id"] == "abc123"
     assert payload["event"] == "COMMENT"
-    assert payload["body"] == (
-        f"AgentPack found 1 evidence-backed finding and left it inline where it applies.\n\n"
-        f"Run: `{preflight['review']['run_id']}`\n\n"
-        "Head: `abc123`"
-    )
+    assert "AgentPack found 2 evidence-backed findings: 1 inline and 1 in this review body." in payload["body"]
+    assert f"Run: `{preflight['review']['run_id']}`" in payload["body"]
+    assert "Head: `abc123`" in payload["body"]
+    assert "## Non-inline findings" in payload["body"]
+    assert "Finding `f2` at `src/bar.py:4`: bar returns supporting behavior" in payload["body"]
+    assert "Reason: finding 2: src/bar.py:4 is not in the PR diff as a right-side line" in payload["body"]
+    assert "Evidence: src/bar.py:4 returns supporting behavior" in payload["body"]
     assert payload["comments"] == [
         {
             "path": "src/foo.py",
@@ -734,6 +752,7 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
     assert dry_run_record["payload_sha256"] == posted_record["payload_sha256"]
     assert posted_record["status"] == "posted"
     assert posted_record["comments"] == 1
+    assert posted_record["non_inline_findings"] == 1
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
     assert state["posted_review"]["status"] == "posted"
 
@@ -831,7 +850,7 @@ def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, mo
     assert state["posted_review"]["status"] == "dry_run"
 
 
-def test_review_check_blocks_post_when_finding_is_not_commentable(tmp_path, monkeypatch) -> None:
+def test_review_check_dry_run_keeps_non_commentable_finding_in_body(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
     runner = CliRunner()
@@ -894,12 +913,20 @@ def test_review_check_blocks_post_when_finding_is_not_commentable(tmp_path, monk
         encoding="utf-8",
     )
 
-    blocked = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
 
-    assert blocked.exit_code == 1
-    assert "Could not post inline review comments" in blocked.output
-    assert "src/foo.py:2 is not in the PR diff as a right-side line" in blocked.output
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Inline review payload valid" in dry_run.output
     assert not (repo / preflight["paths"]["run_dir"] / "posted-review.json").exists()
+    run_dir = repo / preflight["paths"]["run_dir"]
+    dry_run_record = json.loads((run_dir / "inline-review-dry-run.json").read_text(encoding="utf-8"))
+    payload_record = json.loads((run_dir / "inline-review-payload.json").read_text(encoding="utf-8"))
+    assert dry_run_record["comments"] == 0
+    assert dry_run_record["non_inline_findings"] == 1
+    assert "comments" not in payload_record["payload"]
+    assert "AgentPack found 1 evidence-backed finding that could not be attached inline" in payload_record["payload"]["body"]
+    assert "Finding `f1` at `src/foo.py:2`: foo returns changed value" in payload_record["payload"]["body"]
+    assert "Reason: finding 1: src/foo.py:2 is not in the PR diff as a right-side line" in payload_record["payload"]["body"]
 
 
 def test_review_command_starts_fresh_and_warns_about_incomplete_previous_run(tmp_path, monkeypatch) -> None:
