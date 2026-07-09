@@ -608,6 +608,9 @@ def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
             "line": 2,
             "side": "RIGHT",
             "body": (
+                "[![AgentPack review]"
+                "(https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-review-badge.png)]"
+                "(https://github.com/vishal2612200/agentpack)\n\n"
                 "**Should fix**\n\n"
                 "foo returns a changed value\n\n"
                 "Evidence: src/foo.py:2 shows the returned value\n\n"
@@ -712,6 +715,9 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
             "line": 2,
             "side": "RIGHT",
             "body": (
+                "[![AgentPack review]"
+                "(https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-review-badge.png)]"
+                "(https://github.com/vishal2612200/agentpack)\n\n"
                 "**Should fix**\n\n"
                 "foo returns changed value\n\n"
                 "Evidence: src/foo.py:2 shows the returned value\n\n"
@@ -820,6 +826,7 @@ def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, mo
     assert payload_record["payload_sha256"] == dry_run_record["payload_sha256"]
     assert payload_record["payload"]["commit_id"] == "abc123"
     assert payload_record["payload"]["comments"][0]["path"] == "src/foo.py"
+    assert payload_record["payload"]["comments"][0]["body"].startswith("[![AgentPack review]")
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
     assert state["posted_review"]["status"] == "dry_run"
 
