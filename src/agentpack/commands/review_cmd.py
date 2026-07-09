@@ -1225,6 +1225,7 @@ def _check_active_review(
 
     discipline_report = None
     if code_discipline:
+        # Empty range means no trusted PR diff; fall back to worktree discipline checks.
         discipline_report = assess_code_discipline(root, diff_range=str(preflight.get("diff", {}).get("range") or "") or None)
         if discipline_report.has_issues and strict_code_discipline:
             state = _review_state(root, preflight)

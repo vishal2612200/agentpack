@@ -22,6 +22,7 @@ _SOURCE_EXTENSIONS = {
 }
 _TEST_PATH_RE = re.compile(r"(^|/)(tests?|specs?)/|(^|/)(test_|spec_)|(_test|_spec)\.")
 _PYTHON_SYMBOL_KINDS = (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+# ponytail: line-based JS/TS heuristic; use a real parser if advisory noise matters.
 _JS_DEF_RE = re.compile(
     r"^\s*(?:export\s+)?(?:default\s+)?(?:(?:async\s+)?function\s+"
     r"(?P<fn>[A-Za-z_$][\w$]*)|class\s+(?P<class>[A-Za-z_$][\w$]*)|"
