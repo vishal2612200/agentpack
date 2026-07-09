@@ -52,6 +52,11 @@ _DIFF_HUNK_RE = re.compile(
     r"^@@ -(?P<old_start>\d+)(?:,(?P<old_count>\d+))? "
     r"\+(?P<new_start>\d+)(?:,(?P<new_count>\d+))? @@"
 )
+_AGENTPACK_REVIEW_BADGE = (
+    "[![AgentPack review]"
+    "(https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-review-badge.png)]"
+    "(https://github.com/vishal2612200/agentpack)"
+)
 
 
 class _ReviewPreflightError(Exception):
@@ -1832,6 +1837,7 @@ def _inline_comment_body(finding: dict[str, Any], index: int) -> str:
     claim = _comment_field(finding, "claim") or "Review finding."
     evidence = _comment_field(finding, "evidence")
     parts = [
+        _AGENTPACK_REVIEW_BADGE,
         f"**{_display_severity(severity)}**",
         claim,
     ]
