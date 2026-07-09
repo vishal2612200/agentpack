@@ -20,15 +20,19 @@ from agentpack.core.models import Symbol
 _QUERIES_DIR = Path(__file__).parent / "queries"
 
 # Languages this backend can extract symbols for.
-TS_SYMBOL_LANGS: set[str] = {"java", "ruby", "php"}
+TS_SYMBOL_LANGS: set[str] = {"java", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"}
 # Languages this backend can extract imports for.
-TS_IMPORT_LANGS: set[str] = {"ruby", "php"}
+TS_IMPORT_LANGS: set[str] = {"ruby", "php", "protobuf"}
 
 # Map AgentPack's language string to tree-sitter-language-pack's grammar name.
 _TS_LANG_NAME: dict[str, str] = {
     "java": "java",
     "ruby": "ruby",
     "php": "php",
+    "terraform": "terraform",
+    "dockerfile": "dockerfile",
+    "protobuf": "proto",  # the language pack calls this grammar "proto", not "protobuf"
+    "graphql": "graphql",
 }
 
 
@@ -159,17 +163,29 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
     class_matches: list[tuple[object, str]] = []  # (outer_node, name)
     method_matches: list[tuple[object, str]] = []
     function_matches: list[tuple[object, str]] = []
+    variable_matches: list[tuple[object, str]] = []
     for _pat_idx, cap in matches:
         # cap is dict[str, list[Node]] — one entry per capture name in the pattern.
         for outer_key, name_key, bucket in (
             ("class", "class.name", class_matches),
             ("method", "method.name", method_matches),
             ("function", "function.name", function_matches),
+            ("variable", "variable.name", variable_matches),
         ):
             if outer_key in cap and name_key in cap:
                 outer_node = cap[outer_key][0]
                 name_node = cap[name_key][0]
-                bucket.append((outer_node, _decode_name(name_node)))
+                name = _decode_name(name_node)
+                if outer_key == "class" and "class.label" in cap:
+                    # Some DSLs identify a block by type + one or more string
+                    # labels rather than a single name node (e.g. Terraform's
+                    # `resource "aws_instance" "web" {...}` — the identifier
+                    # captures the block type "resource", and class.label
+                    # captures each string label). Join them into one name:
+                    # resource.aws_instance.web.
+                    labels = [_decode_name(n) for n in cap["class.label"]]
+                    name = ".".join([name, *labels])
+                bucket.append((outer_node, name))
 
     class_node_ids = {n.id for n, _ in class_matches}
     class_name_by_id = {n.id: name for n, name in class_matches}
@@ -187,6 +203,21 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
             Symbol(
                 name=qualified_name,
                 kind="class",
+                start_line=node.start_point[0] + 1,
+                end_line=node.end_point[0] + 1,
+                signature=_node_signature(node, src_bytes),
+                body=node.text.decode("utf-8", errors="replace"),
+            )
+        )
+
+    for node, name in variable_matches:
+        # Flat, top-level declarations (e.g. Dockerfile `ARG NAME=...`) — no
+        # enclosing-scope qualification, these DSLs don't nest variables
+        # inside a class-like construct.
+        symbols.append(
+            Symbol(
+                name=name,
+                kind="variable",
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
                 signature=_node_signature(node, src_bytes),
@@ -258,6 +289,13 @@ def extract_imports_ts(path: Path, cached_text: str | None, language: str) -> li
     for _pat_idx, cap in matches:
         for node in cap.get("import.path", []):
             raw = node.text.decode("utf-8", errors="replace").strip()
+            # Ruby/PHP capture a content-only sub-node (no surrounding quotes).
+            # Protobuf's grammar has no such sub-node, so @import.path is the
+            # whole `string` node including its quote-mark tokens — strip them
+            # here rather than special-casing the query. Safe no-op for the
+            # other languages since their captured text is already quote-free.
+            if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in "\"'":
+                raw = raw[1:-1]
             if raw and raw not in seen:
                 imports.append(raw)
                 seen.add(raw)

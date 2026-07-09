@@ -13,6 +13,7 @@ from agentpack.analysis.java_imports import extract_imports as java_imports
 from agentpack.analysis.ruby_imports import extract_imports as ruby_imports
 from agentpack.analysis.ruby_imports import resolve_relative_import as ruby_resolve
 from agentpack.analysis.php_imports import extract_imports as php_imports
+from agentpack.analysis.protobuf_imports import extract_imports as protobuf_imports
 
 _GRAPH_CACHE: dict[tuple[tuple[tuple[str, str | None], ...], bool], DependencyGraph] = {}
 
@@ -75,6 +76,8 @@ def build(
             raw_imports = ruby_imports(fi.abs_path, cached)
         elif lang == "php":
             raw_imports = php_imports(fi.abs_path, cached)
+        elif lang == "protobuf":
+            raw_imports = protobuf_imports(fi.abs_path, cached)
 
         resolved = _resolve_imports(fi.path, lang, raw_imports, root, path_set)
 

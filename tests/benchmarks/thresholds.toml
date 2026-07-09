@@ -107,3 +107,73 @@ min_reason_graph_precision = 0.01
 min_reason_content_precision = 0.02
 max_median_wall_seconds = 20.0
 min_cases = 10
+
+[terraform]
+repo = "terraform-aws-eks"
+# Observed (two identical runs, sample_history=20): 20 cases, recall 24.2/24.2,
+# tp 15.0/15.0, reason_graph 6.25/6.25, reason_content 15.8/15.8. No import
+# resolution yet (module { source = "./x" } deliberately deferred — see
+# terraform.scm header), so reason_graph is driven entirely by test-pairing,
+# not tree-sitter edges. Thresholds set ~2pp below observed.
+min_recall = 0.22
+min_token_precision = 0.13
+min_reason_graph_precision = 0.04
+min_reason_content_precision = 0.14
+max_median_wall_seconds = 10.0
+min_cases = 15
+
+[dockerfile]
+repo = "docker-python"
+# Observed (two identical runs, sample_history=20): 20 cases, recall 6.7/6.7,
+# tp 50.0/50.0, reason_content 100/100. Low recall is structural, not a bug:
+# most commits touch 6-8 near-duplicate per-variant Dockerfiles (alpine/
+# bookworm/slim/trixie/windows) differing only in a version string; getting
+# one variant right while missing siblings is expected. No reason_graph
+# threshold assertion in test_dockerfile.py (Dockerfile captures no
+# import-like edges this pass; kept at 0.0 only so report.py's table view
+# has a value to print).
+min_recall = 0.05
+min_token_precision = 0.45
+min_reason_graph_precision = 0.0
+min_reason_content_precision = 0.85
+max_median_wall_seconds = 10.0
+min_cases = 15
+
+[protobuf]
+repo = "istio-api"
+# Observed (two identical runs, sample_history=30): 30 cases, recall
+# 10.0/10.0, tp 3.33/3.33, reason_graph 15.6/15.6, reason_content 3.57/3.57.
+# googleapis (original candidate) was rejected: 7000+ .proto files with
+# bulk auto-generated commit history made cases take minutes each and even
+# sample_history=400 only found 2 usable cases. istio/api is a real,
+# actively-maintained pure-protobuf-schema repo with genuine small commits.
+min_recall = 0.08
+min_token_precision = 0.013
+min_reason_graph_precision = 0.13
+min_reason_content_precision = 0.015
+max_median_wall_seconds = 15.0
+min_cases = 20
+
+[graphql]
+repo = "saleor"
+# Observed (single run, sample_history=12): 11 cases, recall 3.0, tp 1.1,
+# reason_graph 1.3, reason_content 1.1, reason_symbol 1.3 (all pp). Only
+# one run, not two, given cost below. Thresholds set well below observed
+# to leave headroom; tighten once reason_symbol has proven stable over
+# more runs.
+#
+# max_median_wall_seconds is a genuine outlier vs every other language
+# (observed 116.5s/case) -- not a benchmark-repo problem. Root-caused to a
+# pre-existing O(files) cost in ranking.py's boost_paired_tests /
+# _test_matches_source, amplified by schema.graphql alone carrying 5759
+# symbols (every GraphQL field becomes a qualified method symbol). Verified
+# by isolation: removing schema.graphql from the same checkout drops one
+# case from 110s to 14s. This is a pre-existing ranking-pipeline scaling
+# issue, not a bug in the new tree-sitter query -- out of scope for this
+# PR; see benchmarks/results/infra-schema-baseline.md.
+min_recall = 0.01
+min_token_precision = 0.005
+min_reason_graph_precision = 0.005
+min_reason_content_precision = 0.005
+max_median_wall_seconds = 150.0
+min_cases = 10

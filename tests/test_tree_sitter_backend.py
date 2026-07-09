@@ -241,6 +241,159 @@ def test_ruby_nested_module_scope_qualification(tmp_path):
 
 
 # ---------------------------------------------------------------------------
+# Terraform symbols
+# ---------------------------------------------------------------------------
+
+def test_terraform_blocks(tmp_path):
+    f = tmp_path / "main.tf"
+    f.write_text(
+        'resource "aws_instance" "web" {\n'
+        '  ami = "ami-123"\n'
+        "}\n"
+        "\n"
+        'module "vpc" {\n'
+        '  source = "./vpc"\n'
+        "}\n"
+        "\n"
+        'variable "region" {\n'
+        '  default = "us-east-1"\n'
+        "}\n"
+        "\n"
+        'output "ip" {\n'
+        "  value = aws_instance.web.public_ip\n"
+        "}\n"
+        "\n"
+        'data "aws_ami" "ubuntu" {\n'
+        "  most_recent = true\n"
+        "}\n"
+    )
+    syms = extract_symbols_ts(f, "terraform")
+    names = {(s.name, s.kind) for s in syms}
+    assert ("resource.aws_instance.web", "class") in names
+    assert ("module.vpc", "class") in names
+    assert ("variable.region", "class") in names
+    assert ("output.ip", "class") in names
+    assert ("data.aws_ami.ubuntu", "class") in names
+
+
+# ---------------------------------------------------------------------------
+# Dockerfile symbols
+# ---------------------------------------------------------------------------
+
+def test_dockerfile_stages_and_args(tmp_path):
+    f = tmp_path / "Dockerfile"
+    f.write_text(
+        "FROM node:18 AS builder\n"
+        "RUN npm install\n"
+        "FROM node:18-slim AS runtime\n"
+        "ARG VERSION=1.0\n"
+        "ARG BUILD_ENV\n"
+        "COPY --from=builder /app /app\n"
+    )
+    syms = extract_symbols_ts(f, "dockerfile")
+    names = {(s.name, s.kind) for s in syms}
+    assert ("builder", "class") in names
+    assert ("runtime", "class") in names
+    assert ("VERSION", "variable") in names
+    assert ("BUILD_ENV", "variable") in names
+
+
+# ---------------------------------------------------------------------------
+# Protobuf symbols + imports
+# ---------------------------------------------------------------------------
+
+def test_protobuf_messages_service_and_enum(tmp_path):
+    f = tmp_path / "user.proto"
+    f.write_text(
+        'syntax = "proto3";\n'
+        "\n"
+        "message User {\n"
+        "  string name = 1;\n"
+        "}\n"
+        "\n"
+        "message CreateUserRequest {\n"
+        "  string name = 1;\n"
+        "}\n"
+        "\n"
+        "service UserService {\n"
+        "  rpc CreateUser(CreateUserRequest) returns (User);\n"
+        "  rpc GetUser(User) returns (User);\n"
+        "}\n"
+        "\n"
+        "enum Status {\n"
+        "  ACTIVE = 0;\n"
+        "  INACTIVE = 1;\n"
+        "}\n"
+    )
+    syms = extract_symbols_ts(f, "protobuf")
+    names = {(s.name, s.kind) for s in syms}
+    assert ("User", "class") in names
+    assert ("CreateUserRequest", "class") in names
+    assert ("UserService", "class") in names
+    assert ("Status", "class") in names
+    # rpc methods qualified under the enclosing service, like Java methods.
+    assert ("UserService.CreateUser", "method") in names
+    assert ("UserService.GetUser", "method") in names
+
+
+def test_protobuf_import_strips_quotes(tmp_path):
+    f = tmp_path / "user.proto"
+    f.write_text('import "google/protobuf/timestamp.proto";\n')
+    imports = extract_imports_ts(f, None, "protobuf")
+    assert imports == ["google/protobuf/timestamp.proto"]
+
+
+def test_protobuf_import_kept_as_raw_edge(tmp_path):
+    """Protobuf imports are not resolved against the filesystem, matching
+    PHP `use` and Java import handling — no graph-IDF weighting yet."""
+    (tmp_path / "user.proto").write_text(
+        'import "google/protobuf/timestamp.proto";\nmessage User {}\n'
+    )
+    files = [_fi(tmp_path, "user.proto", "protobuf")]
+    graph = build(files, tmp_path)
+    imports = graph.nodes["user.proto"].imports
+    assert "google/protobuf/timestamp.proto" in imports
+
+
+# ---------------------------------------------------------------------------
+# GraphQL symbols
+# ---------------------------------------------------------------------------
+
+def test_graphql_types_interface_enum_and_fields(tmp_path):
+    f = tmp_path / "schema.graphql"
+    f.write_text(
+        "type User {\n"
+        "  id: ID!\n"
+        "  name: String!\n"
+        "}\n"
+        "\n"
+        "interface Node {\n"
+        "  id: ID!\n"
+        "}\n"
+        "\n"
+        "enum Status {\n"
+        "  ACTIVE\n"
+        "  INACTIVE\n"
+        "}\n"
+        "\n"
+        "type Query {\n"
+        "  user(id: ID!): User\n"
+        "}\n"
+    )
+    syms = extract_symbols_ts(f, "graphql")
+    names = {(s.name, s.kind) for s in syms}
+    assert ("User", "class") in names
+    assert ("Node", "class") in names
+    assert ("Status", "class") in names
+    assert ("Query", "class") in names
+    # fields qualified under the enclosing type, like Java methods.
+    assert ("User.id", "method") in names
+    assert ("User.name", "method") in names
+    assert ("Node.id", "method") in names
+    assert ("Query.user", "method") in names
+
+
+# ---------------------------------------------------------------------------
 # Dependency graph — the actual downstream consumer
 # ---------------------------------------------------------------------------
 

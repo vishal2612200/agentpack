@@ -309,3 +309,82 @@ exclude_globs = [
   "docs/**",
 ]
 max_changed_files = 8
+
+# ---------------------------------------------------------------------------
+# Infra/schema DSLs added to measure the tree-sitter backend's second
+# category — declarative languages with no functions/classes (symbols map
+# to existing kind="class"/"function"/"variable" per PR discussion).
+# ---------------------------------------------------------------------------
+
+[[repos]]
+name = "terraform-aws-eks"
+url = "https://github.com/terraform-aws-modules/terraform-aws-eks.git"
+ref = "master"
+sample_history = 20
+task_type = "terraform-iac"
+mode = "balanced"
+budget = 3500
+include_globs = ["**/*.tf"]
+exclude_globs = ["examples/**", ".github/**"]
+max_changed_files = 8
+
+[[repos]]
+name = "docker-python"
+url = "https://github.com/docker-library/python.git"
+ref = "master"
+sample_history = 20
+task_type = "dockerfile-build"
+mode = "balanced"
+budget = 3000
+# docker-library/official-images (the original candidate) only stores
+# manifest pointer files, not real Dockerfiles — swapped to the actual
+# per-image repo, which has real multi-stage Dockerfiles with substantial
+# version-bump history (same "verify actual yield, swap if degenerate"
+# discipline as spring-boot -> spring-petclinic).
+include_globs = ["**/Dockerfile*"]
+exclude_globs = [".github/**"]
+max_changed_files = 8
+
+[[repos]]
+name = "istio-api"
+url = "https://github.com/istio/api.git"
+ref = "master"
+sample_history = 30
+task_type = "protobuf-schema"
+mode = "balanced"
+budget = 3500
+# googleapis (original candidate) has 7000+ .proto files repo-wide with
+# commit history dominated by bulk, auto-generated pushes spanning
+# unrelated API families -- scanning was slow (minutes/case) and even a
+# narrowed subtree + sample_history=400 only yielded 2 usable cases.
+# istio/api is a real, actively-maintained pure-protobuf-schema repo (109
+# files) with genuine single/few-file engineering commits -- same "verify
+# actual yield, swap if degenerate" discipline as spring-boot ->
+# spring-petclinic.
+include_globs = ["**/*.proto"]
+exclude_globs = [".github/**"]
+max_changed_files = 8
+
+[[repos]]
+name = "saleor"
+url = "https://github.com/saleor/saleor.git"
+ref = "main"
+sample_history = 12
+task_type = "graphql-schema"
+mode = "balanced"
+budget = 3500
+# saleor's entire API is one generated schema.graphql, always co-changed
+# with Python resolver files. Two swaps were tried and rejected before this:
+# gqlgen (Go codegen tool, 99designs/gqlgen) has 170 independently-edited
+# *.graphql/*.graphqls files, but nearly every schema-touching commit also
+# regenerates hundreds of generated_*.go files in the same commit (11-1180
+# total files changed) -- incompatible with max_changed_files=8 regardless
+# of threshold tuning. googleapis-style "pure schema, whole repo" candidates
+# don't exist for GraphQL the way istio/api does for protobuf. Landed on
+# saleor scoped to just its saleor/graphql/ package (not repo-wide **/*.py,
+# which was the original mistake -- 4284 files, minutes/case): most commits
+# touching this narrower scope stay under 8 files (checked directly against
+# real history before locking this in).
+include_globs = ["saleor/graphql/**/*.py", "saleor/graphql/schema.graphql"]
+exclude_globs = ["**/tests/**", ".github/**"]
+max_changed_files = 8
