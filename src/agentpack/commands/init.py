@@ -262,6 +262,7 @@ def _agent_integration_paths(agent: str) -> tuple[str, ...]:
             ".mcp.json",
             ".claude/commands/agentpack.md",
             ".claude/commands/agentpack-review.md",
+            ".claude/commands/agentpack-audit.md",
             ".claude/commands/agentpack-learn.md",
         )
     if agent == "cursor":

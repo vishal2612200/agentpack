@@ -27,6 +27,7 @@ GENERATED_INSTRUCTION_FILES = [
     "src/agentpack/data/codex_plugin/skills/agentpack-pack.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-refresh.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-review.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-audit.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-route.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-learn.md",
     "agent-rules/agentpack.md",
@@ -136,3 +137,7 @@ def test_generated_agent_rules_include_prompt_quality_guidance() -> None:
         assert guidance in block
         assert "Acceptance criteria" in block
         assert "Ask/Chat mode" in block
+        assert "Code philosophy" in block
+        assert "Definition intent anchors" in block
+        assert "non-trivial object, function, class" in block
+        assert "more code is not better code" in block

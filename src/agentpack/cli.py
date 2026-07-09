@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typer
 from agentpack.commands import (
+    audit,
     benchmark,
     claude_cmd,
     ci_cmd,
@@ -90,6 +91,7 @@ for mod in [
     dashboard,
     summarize,
     compress_output,
+    audit,
     learn,
     memory,
     perf,

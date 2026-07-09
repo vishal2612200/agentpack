@@ -291,6 +291,7 @@ def _install_slash_command(root: Path, global_install: bool) -> dict[str, str]:
     return {
         "/agentpack": _install_slash_command_file(commands_dir, "agentpack.md"),
         "/agentpack-review": _install_slash_command_file(commands_dir, "agentpack-review.md"),
+        "/agentpack-audit": _install_slash_command_file(commands_dir, "agentpack-audit.md"),
         "/agentpack-learn": _install_slash_command_file(commands_dir, "agentpack-learn.md"),
     }
 

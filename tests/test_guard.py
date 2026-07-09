@@ -75,6 +75,64 @@ def test_guard_refreshes_dirty_tree_when_targets_are_confirmed(tmp_path, monkeyp
     assert (tmp_path / ".agentpack" / "context.md").exists()
 
 
+def test_guard_code_discipline_reports_advisory_warnings(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Check code discipline\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("def load_config(path):\n    return path.read_text()\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "guard",
+            "--agent",
+            "generic",
+            "--refresh-context",
+            "--allow-dirty-targets",
+            "--check-code-discipline",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    assert "Code discipline warnings" in result.output
+    assert "missing-intent-anchor" in result.output
+
+
+def test_guard_strict_code_discipline_blocks(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("Check strict code discipline\n", encoding="utf-8")
+    (tmp_path / "app.py").write_text("VALUE = 1\n", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+    (tmp_path / "app.py").write_text("def load_config(path):\n    return path.read_text()\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "guard",
+            "--agent",
+            "generic",
+            "--refresh-context",
+            "--allow-dirty-targets",
+            "--strict-code-discipline",
+        ],
+    )
+
+    assert result.exit_code == 1
+    assert "Code discipline warnings" in result.output
+    assert "Safe to continue: no; fix code discipline findings" in result.output
+
+
 def test_guard_plain_uses_global_task_even_with_ambient_thread_env(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     monkeypatch.setenv("CODEX_THREAD_ID", "codex-env")

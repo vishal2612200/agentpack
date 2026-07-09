@@ -43,6 +43,7 @@ def test_codex_plugin_manifest_points_to_skills() -> None:
     assert "not a coding agent" in description
     prompts = manifest["interface"]["defaultPrompt"]
     assert "@agentpack-learn retry handling in this repo" in prompts
+    assert "@agentpack-audit src/payments --lens performance" in prompts
 
 
 def test_codex_plugin_has_distribution_icon() -> None:
@@ -132,6 +133,7 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
         "agentpack-pack.md",
         "agentpack-refresh.md",
         "agentpack-review.md",
+        "agentpack-audit.md",
         "agentpack-learn.md",
     }
 
@@ -146,6 +148,7 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     combined = "\n".join(path.read_text(encoding="utf-8") for path in SKILLS_DIR.glob("*.md"))
     assert "agentpack route --task" in combined
     assert 'agentpack review "$ARGUMENTS"' in combined
+    assert "agentpack audit $ARGUMENTS" in combined
     assert "agentpack task set" in combined
     assert "agentpack pack --task auto" in combined
     assert "agentpack guard --agent codex --repair-stale --refresh-context" not in combined
@@ -154,6 +157,10 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     assert "agentpack status" in combined
     assert ".agentpack/learning.md" in combined
     assert ".agentpack/review.prompt.md" in combined
+    assert ".agentpack/audit.prompt.md" in combined
+    assert ".agentpack/audit-report.md" in combined
+    assert "infrastructure/config" in combined
+    assert "auditing-codebase-atlas" in combined
     assert "understanding toon" in combined.lower()
     assert "findings toon" in combined.lower()
     assert "do not perform the review inline" in combined.lower()
@@ -173,6 +180,7 @@ def test_codex_plugin_docs_keep_local_first_boundary() -> None:
     assert "@agentpack-route" in docs
     assert "@agentpack-pack" in docs
     assert "@agentpack-review" in docs
+    assert "@agentpack-audit" in docs
     assert "@agentpack-learn" in docs
     assert "_understanding.toon" in docs
     assert "_findings.toon" in docs
@@ -223,6 +231,27 @@ def test_agentpack_review_slash_command_matches_tracked_copy() -> None:
     assert "read that understanding toon from disk" in command.lower()
 
 
+def test_agentpack_audit_slash_command_matches_tracked_copy() -> None:
+    command = (ROOT / "src" / "agentpack" / "data" / "agentpack-audit.md").read_text(encoding="utf-8")
+    local = (ROOT / ".claude" / "commands" / "agentpack-audit.md").read_text(encoding="utf-8")
+    codex_skill = (ROOT / "skills" / "agentpack-audit.md").read_text(encoding="utf-8")
+    packaged_codex_skill = (
+        ROOT / "src" / "agentpack" / "data" / "codex_plugin" / "skills" / "agentpack-audit.md"
+    ).read_text(encoding="utf-8")
+
+    assert command == local
+    assert codex_skill == packaged_codex_skill
+    assert "/agentpack-audit" in command
+    assert "agentpack audit $ARGUMENTS" in command
+    assert ".agentpack/audit.prompt.md" in command
+    assert ".agentpack/audit-report.md" in command
+    assert "Infrastructure / Config Review" in command
+    assert "auditing-codebase-atlas" in command
+    assert "Hypotheses, Not Findings" in command
+    assert "@agentpack-audit <scope>" in codex_skill
+    assert "/agentpack-audit <scope>" in codex_skill
+
+
 def test_agent_plugin_distribution_docs_cover_supported_hosts() -> None:
     docs = (ROOT / "docs" / "agent-plugins.md").read_text(encoding="utf-8").lower()
 
@@ -242,7 +271,7 @@ def test_agent_plugin_distribution_docs_cover_supported_hosts() -> None:
 
     assert "does not reimplement ranking, scanning, packing, mcp, or benchmarking" in docs
     assert "local context engine, not a coding agent" in docs
-    assert "review, and learning" in docs
+    assert "review, audit, and learning" in docs
     assert "agentpack doctor --agent <agent>" in docs
     assert "native-integrations/cursor-extension/" in docs
     assert "native-integrations/windsurf-extension/" in docs

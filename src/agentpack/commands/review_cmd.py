@@ -26,6 +26,7 @@ from agentpack.core.citations import (
     validate_citations,
     validate_claim_support,
 )
+from agentpack.core.code_discipline import assess_code_discipline, format_code_discipline_report
 from agentpack.core.git_preflight import GitPreflight, run_git_preflight
 from agentpack.core.models import Citation
 from agentpack.core.toon_parser import ToonParseError, load_toon
@@ -103,6 +104,16 @@ def register(app: typer.Typer) -> None:
             "--dry-run-check",
             help="Alias for --dry-run-post: validate artifacts, citations, and commentability without posting.",
         ),
+        code_discipline: bool = typer.Option(
+            True,
+            "--code-discipline/--no-code-discipline",
+            help="After Stage 2 validates, report minimality and definition intent-anchor warnings.",
+        ),
+        strict_code_discipline: bool = typer.Option(
+            False,
+            "--strict-code-discipline",
+            help="Fail review --check when code-discipline warnings are present.",
+        ),
         strict: bool = typer.Option(False, "--strict", help="Force the full strict review scaffold even for small PRs."),
         light: bool = typer.Option(False, "--light", help="Force the lighter small-PR review scaffold."),
     ) -> None:
@@ -116,7 +127,13 @@ def register(app: typer.Typer) -> None:
             _list_review_runs(root)
             return
         if check or post_inline_comments or dry_run_post or dry_run_check:
-            _check_active_review(root, post_inline_comments=post_inline_comments, dry_run_post=dry_run_post or dry_run_check)
+            _check_active_review(
+                root,
+                post_inline_comments=post_inline_comments,
+                dry_run_post=dry_run_post or dry_run_check,
+                code_discipline=code_discipline or strict_code_discipline,
+                strict_code_discipline=strict_code_discipline,
+            )
             return
         if strict and light:
             console.print("[red]Use only one of --strict or --light.[/]")
@@ -1128,7 +1145,14 @@ def _review_state(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_run_post: bool = False) -> None:
+def _check_active_review(
+    root: Path,
+    *,
+    post_inline_comments: bool = False,
+    dry_run_post: bool = False,
+    code_discipline: bool = True,
+    strict_code_discipline: bool = False,
+) -> None:
     if not (root / _PREFLIGHT_PATH).exists():
         console.print("[red]No active review preflight found.[/] Run `agentpack review --pr <number>` first.")
         raise typer.Exit(1)
@@ -1199,6 +1223,23 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         )
         raise typer.Exit(1) from exc
 
+    discipline_report = None
+    if code_discipline:
+        # Empty range means no trusted PR diff; fall back to worktree discipline checks.
+        discipline_report = assess_code_discipline(root, diff_range=str(preflight.get("diff", {}).get("range") or "") or None)
+        if discipline_report.has_issues and strict_code_discipline:
+            state = _review_state(root, preflight)
+            _write_review_state(root, preflight, state)
+            for line in format_code_discipline_report(discipline_report):
+                console.print(line)
+            _print_review_check_action(
+                what_failed="code discipline warnings are present",
+                why_it_matters="review output should not bless bloated diffs or changed definitions without intent anchors",
+                repair_command="add meaningful definition anchors, trim bloat, or rerun without --strict-code-discipline",
+                safe_to_continue="no; fix code discipline findings before final summary",
+            )
+            raise typer.Exit(1)
+
     posted: dict[str, Any] | None = None
     if post_inline_comments or dry_run_post:
         try:
@@ -1250,6 +1291,9 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
             console.print(f"[green]✓[/] Posted inline review comments: [bold]{posted.get('url', '')}[/]")
     else:
         console.print("[green]✓[/] Stage 2 valid. Review artifacts complete; final summary is unblocked.")
+    if discipline_report is not None:
+        for line in format_code_discipline_report(discipline_report):
+            console.print(line)
     console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
 
 

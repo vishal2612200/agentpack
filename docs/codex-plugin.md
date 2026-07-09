@@ -15,6 +15,7 @@ This is the first concrete packaged plugin. The broader plugin and IDE distribut
 - `@agentpack-pack <task>` writes the task and builds `.agentpack/context.md`.
 - `@agentpack-refresh [task]` refreshes stale context through the Codex guard path.
 - `@agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged understanding and judge prompts to inspect the current PR or diff.
+- `@agentpack-audit <scope>` prepares a loop-based audit atlas and developer report for refactor, performance, infrastructure/config, reliability, or testability exploration.
 - `@agentpack-learn <statement>` turns current local AgentPack session context into an interactive learning prompt.
 
 ## Install
@@ -55,7 +56,7 @@ enabled = true
 If an older marketplace copy such as `agentpack@awesome-codex-plugins` is
 already enabled, AgentPack disables that stale entry so Codex loads the local
 bundle that matches the installed CLI. This matters for newly added skills such
-as `@agentpack-review`; copying the cache package alone is not enough if Codex
+as `@agentpack-review` and `@agentpack-audit`; copying the cache package alone is not enough if Codex
 is still pointed at an older plugin source.
 
 Auto-detection does not default to Codex; pass `--agent codex` only when you
@@ -142,6 +143,21 @@ when every finding location maps to a right-side PR diff line. Use
 payload without calling GitHub. Fresh runs are the default, and interrupted work
 is resumed only with `agentpack review --resume <run_id>`, so an abandoned
 partial review does not silently become the next run's input.
+
+For loop-based codebase exploration:
+
+```text
+@agentpack-audit src/payments --lens performance
+@agentpack-audit . --lens infra-config
+```
+
+Audit prepares `.agentpack/audit.prompt.md`, `.agentpack/audit-report.md`,
+`.agentpack/audit-atlas.json`, and `.agentpack/audit-findings.json`. Codex
+should follow the audit runbook, update the atlas before each next frontier,
+separate hypotheses from findings, and keep performance claims as `static-risk`
+until measured or backed by a concrete validation plan. For infrastructure and
+config, Codex should start from actual project usage signals and prove the
+consumer/runtime/deploy path before promoting a finding.
 
 For learning from the current local context:
 

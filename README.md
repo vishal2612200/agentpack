@@ -231,7 +231,7 @@ with `agentpack memory --prune`.
 | Orientation | ranked files, likely tests, commands, repo rules, skills, and why/why-not receipts |
 | Control plane | `next`, `status`, `guard`, MCP readiness, thread state, freshness checks, and exact repair commands |
 | Token control | budgeted packs, token contracts, delta-context guidance, cached summaries, and retrieval IDs |
-| Review and proof | citation-backed review artifacts, review preflight, benchmark misses, and local validation guidance |
+| Review and proof | citation-backed review artifacts, review preflight, code-discipline checks, benchmark misses, and local validation guidance |
 | Advisory memory | task-start maps, node refs, episodic/procedural links, timeline/staleness checks, and observer signals below source/test evidence |
 | Context cockpit | local React/Vite view of task graph, risk/tests, memory influence, replay, raw snapshot, and graph contracts |
 
@@ -242,6 +242,7 @@ with `agentpack memory --prune`.
 - Use token contracts to recommend full context vs delta context.
 - Keep repair output explicit: what failed, why it matters, the exact command, and whether work can safely continue.
 - Keep review, TOON, route explainability, and MCP troubleshooting grounded in source, diff, test, and PR evidence.
+- Enforce minimal-code discipline with advisory or strict checks for intent anchors, bloat, and missing validation.
 - Keep advisory memory auditable with timestamps, provenance, confidence, hashes, stale checks, and visible reasons.
 
 ## What We Want To Prove Next
@@ -289,6 +290,8 @@ Inside Codex:
 @agentpack-route fix auth token expiry
 @agentpack-pack fix auth token expiry
 @agentpack-review focus on backward compatibility
+@agentpack-audit src/payments --lens performance
+@agentpack-audit . --lens infra-config
 ```
 
 The Codex plugin calls the local AgentPack engine. Codex setup enables the
@@ -300,6 +303,12 @@ the top of this README.
 The review flow prepares a local two-stage PR review bundle: preflight metadata,
 a runbook, stage prompts, and branch-scoped understanding/findings JSON files.
 It does not replace `gh pr view`, `git diff`, direct code reads, or tests.
+
+The audit flow prepares a local loop-based audit atlas and developer review
+report for a codebase folder: frontier, explored areas, project usage signals,
+infrastructure/config review, hypotheses, findings, rejected ideas, and next
+pass plan. It does not replace direct `rg`, code reads, deploy dry runs,
+profiles, or focused tests.
 
 AgentPack does not upload code and does not turn AgentPack into a coding agent.
 

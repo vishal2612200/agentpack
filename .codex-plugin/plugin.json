@@ -24,7 +24,7 @@
     "screenshots": [
       "./assets/route-demo.svg"
     ],
-    "longDescription": "AgentPack is a local context engine, not a coding agent. This plugin gives Codex lightweight commands for routing tasks, refreshing context packs, and reviewing diffs with the existing local AgentPack CLI or MCP tools.",
+    "longDescription": "AgentPack is a local context engine, not a coding agent. This plugin gives Codex lightweight commands for routing tasks, refreshing context packs, auditing codebase folders, and reviewing diffs with the existing local AgentPack CLI or MCP tools.",
     "developerName": "AgentPack",
     "category": "Productivity",
     "capabilities": [
@@ -37,6 +37,7 @@
       "@agentpack-route fix auth token expiry",
       "@agentpack-pack fix auth token expiry",
       "@agentpack-learn retry handling in this repo",
+      "@agentpack-audit src/payments --lens performance",
       "@agentpack-review"
     ],
     "brandColor": "#1F6FEB"

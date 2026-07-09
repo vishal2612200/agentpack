@@ -174,8 +174,10 @@ Configures:
 
 Optional plugin packaging lives in `.codex-plugin/plugin.json` and `skills/`.
 It adds `@agentpack-route`, `@agentpack-pack`, `@agentpack-refresh`,
-`@agentpack-review`, and `@agentpack-learn` as thin Codex-facing skills that call the same local
-AgentPack CLI/MCP behavior. `agentpack init --agent codex`, `agentpack repair
+`@agentpack-review`, `@agentpack-audit`, and `@agentpack-learn` as thin
+Codex-facing skills that call the same local AgentPack CLI/MCP behavior. The
+audit skill writes both an atlas and developer report, including
+infrastructure/config usage signals. `agentpack init --agent codex`, `agentpack repair
 --agent codex`, and `agentpack upgrade --agent codex` install or refresh the
 local plugin package under Codex's plugin cache. They also disable older enabled
 AgentPack marketplace copies so Codex loads the local bundle that matches the
@@ -201,7 +203,7 @@ Configures:
 | Config file patched | `CLAUDE.md` + `.claude/settings.json` | `.cursorrules` + `.cursor/rules/*.mdc` | `.windsurfrules` | `AGENTS.md` + `.codex/hooks.json` | `GEMINI.md` + generated `.agent/skills/agentpack/SKILL.md` after pack |
 | Auto-inject on startup | ✅ `UserPromptSubmit` hook | ✅ `alwaysApply` | ✅ rules file | ✅ `AGENTS.md` | ✅ Skill auto-activation |
 | Auto-repack when stale | ✅ `get_context()` / `pack_context()` block on demand; git hooks for repo edits | ✅ git hooks | ✅ git hooks | ✅ git hooks | ✅ git hooks |
-| Manual repack shortcut | ✅ `/agentpack`, `/agentpack-review`, `/agentpack-learn` slash cmds | ✅ VS Code task | ✅ VS Code task | `agentpack pack` | ✅ VS Code task |
+| Manual repack shortcut | ✅ `/agentpack`, `/agentpack-review`, `/agentpack-audit`, `/agentpack-learn` slash cmds | ✅ VS Code task | ✅ VS Code task | `agentpack pack` | ✅ VS Code task |
 
 ---
 

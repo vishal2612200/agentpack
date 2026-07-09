@@ -39,6 +39,7 @@ Advanced command map:
 | `agentpack work --run` | Advanced optional proof harness around a configured external runner |
 | `agentpack start` | Write a task and run the default guard/refresh workflow |
 | `agentpack review` | Prepare the full two-stage PR review bundle for the current branch or PR |
+| `agentpack audit` | Prepare a loop-based codebase audit atlas for a folder, module, or flow |
 | `agentpack finish` | Run finish checks, capture benchmark evidence, and mark state done |
 | `agentpack learn` | Generate developer learning notes, skill progress, and future-agent lessons from task context and git changes |
 | `agentpack task` | Show, set, or clear global/thread-scoped task files |
@@ -302,12 +303,14 @@ Agent config
   ! ~/.claude/settings.json has no agentpack hooks — run: agentpack install --agent claude --global
   ! Hooks local-only — context won't auto-inject in other repos. Run: agentpack install --agent claude --global
 
-Slash commands (/agentpack, /agentpack-review, /agentpack-learn)
+Slash commands (/agentpack, /agentpack-review, /agentpack-audit, /agentpack-learn)
   ✓ Slash command installed (local): .claude/commands/agentpack.md
   ✓ Slash command installed (local): .claude/commands/agentpack-review.md
+  ✓ Slash command installed (local): .claude/commands/agentpack-audit.md
   ✓ Slash command installed (local): .claude/commands/agentpack-learn.md
   - Slash command not installed globally: ~/.claude/commands/agentpack.md — run: agentpack install --agent claude --global
   - Slash command not installed globally: ~/.claude/commands/agentpack-review.md — run: agentpack install --agent claude --global
+  - Slash command not installed globally: ~/.claude/commands/agentpack-audit.md — run: agentpack install --agent claude --global
   - Slash command not installed globally: ~/.claude/commands/agentpack-learn.md — run: agentpack install --agent claude --global
 
 Some checks failed. Run the suggested commands above to fix.
@@ -496,13 +499,15 @@ agentpack install --agent antigravity  # GEMINI.md + git hooks + VS Code tasks
 ```
 
 All installs are idempotent — safe to re-run, merge with existing config, never duplicate.
-Claude installs also refresh `/agentpack`, `/agentpack-review`, and `/agentpack-learn`.
+Claude installs also refresh `/agentpack`, `/agentpack-review`, `/agentpack-audit`, and `/agentpack-learn`.
 Codex installs refresh the local plugin cache, enable `agentpack@local`, and
 disable stale enabled AgentPack marketplace entries so Codex loads the same
 version as the installed CLI.
-The review slash command runs the local two-stage review bundle; the learning
-slash command uses current local AgentPack session context and keeps the user
-learning statement at the end for prompt caching.
+The review slash command runs the local two-stage review bundle; the audit
+slash command prepares a loop-based atlas scaffold and developer report,
+including infrastructure/config usage signals; the learning slash command uses
+current local AgentPack session context and keeps the user learning statement at
+the end for prompt caching.
 
 ---
 
@@ -556,6 +561,8 @@ agentpack guard --agent codex --repair-stale        # repair stale Codex rules/h
 agentpack guard --agent auto --repair-stale --refresh-context
 agentpack guard --thread codex-local --refresh-context
 agentpack guard --refresh-context --allow-dirty-targets
+agentpack guard --check-code-discipline
+agentpack guard --strict-code-discipline
 ```
 
 This is the strongest non-native enforcement AgentPack can provide: tools that run commands get a failing exit code when context is unsafe, and an automatic repair/refresh path when allowed.
@@ -568,6 +575,13 @@ pull or trust stale context over an unclear worktree. Use
 `--allow-dirty-targets` only after confirming the tracked changes are part of
 the current task. It lets guard refresh context from the dirty tree, but still
 does not attempt a git sync.
+
+Code discipline checks make the minimal-code philosophy executable. Use
+`--check-code-discipline` to print advisory warnings for missing definition
+intent anchors, large diffs, missing tests, and broad file growth. Use
+`--strict-code-discipline` when a workflow should fail before review agents see
+bloated code or non-trivial changed definitions without a meaningful docstring
+or nearby intent comment.
 
 ---
 
@@ -1027,6 +1041,7 @@ agentpack review --check
 agentpack review --check --dry-run-post
 agentpack review --check --dry-run-check
 agentpack review --check --post-inline-comments
+agentpack review --check --strict-code-discipline
 agentpack review --resume <run_id>
 agentpack review --resume latest
 agentpack review --list
@@ -1100,6 +1115,12 @@ locations that map to right-side lines in the PR diff. If any finding cannot be
 posted inline, both dry-run and posting fail closed instead of falling back to a
 broad summary comment. Successful posts are recorded in `posted-review.json` so
 re-running the check does not duplicate PR comments.
+
+`agentpack review --check` also runs code-discipline validation by default. It
+reports minimality and definition intent-anchor warnings after Stage 2
+validates, so review agents can see bloat, missing test coverage, or missing
+symbol intent before final summary. Add `--strict-code-discipline` to fail the
+review check on those warnings, or `--no-code-discipline` for legacy runs.
 
 Review scaffolding adapts to PR size and risk. Small PRs default to a lighter
 scaffold; security/auth/billing/database/migration-style reviews default to
