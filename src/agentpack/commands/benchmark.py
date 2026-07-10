@@ -132,6 +132,15 @@ class PublicRepoSpec:
         self.mode = normalize_mode(self.mode)
 
 
+@dataclass(frozen=True)
+class ReleaseGateConfig:
+    """Committed quality floor for the frozen release benchmark suite."""
+
+    min_recall: float | None = None
+    min_token_precision: float | None = None
+    min_scored_cases: int | None = None
+
+
 @dataclass
 class E2ECase:
     name: str
@@ -743,43 +752,46 @@ def _run_public_repo_suite(
     with tempfile.TemporaryDirectory(prefix="agentpack-public-benchmark-") as temp_dir:
         temp_root = Path(temp_dir)
         for spec in specs:
-            source_repo = _ensure_public_repo_clone(spec, cache, refresh=refresh)
+            source_repo = _ensure_public_repo_clone(spec, cache, refresh=refresh).resolve()
             public_cases = [*spec.cases, *_sample_public_history_cases(source_repo, spec)]
             for public_case in public_cases:
                 _ensure_git_commit(source_repo, public_case.commit)
                 parent = _git_stdout(source_repo, ["rev-parse", f"{public_case.commit}^"])
                 _ensure_git_commit(source_repo, parent)
-                work_root = temp_root / f"{spec.name}-{public_case.commit[:8]}"
-                shutil.copytree(
-                    source_repo,
-                    work_root,
-                    ignore=shutil.ignore_patterns(".agentpack", ".pytest_cache", "__pycache__"),
-                )
-                try:
-                    _run_git(work_root, ["checkout", "--force", "--quiet", parent])
-                    _run_git(work_root, ["reset", "--hard", "--quiet", parent])
-                    _run_git(work_root, ["clean", "-ffd", "--quiet"])
-                except subprocess.CalledProcessError as exc:
-                    stderr = (exc.stderr or "").strip()
-                    command = " ".join(str(part) for part in exc.cmd)
-                    detail = f": {stderr}" if stderr else ""
-                    raise RuntimeError(
-                        "Public benchmark checkout failed "
-                        f"for repo={spec.name} commit={public_case.commit} parent={parent}; "
-                        f"`{command}` exited {exc.returncode}{detail}"
-                    ) from exc
-                result = _run_case(
-                    work_root,
-                    BenchmarkCase(
-                        task=public_case.task,
-                        mode=public_case.mode,
-                        expected_files=public_case.expected_files,
-                        task_type=public_case.task_type,
-                        workspace=public_case.workspace,
-                        budget=public_case.budget,
-                    ),
-                )
-                results.append(result)
+                with tempfile.TemporaryDirectory(
+                    prefix=f"{spec.name}-{public_case.commit[:8]}-",
+                    dir=temp_root,
+                ) as case_dir:
+                    work_root = Path(case_dir) / "repo"
+                    try:
+                        _run_git(
+                            source_repo.parent,
+                            ["clone", "--quiet", "--shared", "--no-checkout", str(source_repo), str(work_root)],
+                        )
+                        _run_git(work_root, ["checkout", "--force", "--quiet", parent])
+                        _run_git(work_root, ["reset", "--hard", "--quiet", parent])
+                        _run_git(work_root, ["clean", "-ffd", "--quiet"])
+                    except subprocess.CalledProcessError as exc:
+                        stderr = (exc.stderr or "").strip()
+                        command = " ".join(str(part) for part in exc.cmd)
+                        detail = f": {stderr}" if stderr else ""
+                        raise RuntimeError(
+                            "Public benchmark checkout failed "
+                            f"for repo={spec.name} commit={public_case.commit} parent={parent}; "
+                            f"`{command}` exited {exc.returncode}{detail}"
+                        ) from exc
+                    result = _run_case(
+                        work_root,
+                        BenchmarkCase(
+                            task=public_case.task,
+                            mode=public_case.mode,
+                            expected_files=public_case.expected_files,
+                            task_type=public_case.task_type,
+                            workspace=public_case.workspace,
+                            budget=public_case.budget,
+                        ),
+                    )
+                    results.append(result)
     return results
 
 
@@ -864,6 +876,29 @@ def _write_public_repo_lock(path: Path, specs: list[PublicRepoSpec]) -> Path:
 
 def _default_public_repos_file(root: Path) -> Path:
     return root / "benchmarks" / "public-repos.toml"
+
+
+def _default_release_repos_file(root: Path) -> Path:
+    return root / "benchmarks" / "release-repos.lock.toml"
+
+
+def _load_release_gate_config(path: Path) -> ReleaseGateConfig:
+    """Read optional release-only quality floors without affecting public suite manifests."""
+    data = tomllib.loads(path.read_text(encoding="utf-8"))
+    raw_gate = data.get("gate")
+    if not isinstance(raw_gate, dict):
+        return ReleaseGateConfig()
+
+    def _optional_float(key: str) -> float | None:
+        value = raw_gate.get(key)
+        return float(value) if isinstance(value, (int, float)) else None
+
+    min_cases = raw_gate.get("min_scored_cases")
+    return ReleaseGateConfig(
+        min_recall=_optional_float("min_recall"),
+        min_token_precision=_optional_float("min_token_precision"),
+        min_scored_cases=int(min_cases) if isinstance(min_cases, int) and min_cases >= 0 else None,
+    )
 
 
 def _load_history_cases(root: Path, n: int) -> list[BenchmarkCase]:
@@ -10020,11 +10055,23 @@ def benchmark(
         return
 
     if public_repos:
-        manifest = Path(public_repos_file) if public_repos_file else _default_public_repos_file(root)
+        manifest = (
+            Path(public_repos_file)
+            if public_repos_file
+            else _default_release_repos_file(root)
+            if release_gate
+            else _default_public_repos_file(root)
+        )
         if not manifest.exists():
             console.print(f"[yellow]No public repo manifest found at {manifest}[/]")
             console.print("  Use [bold]benchmarks/public-repos.toml[/] or pass [bold]--public-repos-file[/].")
             raise typer.Exit(1)
+        release_config = _load_release_gate_config(manifest) if release_gate else ReleaseGateConfig()
+        if release_config.min_recall is not None:
+            min_recall = max(min_recall, release_config.min_recall)
+        if release_config.min_token_precision is not None:
+            min_token_precision = max(min_token_precision, release_config.min_token_precision)
+
         specs = _load_public_repo_specs(manifest)
         specs = _filter_public_repo_specs(
             specs,
@@ -10060,6 +10107,14 @@ def benchmark(
 
         if not results:
             raise typer.Exit(1)
+
+        scored_case_count = sum(1 for result in results if result.case.expected_files)
+        if release_config.min_scored_cases is not None and scored_case_count < release_config.min_scored_cases:
+            console.print(
+                "[red]Release gate scored too few cases: "
+                f"{scored_case_count} < {release_config.min_scored_cases}[/]"
+            )
+            raise typer.Exit(2)
 
         console.print("\n[bold]Summary[/]")
         _print_summary_table(results)

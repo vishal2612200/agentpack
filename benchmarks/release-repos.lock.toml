@@ -1,0 +1,948 @@
+# AgentPack public benchmark lock file.
+# Generated from a resolved public-repos manifest; sample_history is frozen as explicit cases.
+
+[gate]
+schema_version = 1
+min_recall = 0.648
+min_token_precision = 0.500
+min_scored_cases = 107
+
+[[repos]]
+name = "pallets-click"
+url = "https://github.com/pallets/click.git"
+ref = "main"
+sample_history = 0
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+include_globs = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
+exclude_globs = ["docs/**", "examples/**"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "61bdc2ae81f6d0dc19bd247504544659245df056"
+task = "Implement a regex-based solution to hide hidden input"
+task_type = "python-cli"
+mode = "balanced"
+budget = 2000
+expected_files = ["src/click/termui.py", "tests/test_termui.py"]
+
+[[repos.cases]]
+commit = "fc6c7c47edd6110b6bd5a1a5297b2035214b0cd1"
+task = "FuncParamType should use ValueError message in self.fail"
+task_type = "python-cli"
+mode = "balanced"
+budget = 6000
+expected_files = ["src/click/types.py", "tests/test_types.py"]
+
+[[repos.cases]]
+commit = "831c8f0948af519e45b90801d7430ff25451f972"
+task = "Add NoSuchCommand exception with suggestions for misspelled commands"
+task_type = "python-cli"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/click/__init__.py", "src/click/core.py", "src/click/exceptions.py", "src/click/parser.py", "tests/test_commands.py", "tests/test_options.py"]
+
+[[repos.cases]]
+commit = "19fd4d6e18bc9fce451f92f422696b11169faa57"
+task = "Ensure fish completion handles multiline help strings correctly"
+task_type = "python-cli"
+mode = "balanced"
+budget = 2000
+expected_files = ["src/click/shell_completion.py", "tests/test_shell_completion.py"]
+
+[[repos.cases]]
+commit = "d2e4a42ff410d92e88293f3552422a4a284c749b"
+task = "Extract _guess_type from convert_type and add overloads"
+task_type = "python-cli"
+mode = "balanced"
+budget = 1200
+expected_files = ["src/click/types.py"]
+
+[[repos.cases]]
+commit = "c3535905c77a29afc84861b29d3ad366ce5451bd"
+task = "Fix broken fish completion and multiline help string"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/shell_completion.py"]
+
+[[repos.cases]]
+commit = "4e869f3a172a58df077932dc80b130cdf4ba9774"
+task = "start version 8.5.0"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "0039359443e73ab1034c63a1f6d58aba22c0ebc8"
+task = "Add missing space between option help text and deprecation label (#3423)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py"]
+
+[[repos.cases]]
+commit = "73e155006526575548d143ef519995f540547e52"
+task = "Fix sentinel typing and its uses in parser (#3396)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/_utils.py", "src/click/core.py", "src/click/parser.py"]
+
+[[repos.cases]]
+commit = "c69643b60cf971cd5d8e5d3902632807ceab9b8f"
+task = "Add file-like pager: `click.get_pager_file()` (#1572)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/__init__.py", "src/click/_compat.py", "src/click/_termui_impl.py", "src/click/termui.py"]
+
+[[repos.cases]]
+commit = "c5cced7b3096804567688df645194e3ed3dfa88b"
+task = "fix: `_termui_impl.open_url()` \u2014 'start' on Windows is a cmd built-in, not an executable (#3186)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/_termui_impl.py"]
+
+[[repos.cases]]
+commit = "2468b70997a6ec27ced4b4867954c90da3f92075"
+task = "Fix readline backspace/line-wrapping on linux (#2969)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/termui.py"]
+
+[[repos.cases]]
+commit = "ddede2147c9370ab8275f81db4826b6895d2e7dc"
+task = "`Parameter` typing improvements (#2805)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py", "src/click/exceptions.py", "src/click/shell_completion.py"]
+
+[[repos.cases]]
+commit = "bb7be1f6a91f3fd1267d1a6d68771273d593f9c7"
+task = "Revert \"Use `default=True` as a sentinel for non-boolean flags\""
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py"]
+
+[[repos.cases]]
+commit = "6c4a77ba24854dab793a8ff72110a0a24c403c9f"
+task = "Use `default=True` as a sentinel for non-boolean flags"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py"]
+
+[[repos.cases]]
+commit = "701b313160be12752e49b3f7cea32402c0969a69"
+task = "Fix completions for quoted/escaped parameters in Fish (#3013)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/shell_completion.py"]
+
+[[repos.cases]]
+commit = "a1235aacb1be55dc66ddcfefbf64dec44b6ab54d"
+task = "Fix Zsh completions with colons (#2846)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/shell_completion.py"]
+
+[[repos.cases]]
+commit = "d1a80aa95cc207f50da1c438af742b7edad02267"
+task = "update dev dependencies"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/_termui_impl.py", "src/click/utils.py"]
+
+[[repos.cases]]
+commit = "f14b75063fb36b9208b13a920326926363616b39"
+task = "update dev dependencies"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/_termui_impl.py", "src/click/_winconsole.py", "src/click/core.py", "src/click/formatting.py"]
+
+[[repos.cases]]
+commit = "4ece17a107d7b2e8bc3bd14356c2b53038fe41cf"
+task = "Expand `Choice` token normalization + make generic (#2796)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py", "src/click/exceptions.py", "src/click/types.py"]
+
+[[repos.cases]]
+commit = "45f89cd5d39db37b9aa1a014da000f12da532ddc"
+task = "Improve typing on Windows (#2803)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/_compat.py", "src/click/_termui_impl.py", "src/click/_winconsole.py"]
+
+[[repos.cases]]
+commit = "4ffa1ef3b6d23208f65ac54f688f02856aa0d660"
+task = "Correct click.edit typing (#2804)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/_termui_impl.py", "src/click/termui.py"]
+
+[[repos.cases]]
+commit = "b5464b7e065bdfd952b1532880941f1be07e4e2b"
+task = "Only try to set flag_value if is_flag is true (#2829)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py"]
+
+[[repos.cases]]
+commit = "88328fc8743d43566081d9f17acad5f5552f5a87"
+task = "Add CliRunner default `catch_exceptions` parameter (#2818)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/testing.py"]
+
+[[repos.cases]]
+commit = "5961d31fb566f089ad468a5b26a32f1ebfa7f63e"
+task = "Introduce Parameter.deprecated + Command.deprecated message customization (#2271)"
+task_type = "python-cli"
+mode = "balanced"
+budget = 3000
+expected_files = ["src/click/core.py"]
+
+[[repos]]
+name = "pallets-itsdangerous"
+url = "https://github.com/pallets/itsdangerous.git"
+ref = "main"
+sample_history = 0
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+include_globs = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
+exclude_globs = ["docs/**"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "7edfa12ed562c5d5e9d6faa06812e42f02efb0e0"
+task = "Drop end of life python versions"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml", "src/itsdangerous/serializer.py", "tests/test_itsdangerous/test_serializer.py"]
+
+[[repos.cases]]
+commit = "4712ab6f5b7ca291544ce5e2dad2beffb05291a7"
+task = "start version 2.2.0"
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+expected_files = ["src/itsdangerous/__init__.py"]
+
+[[repos.cases]]
+commit = "d21128d16131e77de453570f19958945724ee3be"
+task = "start version 2.1.0.dev0"
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+expected_files = ["src/itsdangerous/__init__.py"]
+
+[[repos.cases]]
+commit = "0f372436f47a85a23023abb510e7cc6bc563c392"
+task = "start version 2.0.1.dev0"
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+expected_files = ["src/itsdangerous/__init__.py"]
+
+[[repos.cases]]
+commit = "195e5f77308d5464c085ba77d247c5589afab47f"
+task = "mention itsdangerous in deprecation message"
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+expected_files = ["src/itsdangerous/_json.py", "src/itsdangerous/jws.py", "src/itsdangerous/serializer.py"]
+
+[[repos.cases]]
+commit = "c23001855d36962ee19e19f9c7286c1b2ec534b8"
+task = "prerelease version 2.0.0rc1"
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+expected_files = ["src/itsdangerous/__init__.py"]
+
+[[repos.cases]]
+commit = "6785c5edf4d3c0f4ecc2dfb7ffb8aff40006798a"
+task = "add typing with mypy"
+task_type = "python-library"
+mode = "balanced"
+budget = 2500
+expected_files = ["src/itsdangerous/serializer.py"]
+
+[[repos]]
+name = "pallets-markupsafe"
+url = "https://github.com/pallets/markupsafe.git"
+ref = "main"
+sample_history = 0
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+include_globs = ["src/**/*.py", "tests/**/*.py", "pyproject.toml"]
+exclude_globs = ["docs/**"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "82cabf9c5a2f8f1b27854afcc3e0d9bf5a32f0c2"
+task = "Remove previously deprecated code"
+task_type = "python-library"
+mode = "balanced"
+budget = 1000
+expected_files = ["src/markupsafe/__init__.py"]
+
+[[repos.cases]]
+commit = "1b54b64cab03d8af99229252e68ff02a72519f6b"
+task = "Change to DeprecationWarning"
+task_type = "python-library"
+mode = "balanced"
+budget = 1000
+expected_files = ["src/markupsafe/__init__.py"]
+
+[[repos.cases]]
+commit = "34db9005700ee928517955d1b04cc275c3f315b5"
+task = "start version 3.1.0"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "3d8fd8cc006124a49ce2f4268b4d1739e301583e"
+task = "fix version"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "2c6093042275eae2a68455f4af0342fc300d12c7"
+task = "start version 3.0.1"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "645d5fbbe03f21b0ef526b589ef3b677b158502b"
+task = "remove unused config"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "23c90b446d042b6eb31574d9830cc6c96aeb46ba"
+task = "add gha-update, remove dependabot"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "044f903755ac205bda2e1087b7f69e61b6d5001f"
+task = "use __class__ instead of type()"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["src/markupsafe/__init__.py"]
+
+[[repos.cases]]
+commit = "328e09aabc8274cba9427ec40712cd0b7ce4c143"
+task = "fix license metadata"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "acad7fd962c257dadb7ac406788280466c5778ef"
+task = "update dev dependencies"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["src/markupsafe/__init__.py"]
+
+[[repos.cases]]
+commit = "9d3f39c994f60748a9b44c5c4d89b24e74d27553"
+task = "remove dynamic version"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["pyproject.toml"]
+
+[[repos.cases]]
+commit = "e1b29340f413289d8e01124168fa3f478b8cfb94"
+task = "simplify using assignment expressions"
+task_type = "python-library"
+mode = "balanced"
+budget = 2000
+expected_files = ["src/markupsafe/__init__.py"]
+
+[[repos]]
+name = "vite"
+url = "https://github.com/vitejs/vite.git"
+ref = "main"
+sample_history = 0
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+include_globs = ["packages/**/*.ts", "packages/**/*.tsx", "playground/**/*.ts", "playground/**/*.tsx"]
+exclude_globs = ["docs/**", "packages/*/dist/**", "**/*.d.ts"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "c961cae2868cc1521457ec60583867f0440e6949"
+task = "test: avoid scanner scanning all files under `__tests__` (#22912)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/__tests__/dev.spec.ts", "packages/vite/src/node/__tests__/http.spec.ts", "packages/vite/src/node/__tests__/resolve.spec.ts"]
+
+[[repos.cases]]
+commit = "ab5dafa8e66296ef201f615489fb57954bb740ce"
+task = "feat(legacy): prefer oxc as minifier (fix #21973) (#22468)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/plugin-legacy/src/index.ts", "packages/vite/src/node/plugins/terser.ts", "playground/legacy/__tests__/legacy.spec.ts"]
+
+[[repos.cases]]
+commit = "173a1b648c321e0f836e5a94fc47c4fa9b081bfc"
+task = "fix(ssr): align named export function call stacktrace column with Node (#22829)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/ssr/__tests__/ssrTransform.spec.ts", "packages/vite/src/node/ssr/runtime/__tests__/server-source-maps.spec.ts", "packages/vite/src/node/ssr/ssrTransform.ts"]
+
+[[repos.cases]]
+commit = "0ba613fb5716c7af22c201f2b21640463fc7af50"
+task = "test(dynamic-import): cover object rest destructuring of dynamic import (#22780)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["playground/dynamic-import/__tests__/dynamic-import.spec.ts"]
+
+[[repos.cases]]
+commit = "575c32c29925c554f4ef4068738ab89c6878f615"
+task = "fix(build): add workaround for building on stackblitz (#22840)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/plugins/importAnalysisBuild.ts"]
+
+[[repos.cases]]
+commit = "72a5e2192506f51a5efd09c059815a5c43a9eacb"
+task = "fix(optimizer): avoid optimizer run for transform request before init (#22852)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/optimizer/optimizer.ts"]
+
+[[repos.cases]]
+commit = "70435b2551ee4fe3a0d55c8a3bb61b96f44d2763"
+task = "docs: fix incorrect `@default` for `server.cors` (#22859)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/http.ts"]
+
+[[repos.cases]]
+commit = "2c4a217a63dc0a7fcb10bc710a988f32b173f481"
+task = "build: remove the custom onLog function (#22878)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/rolldown.config.ts"]
+
+[[repos.cases]]
+commit = "c581b5588cb8e94603d17bce2ff9fec8e8e0a3bf"
+task = "build: replace deprecated `onwarn` with `onLog` (#22741)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/rolldown.config.ts"]
+
+[[repos.cases]]
+commit = "ea22fb352aad9a42c0a9d08f39d8a0bae8c111a5"
+task = "refactor: eliminate ineffectiveDynamicImport warn (#22876)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/cli.ts", "packages/vite/src/node/plugins/index.ts"]
+
+[[repos.cases]]
+commit = "d4295a9ffce428c0e51892373e00c07fccc0498a"
+task = "fix(deps): update all non-major dependencies (#22865)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/create-vite/src/index.ts"]
+
+[[repos.cases]]
+commit = "9dddae69a214bd468223d33f9e64c580ef1bb0d6"
+task = "refactor(legacy): use `babel-plugin-polyfill-*` consistently (#22874)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/plugin-legacy/src/index.ts"]
+
+[[repos.cases]]
+commit = "7cf07e4c5f7a6af276012e0c2ec06e08499e951e"
+task = "fix(deps): update rolldown-related dependencies (#22866)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["playground/css-codesplit/__tests__/css-codesplit-consistent.spec.ts"]
+
+[[repos.cases]]
+commit = "af21ab68adac3380dc9a854d2fe3f776654301cd"
+task = "test: avoid warnings (#22851)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/__tests__/config.spec.ts", "playground/client-reload/__tests__/client-reload.spec.ts"]
+
+[[repos.cases]]
+commit = "648bd04933093d0aac9565f21a49811437776886"
+task = "fix: strip pure CSS chunk imports when chunkImportMap is enabled (#22841)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/plugins/css.ts", "packages/vite/src/node/plugins/html.ts", "packages/vite/src/node/plugins/importAnalysisBuild.ts", "playground/chunk-importmap/__tests__/chunk-importmap.spec.ts"]
+
+[[repos.cases]]
+commit = "b5868c01a124d345664450aaebd677bfba964c05"
+task = "fix(html): avoid backtracking in import-only check (#22848)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/plugins/html.ts"]
+
+[[repos.cases]]
+commit = "f1f90ed4742b3cf453428c7e581a6016a4d47321"
+task = "fix(build): keep `import.meta.url` in preload function as-is (#22839)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/plugins/importAnalysisBuild.ts", "playground/js-sourcemap/__tests__/js-sourcemap.spec.ts"]
+
+[[repos.cases]]
+commit = "1534d362794e856cc718b123cb245e0efcf36b9a"
+task = "fix(css): inject inlined CSS after the shebang line (#22717)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/__tests__/plugins/css.spec.ts", "packages/vite/src/node/plugins/css.ts"]
+
+[[repos.cases]]
+commit = "c4acd6982a051fa10dbd7e3a37e00f0c467793b8"
+task = "fix(ssr): correct stacktrace column position for first line (#22828)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/module-runner/esmEvaluator.ts", "packages/vite/src/node/ssr/runtime/__tests__/server-source-maps.spec.ts", "packages/vite/src/node/ssr/ssrStacktrace.ts"]
+
+[[repos.cases]]
+commit = "2c530542da1c50b95b7f0cb17adf82f64ecf97f3"
+task = "fix: preload css for nested dynamic imports (#22759)"
+task_type = "typescript"
+mode = "balanced"
+budget = 4000
+expected_files = ["packages/vite/src/node/plugins/importAnalysisBuild.ts", "playground/dynamic-import/__tests__/dynamic-import.spec.ts"]
+
+[[repos]]
+name = "gin"
+url = "https://github.com/gin-gonic/gin.git"
+ref = "master"
+sample_history = 0
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+include_globs = ["*.go", "**/*.go"]
+exclude_globs = ["docs/**", "examples/**"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "34dac209ffb6ef85cc78c5d217bbb7ad001d68fd"
+task = "docs: fix `BindXML` comment referencing nonexistent `binding.BindXML` (#4717)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go"]
+
+[[repos.cases]]
+commit = "d9307dbcbbe796a64d9e0ef23452da888dd7f904"
+task = "fix(context): skip chmod on pre-existing dirs in SaveUploadedFile (#4702)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go", "context_test.go"]
+
+[[repos.cases]]
+commit = "da1e108614ecbbadfa5736b1b297b16121d23b9b"
+task = "test(context): use t.TempDir() for SaveUploadedFile permission test on WSL (#4709)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context_test.go"]
+
+[[repos.cases]]
+commit = "074b669a95fd834701359acc55371e6b377618f6"
+task = "test(response_writer): add tests for Flush() with and without http.Flusher (#4699)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["response_writer_test.go"]
+
+[[repos.cases]]
+commit = "4a3eb31fb15b2a2d78b4bdbe0c31a2c564b1977a"
+task = "fix(recovery): record recovered panics in c.Errors (#4698)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["recovery.go", "recovery_test.go"]
+
+[[repos.cases]]
+commit = "293ad7edebb3ae30369288bd6416ca0d78474727"
+task = "fix(context): Copy() copies Errors and Accepted fields (#4695)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go", "context_test.go"]
+
+[[repos.cases]]
+commit = "d75fcd4c9ab260e5225de590f1f0f8c0e0e12d11"
+task = "fix(response): panic on Hijack/CloseNotify when wrapper unsupported (#4645)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["response_writer.go", "response_writer_test.go"]
+
+[[repos.cases]]
+commit = "88c42635384d52ccc28bbcc2750cc040e07e2e82"
+task = "docs(context): align inline comments in GetPostForm example (#4675)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go"]
+
+[[repos.cases]]
+commit = "96ece6a14123923d00081320486042f568adef32"
+task = "feat(context): add Scheme() with proper reverse proxy support (#4655)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go", "context_test.go"]
+
+[[repos.cases]]
+commit = "c79f5d466ee780c329663d5b599d40639b33cd93"
+task = "refactor: optimize error message concatenation in default_validator (#4685)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["binding/default_validator.go"]
+
+[[repos.cases]]
+commit = "d3ffc9985281dcf4d3bef604cce4e662b1a327a6"
+task = "test(engine): add regression tests for HandleContext with NoRoute (#4571)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["gin_test.go"]
+
+[[repos.cases]]
+commit = "6d880724cc553ccc902a88f7f871fd7ea0b44790"
+task = "refactor(test): use the built-in max/min to simplify the code (#4576)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["test_helpers.go"]
+
+[[repos.cases]]
+commit = "052d1a79aafe3f04078a2716f8e77d4340308383"
+task = "feat(render): add PDF renderer and tests (#4491)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go", "context_test.go", "render/render.go", "render/render_test.go"]
+
+[[repos.cases]]
+commit = "e292e5caa777bce70b66fe08c94cbe9cef3e2ec9"
+task = "docs: document and finalize Gin v1.12.0 release (#4551)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["version.go"]
+
+[[repos.cases]]
+commit = "ae3f524974fc4f55d18c9e7fae4614503c015226"
+task = "ci: update Go version support to 1.25+ across CI and docs (#4550)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["debug.go", "debug_test.go"]
+
+[[repos.cases]]
+commit = "472d086af2acd924cb4b9d7be0525f7d790f69bc"
+task = "fix(tree): panic in findCaseInsensitivePathRec with RedirectFixedPath (#4535)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["tree.go", "tree_test.go"]
+
+[[repos.cases]]
+commit = "fb2583442c4d9bccb75e6d26f1aa6e7c01950db6"
+task = "test(context): use http.StatusContinue constant instead of magic number 100 (#4542)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["context.go", "context_test.go", "logger_test.go", "utils_test.go"]
+
+[[repos.cases]]
+commit = "6f1d5fe3cdb171a08928c3c9dd3fbcfc9ee1b521"
+task = "test(render): add comprehensive error handling tests (#4541)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["render/render_test.go"]
+
+[[repos.cases]]
+commit = "5c00df8afadd06cc5be530dde00fe6d9fa4a2e4a"
+task = "fix(render): write content length in Data.Render (#4206)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["render/data.go", "render/render_test.go"]
+
+[[repos.cases]]
+commit = "db309081bc5c137b2aa15701ef53f7f19788da25"
+task = "chore(logger): allow skipping query string output (#4547)"
+task_type = "go-service"
+mode = "balanced"
+budget = 3500
+expected_files = ["logger.go", "logger_test.go"]
+
+[[repos]]
+name = "spring-petclinic"
+url = "https://github.com/spring-projects/spring-petclinic.git"
+ref = "main"
+sample_history = 0
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+include_globs = ["src/**/*.java", "src/**/*.xml", "pom.xml"]
+exclude_globs = ["target/**", "docs/**"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "51045d1648dad955df586150c1a1a6e22ef400c2"
+task = "test: add WelcomeController test and PetValidator supports() tests"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/owner/PetValidatorTests.java"]
+
+[[repos.cases]]
+commit = "b3ee2c53e76e9267f03551a7cd36b0983c859c56"
+task = "Add test for duplicate pet name during update"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java"]
+
+[[repos.cases]]
+commit = "b11afec3af05e8ff5156566aa014f2036b276647"
+task = "Add test for updating pet with same name"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/owner/PetControllerTests.java"]
+
+[[repos.cases]]
+commit = "1312314e4ef7493f11596313d40c7ecb8429aed3"
+task = "Remove unused Vets object from VetController"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/main/java/org/springframework/samples/petclinic/vet/VetController.java"]
+
+[[repos.cases]]
+commit = "9a5d50cf5343558e12b528f7299af8698fb753fc"
+task = "Upgrade to Spring Boot 4.1"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml", "src/main/java/org/springframework/samples/petclinic/PetClinicRuntimeHints.java", "src/test/java/org/springframework/samples/petclinic/MySqlIntegrationTests.java", "src/test/java/org/springframework/samples/petclinic/MysqlTestApplication.java", "src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java", "src/test/java/org/springframework/samples/petclinic/PostgresIntegrationTests.java"]
+
+[[repos.cases]]
+commit = "a2c2ef994340d3970eb6db51247456a51bb161f8"
+task = "Register native resource hints for nested db/{h2,mysql,postgres}/ scripts"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/main/java/org/springframework/samples/petclinic/PetClinicRuntimeHints.java"]
+
+[[repos.cases]]
+commit = "753d35c2f84432d88c0f3b61c9302a16069b78dd"
+task = "Validate future visit dates"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/main/java/org/springframework/samples/petclinic/owner/Visit.java", "src/main/java/org/springframework/samples/petclinic/owner/VisitController.java", "src/test/java/org/springframework/samples/petclinic/owner/VisitControllerTests.java"]
+
+[[repos.cases]]
+commit = "3c06fbfc1e42eb40802e0d0ca989bc9226755804"
+task = "fix: add @Size validation on Person firstName and lastName"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/main/java/org/springframework/samples/petclinic/model/Person.java"]
+
+[[repos.cases]]
+commit = "a6efbed773f61a271c071461326940786998722e"
+task = "Add missing validation test for Person.lastName"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/model/ValidatorTests.java"]
+
+[[repos.cases]]
+commit = "c7ee170434ec3e369fdc9201290ba2ea4c92b557"
+task = "Be more careful with allowed fields in binders"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/main/java/org/springframework/samples/petclinic/owner/OwnerController.java", "src/main/java/org/springframework/samples/petclinic/owner/PetController.java", "src/main/java/org/springframework/samples/petclinic/owner/VisitController.java"]
+
+[[repos.cases]]
+commit = "edf4db28affcc4741c79850a3d95bc3f177b5ff9"
+task = "Update MySQL and PostgreSQL Docker images to latest versions"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/MySqlIntegrationTests.java", "src/test/java/org/springframework/samples/petclinic/MysqlTestApplication.java"]
+
+[[repos.cases]]
+commit = "c71ccfd855d06f7c7ccebbad04e927e1957f269a"
+task = "Revert checkstyle to latest v12"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml"]
+
+[[repos.cases]]
+commit = "e316074300de4761f7b100a21423525e8b8ecdc5"
+task = "Set fetch size for Hibernate"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java"]
+
+[[repos.cases]]
+commit = "a4fcf04c932031463dc7eb1ed9f1e05b402c13c0"
+task = "Fix main method for docker compose"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/test/java/org/springframework/samples/petclinic/PetClinicIntegrationTests.java"]
+
+[[repos.cases]]
+commit = "95f7e82ad5fd16114d4655d29196566d48d0ea9d"
+task = "Upgrade to Spring Boot 4.0.1"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml"]
+
+[[repos.cases]]
+commit = "fd4361b118931e07a7a1bde04750ec32a5fdb56e"
+task = "Use snake case physical naming strategy"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["src/main/java/org/springframework/samples/petclinic/model/NamedEntity.java", "src/main/java/org/springframework/samples/petclinic/model/Person.java", "src/main/java/org/springframework/samples/petclinic/owner/Owner.java", "src/main/java/org/springframework/samples/petclinic/owner/Pet.java"]
+
+[[repos.cases]]
+commit = "3e1ce239f4488f20abda24441388a515ea55a815"
+task = "Polish"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml"]
+
+[[repos.cases]]
+commit = "134c5a3f9dae78e4ca3e0ac8c6c236c49695b572"
+task = "Use more specific test dependencies"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml"]
+
+[[repos.cases]]
+commit = "a9b7c6b4cdaae88a385935679672d040b786a71a"
+task = "Use canonical starter name for Boot 4.0"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml"]
+
+[[repos.cases]]
+commit = "828940e5a1bc51ce1e49410bc1dcf6c4139ea51f"
+task = "Support building with Java 17"
+task_type = "java-spring"
+mode = "balanced"
+budget = 4000
+expected_files = ["pom.xml"]
+
+[[repos]]
+name = "nestjs"
+url = "https://github.com/nestjs/nest.git"
+ref = "master"
+sample_history = 0
+task_type = "typescript-monorepo"
+mode = "balanced"
+budget = 5000
+include_globs = ["packages/**/*.ts", "integration/**/*.ts", "sample/**/*.ts"]
+exclude_globs = ["docs/**", "**/*.d.ts"]
+max_changed_files = 8
+
+[[repos.cases]]
+commit = "5de10dfb5d46057d9fde73b8f62e58783db0addb"
+task = "fix: should skip transient providers for snapshots"
+task_type = "typescript-monorepo"
+mode = "balanced"
+budget = 5000
+expected_files = ["packages/core/injector/injector.ts", "packages/core/test/injector/injector.spec.ts", "packages/core/test/nest-application-context.spec.ts"]
+
+[[repos.cases]]
+commit = "9a5d07b062c5b3897b9585e5531438acb85fc985"
+task = "test(core): add deeply nested transient providers in scoped chains"
+task_type = "typescript-monorepo"
+mode = "balanced"
+budget = 5000
+expected_files = ["integration/scopes/e2e/transient-scope.spec.ts"]
+
+[[repos.cases]]
+commit = "f70f4ba506cdc50e2dca4ea2f5ad00c3bd6fc942"
+task = "test(core): add several tests for parallel request-scoped providers"
+task_type = "typescript-monorepo"
+mode = "balanced"
+budget = 5000
+expected_files = ["integration/injector/e2e/request-scoped-factory-provider.spec.ts", "integration/injector/e2e/scoped-instances.spec.ts", "integration/microservices/e2e/math-grpc.spec.ts", "integration/scopes/e2e/durable-providers.spec.ts", "integration/scopes/e2e/request-modules-scope.spec.ts", "integration/scopes/e2e/request-scope.spec.ts"]

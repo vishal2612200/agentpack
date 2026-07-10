@@ -67,10 +67,13 @@ For keyword quality, write cases around the user wording that previously failed.
 The goal is not to preserve a static trigger list; it is to prove that real task
 phrases select the right skill and avoid broad generic recommendations.
 
-`agentpack benchmark --release-gate` is the public release gate. It expands to
-`--public-repos --prove-targets --misses --public-table`, reads
-`benchmarks/public-repos.toml` by default, and can use `--public-repos-cache`
-or `--refresh-public-repos`.
+`agentpack benchmark --release-gate` is the frozen public release gate. It
+expands to `--public-repos --prove-targets --misses --public-table`, reads
+`benchmarks/release-repos.lock.toml` by default, and enforces its committed
+case-count, recall, and token-precision floors. Use
+`benchmarks/public-repos.toml` with `--public-repos` for the broader evolving
+language-coverage suite. Both commands support `--public-repos-cache` and
+`--refresh-public-repos`.
 
 For external claims, use several real repositories or anonymized historical task
 sets and publish the generated table from `benchmarks/results/*-public.md`.

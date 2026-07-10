@@ -17,6 +17,7 @@ from agentpack.commands.benchmark import (
     E2ECase,
     PublicRepoCase,
     PublicRepoSpec,
+    ReleaseGateConfig,
     _precision_recall,
     _skill_metrics,
     _sample_fixture_cases,
@@ -33,6 +34,7 @@ from agentpack.commands.benchmark import (
     _write_public_benchmark_table,
     _quality_status,
     _load_public_repo_specs,
+    _load_release_gate_config,
     _filter_public_repo_specs,
     _ensure_public_repo_clone,
     _run_public_repo_suite,
@@ -3075,7 +3077,10 @@ def test_write_public_benchmark_table(tmp_path: Path) -> None:
 def test_benchmark_release_gate_maps_to_public_repo_gate(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "benchmarks").mkdir()
-    (tmp_path / "benchmarks" / "public-repos.toml").write_text("[[repos]]\nname='empty'\nurl='x'\n", encoding="utf-8")
+    (tmp_path / "benchmarks" / "release-repos.lock.toml").write_text(
+        "[gate]\nmin_recall=0.65\nmin_token_precision=0.50\nmin_scored_cases=1\n\n[[repos]]\nname='empty'\nurl='x'\n",
+        encoding="utf-8",
+    )
     mocked = _make_result(["a.py"], ["a.py"], noise_pct=0.0)
     mocked.case.task = "repo: fix thing"
     mocked.case.task_type = "python"
@@ -3088,6 +3093,44 @@ def test_benchmark_release_gate_maps_to_public_repo_gate(tmp_path: Path, monkeyp
     assert "Release gate" in result.output
     assert run_suite.called
     assert not write_table.called
+
+
+def test_load_release_gate_config_ignores_custom_manifest_without_gate(tmp_path: Path) -> None:
+    manifest = tmp_path / "public-repos.toml"
+    manifest.write_text("[[repos]]\nname='custom'\nurl='x'\n", encoding="utf-8")
+
+    assert _load_release_gate_config(manifest) == ReleaseGateConfig()
+
+
+def test_load_release_gate_config_reads_committed_floors(tmp_path: Path) -> None:
+    manifest = tmp_path / "release-repos.lock.toml"
+    manifest.write_text(
+        "[gate]\nmin_recall=0.671\nmin_token_precision=0.506\nmin_scored_cases=107\n",
+        encoding="utf-8",
+    )
+
+    assert _load_release_gate_config(manifest) == ReleaseGateConfig(
+        min_recall=0.671,
+        min_token_precision=0.506,
+        min_scored_cases=107,
+    )
+
+
+def test_release_gate_rejects_lock_with_too_few_scored_cases(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "benchmarks").mkdir()
+    (tmp_path / "benchmarks" / "release-repos.lock.toml").write_text(
+        "[gate]\nmin_scored_cases=2\n\n[[repos]]\nname='empty'\nurl='x'\n",
+        encoding="utf-8",
+    )
+    mocked = _make_result(["a.py"], ["a.py"], noise_pct=0.0)
+
+    with patch("agentpack.commands.benchmark._load_public_repo_specs", return_value=[SimpleNamespace(name="repo", cases=[object()])]), \
+         patch("agentpack.commands.benchmark._run_public_repo_suite", return_value=[mocked]):
+        result = CliRunner().invoke(app, ["benchmark", "--release-gate", "--no-public-table"])
+
+    assert result.exit_code == 2
+    assert "Release gate scored too few cases: 1 < 2" in result.output
 
 
 def test_benchmark_public_suite_reproduce_maps_to_public_repo_gate(tmp_path: Path, monkeypatch) -> None:
@@ -4105,8 +4148,10 @@ def test_ensure_public_repo_clone_uses_full_shallow_clone(tmp_path: Path) -> Non
     assert any(call.args[1] == ["clean", "-ffd", "--quiet"] for call in run_git.call_args_list)
 
 
-def test_run_public_repo_suite_uses_parent_checkout(tmp_path: Path) -> None:
+def test_run_public_repo_suite_uses_parent_checkout(tmp_path: Path, monkeypatch) -> None:
     from agentpack.commands import benchmark as benchmark_mod
+
+    monkeypatch.chdir(tmp_path)
 
     spec = benchmark_mod.PublicRepoSpec(
         name="click",
@@ -4122,17 +4167,26 @@ def test_run_public_repo_suite_uses_parent_checkout(tmp_path: Path) -> None:
         ],
     )
 
-    with patch("agentpack.commands.benchmark._ensure_public_repo_clone", return_value=tmp_path / "cache"), \
+    observed_roots: list[Path] = []
+
+    def run_git(cwd: Path, args: list[str]) -> None:
+        if args[0] == "clone":
+            Path(args[-1]).mkdir(parents=True)
+
+    def run_case(root: Path, case: BenchmarkCase) -> CaseResult:
+        observed_roots.append(root)
+        assert root.exists()
+        return _make_result(["src/click/termui.py"], case.expected_files)
+
+    with patch("agentpack.commands.benchmark._ensure_public_repo_clone", return_value=Path("cache")), \
          patch("agentpack.commands.benchmark._ensure_git_commit") as ensure_commit, \
          patch("agentpack.commands.benchmark._git_stdout", return_value="parent123") as git_stdout, \
-         patch("agentpack.commands.benchmark._run_git") as run_git, \
-         patch("agentpack.commands.benchmark.shutil.copytree") as copytree, \
-         patch("agentpack.commands.benchmark._run_case") as run_case:
-        run_case.side_effect = lambda _root, case: _make_result(["src/click/termui.py"], case.expected_files)
+         patch("agentpack.commands.benchmark._run_git", side_effect=run_git) as mocked_run_git, \
+         patch("agentpack.commands.benchmark._run_case", side_effect=run_case) as mocked_run_case:
         results = _run_public_repo_suite(tmp_path, [spec], cache_dir=tmp_path / "cache")
 
     assert len(results) == 1
-    case_arg = run_case.call_args.args[1]
+    case_arg = mocked_run_case.call_args.args[1]
     assert case_arg.task == "fix prompt"
     assert case_arg.task_type == "python-cli"
     assert case_arg.budget == 1200
@@ -4141,10 +4195,14 @@ def test_run_public_repo_suite_uses_parent_checkout(tmp_path: Path) -> None:
         (tmp_path / "cache", "parent123"),
     ]
     git_stdout.assert_called_once_with(tmp_path / "cache", ["rev-parse", "abc123^"])
-    copytree.assert_called_once()
-    assert any(call.args[1] == ["checkout", "--force", "--quiet", "parent123"] for call in run_git.call_args_list)
-    assert any(call.args[1] == ["reset", "--hard", "--quiet", "parent123"] for call in run_git.call_args_list)
-    assert any(call.args[1] == ["clean", "-ffd", "--quiet"] for call in run_git.call_args_list)
+    assert any(
+        call.args[1][:4] == ["clone", "--quiet", "--shared", "--no-checkout"]
+        for call in mocked_run_git.call_args_list
+    )
+    assert any(call.args[1] == ["checkout", "--force", "--quiet", "parent123"] for call in mocked_run_git.call_args_list)
+    assert any(call.args[1] == ["reset", "--hard", "--quiet", "parent123"] for call in mocked_run_git.call_args_list)
+    assert any(call.args[1] == ["clean", "-ffd", "--quiet"] for call in mocked_run_git.call_args_list)
+    assert observed_roots and all(not root.exists() for root in observed_roots)
 
 
 def test_run_public_repo_suite_checkout_error_names_case(tmp_path: Path) -> None:
@@ -4170,8 +4228,7 @@ def test_run_public_repo_suite_checkout_error_names_case(tmp_path: Path) -> None
     with patch("agentpack.commands.benchmark._ensure_public_repo_clone", return_value=tmp_path / "cache"), \
          patch("agentpack.commands.benchmark._ensure_git_commit"), \
          patch("agentpack.commands.benchmark._git_stdout", return_value="parent123"), \
-         patch("agentpack.commands.benchmark._run_git", side_effect=checkout_error), \
-         patch("agentpack.commands.benchmark.shutil.copytree"):
+         patch("agentpack.commands.benchmark._run_git", side_effect=[None, checkout_error]):
         with pytest.raises(RuntimeError) as excinfo:
             _run_public_repo_suite(tmp_path, [spec], cache_dir=tmp_path / "cache")
 
