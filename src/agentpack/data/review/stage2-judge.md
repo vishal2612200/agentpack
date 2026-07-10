@@ -77,6 +77,11 @@ findings[]:
 coverage: Units examined and any gaps
 ```
 
+For PR-bound inline posting, `location` should be the changed PR diff line where
+the reviewer should see the finding. Supporting `evidence` may cite unchanged
+helpers, callers, or contracts, but a support-file-only `location` cannot become
+an inline GitHub comment and will be moved into the review body.
+
 Schema:
 
 Do not answer inline from this stage. Read the understanding TOON from disk first. If you cannot read the input file or write the findings file, stop and report blocked instead of continuing in chat.

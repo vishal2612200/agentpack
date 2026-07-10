@@ -57,6 +57,7 @@ _AGENTPACK_REVIEW_BADGE = (
     "(https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-review-badge.png)]"
     "(https://github.com/vishal2612200/agentpack)"
 )
+_GITHUB_REVIEW_BODY_SAFE_LIMIT = 60_000
 
 
 class _ReviewPreflightError(Exception):
@@ -1635,23 +1636,20 @@ def _post_inline_review_comments(
         return {**record, "path": _rel_to_root(output_path, root)}
 
     commentable_lines = _commentable_right_lines(root, str(preflight.get("diff", {}).get("range") or ""))
-    comments, skipped = _findings_to_inline_comments(findings, commentable_lines)
-    if skipped:
-        raise _ReviewPreflightError(
-            "cannot post every finding inline: "
-            + "; ".join(skipped[:5])
-            + ("; ..." if len(skipped) > 5 else "")
-        )
-    if not comments:
-        raise _ReviewPreflightError("findings TOON produced no inline comments")
+    comments, skipped, non_inline_notes = _findings_to_inline_comments(findings, commentable_lines)
+    has_review_content = bool(comments or non_inline_notes)
+    if not has_review_content:
+        detail = "; ".join(skipped[:5]) + ("; ..." if len(skipped) > 5 else "")
+        raise _ReviewPreflightError(f"findings TOON produced no postable review content: {detail}")
 
-    review_body = _review_body(preflight, len(comments))
+    review_body = _review_body(preflight, len(comments), non_inline_notes)
     request = {
         "commit_id": head_sha,
         "event": "COMMENT",
         "body": review_body,
-        "comments": comments,
     }
+    if comments:
+        request["comments"] = comments
     request_hash = _stable_json_hash(request)
     payload_record = {
         "repo": repo_slug,
@@ -1669,6 +1667,7 @@ def _post_inline_review_comments(
         "pr": pr_number,
         "head_sha": head_sha,
         "comments": len(comments),
+        "non_inline_findings": len(non_inline_notes),
         "request_payload": _rel_to_root(payload_path, root),
         "payload_sha256": request_hash,
     }
@@ -1686,6 +1685,7 @@ def _post_inline_review_comments(
         "pr": pr_number,
         "head_sha": head_sha,
         "comments": len(comments),
+        "non_inline_findings": len(non_inline_notes),
         "url": str(response.get("html_url") or response.get("url") or ""),
         "id": response.get("id"),
         "request_payload": _rel_to_root(payload_path, root),
@@ -1805,21 +1805,28 @@ def _parse_commentable_right_lines(diff_text: str) -> dict[str, set[int]]:
 def _findings_to_inline_comments(
     findings: list[Any],
     commentable_lines: dict[str, set[int]],
-) -> tuple[list[dict[str, Any]], list[str]]:
+) -> tuple[list[dict[str, Any]], list[str], list[str]]:
     comments: list[dict[str, Any]] = []
     skipped: list[str] = []
+    non_inline_notes: list[str] = []
     for index, finding in enumerate(findings, start=1):
         if not isinstance(finding, dict):
-            skipped.append(f"finding {index}: not an object")
+            reason = f"finding {index}: not an object"
+            skipped.append(reason)
+            non_inline_notes.append(f"- {reason}")
             continue
         location = parse_location(str(finding.get("location") or ""))
         if location is None or location.start_line is None:
-            skipped.append(f"finding {index}: missing valid location path:line")
+            reason = f"finding {index}: missing valid location path:line"
+            skipped.append(reason)
+            non_inline_notes.append(_non_inline_finding_note(finding, index, reason))
             continue
         path = location.path
         line = int(location.start_line)
         if line not in commentable_lines.get(path, set()):
-            skipped.append(f"finding {index}: {path}:{line} is not in the PR diff as a right-side line")
+            reason = f"finding {index}: {path}:{line} is not in the PR diff as a right-side line"
+            skipped.append(reason)
+            non_inline_notes.append(_non_inline_finding_note(finding, index, reason))
             continue
         comments.append(
             {
@@ -1829,7 +1836,21 @@ def _findings_to_inline_comments(
                 "body": _inline_comment_body(finding, index),
             }
         )
-    return comments, skipped
+    return comments, skipped, non_inline_notes
+
+
+def _non_inline_finding_note(finding: dict[str, Any], index: int, reason: str) -> str:
+    finding_id = _comment_field(finding, "id") or f"finding-{index}"
+    location = _comment_field(finding, "location") or "unknown location"
+    claim = _comment_field(finding, "claim") or "Review finding."
+    evidence = _comment_field(finding, "evidence")
+    direction = _comment_field(finding, "direction")
+    parts = [f"- Finding {_inline_code(finding_id)} at {_inline_code(location)}: {claim}", f"Reason: {reason}"]
+    if evidence:
+        parts.append(f"Evidence: {evidence}")
+    if direction:
+        parts.append(f"Suggested next step: {direction}")
+    return "\n  ".join(parts)
 
 
 def _inline_comment_body(finding: dict[str, Any], index: int) -> str:
@@ -1847,7 +1868,7 @@ def _inline_comment_body(finding: dict[str, Any], index: int) -> str:
     if next_step:
         parts.append(f"Suggested next step: {next_step}")
     parts.append(_inline_comment_metadata(finding, index, severity))
-    return _clip_text("\n\n".join(parts), 60_000)
+    return _clip_text("\n\n".join(parts), _GITHUB_REVIEW_BODY_SAFE_LIMIT)
 
 
 def _comment_field(finding: dict[str, Any], field: str) -> str:
@@ -1895,22 +1916,34 @@ def _inline_code(value: str) -> str:
     return f"`{safe}`"
 
 
-def _review_body(preflight: dict[str, Any], comment_count: int) -> str:
+def _review_body(preflight: dict[str, Any], comment_count: int, non_inline_notes: list[str] | None = None) -> str:
     run_id = preflight.get("review", {}).get("run_id", "")
     head_sha = str(preflight.get("git", {}).get("head_sha") or "").strip()
-    finding_word = "finding" if comment_count == 1 else "findings"
-    pronoun = "it" if comment_count == 1 else "them"
-    where = "it applies" if comment_count == 1 else "they apply"
-    parts = [
-        f"AgentPack found {comment_count} evidence-backed {finding_word} and left {pronoun} inline where {where}."
-    ]
+    non_inline_notes = non_inline_notes or []
+    non_inline_count = len(non_inline_notes)
+    total = comment_count + non_inline_count
+    finding_word = "finding" if total == 1 else "findings"
+    if comment_count and non_inline_count:
+        parts = [
+            f"AgentPack found {total} evidence-backed {finding_word}: {comment_count} inline and {non_inline_count} in this review body."
+        ]
+    elif non_inline_count:
+        parts = [
+            f"AgentPack found {non_inline_count} evidence-backed {finding_word} that could not be attached inline, so included them in this review body."
+        ]
+    else:
+        pronoun = "it" if comment_count == 1 else "them"
+        where = "it applies" if comment_count == 1 else "they apply"
+        parts = [
+            f"AgentPack found {comment_count} evidence-backed {finding_word} and left {pronoun} inline where {where}."
+        ]
     if run_id:
         parts.append(f"Run: `{run_id}`")
     if head_sha:
         parts.append(f"Head: `{head_sha[:12]}`")
-    return (
-        "\n\n".join(parts)
-    )
+    if non_inline_notes:
+        parts.append("## Non-inline findings\n\n" + "\n\n".join(non_inline_notes))
+    return _clip_text("\n\n".join(parts), 60_000)
 
 
 def _post_pull_request_review(root: Path, repo_slug: str, pr_number: int, payload: dict[str, Any]) -> dict[str, Any]:
