@@ -19,6 +19,7 @@ from agentpack.commands.benchmark import (
     PublicRepoSpec,
     ReleaseGateConfig,
     _precision_recall,
+    _ownership_metrics,
     _skill_metrics,
     _sample_fixture_cases,
     _load_cases,
@@ -3998,6 +3999,82 @@ def test_load_public_repo_specs_parses_manifest(tmp_path: Path) -> None:
     assert specs[0].max_changed_files == 6
     assert specs[0].cases[0].commit == "abc123"
     assert specs[0].cases[0].expected_files == ["src/click/termui.py", "tests/test_termui.py"]
+
+
+def test_load_public_repo_specs_reads_ownership_labels(tmp_path: Path) -> None:
+    manifest = tmp_path / "release-repos.lock.toml"
+    manifest.write_text(
+        '[[repos]]\nname = "demo"\nurl = "https://example.com/demo.git"\n'
+        '[[repos.cases]]\ncommit = "abc"\ntask = "fix auth"\n'
+        'expected_files = ["src/auth.py", "tests/test_auth.py", "CHANGELOG.md"]\n'
+        'action_owner_files = ["src/auth.py"]\n'
+        'required_support_files = ["tests/test_auth.py"]\n'
+        'incidental_changed_files = ["CHANGELOG.md"]\n'
+        'optional_context_files = ["src/tokens.py"]\n',
+        encoding="utf-8",
+    )
+
+    case = _load_public_repo_specs(manifest)[0].cases[0]
+
+    assert case.action_owner_files == ["src/auth.py"]
+    assert case.required_support_files == ["tests/test_auth.py"]
+    assert case.incidental_changed_files == ["CHANGELOG.md"]
+    assert case.optional_context_files == ["src/tokens.py"]
+
+
+def test_load_public_repo_specs_rejects_non_partitioned_ownership_labels(tmp_path: Path) -> None:
+    manifest = tmp_path / "release-repos.lock.toml"
+    manifest.write_text(
+        '[[repos]]\nname = "demo"\nurl = "https://example.com/demo.git"\n'
+        '[[repos.cases]]\ncommit = "abc"\ntask = "fix auth"\n'
+        'expected_files = ["src/auth.py", "tests/test_auth.py"]\n'
+        'action_owner_files = ["src/auth.py"]\n',
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="partition expected_files"):
+        _load_public_repo_specs(manifest)
+
+
+def test_load_public_repo_specs_keeps_custom_manifest_without_ownership_labels(tmp_path: Path) -> None:
+    manifest = tmp_path / "public-repos.toml"
+    manifest.write_text(
+        '[[repos]]\nname = "demo"\nurl = "https://example.com/demo.git"\n'
+        '[[repos.cases]]\ncommit = "abc"\ntask = "fix auth"\n'
+        'expected_files = ["src/auth.py"]\n',
+        encoding="utf-8",
+    )
+
+    case = _load_public_repo_specs(manifest)[0].cases[0]
+
+    assert case.action_owner_files == []
+    assert case.required_support_files == []
+    assert case.incidental_changed_files == []
+    assert case.optional_context_files == []
+
+
+def test_ownership_metrics_are_independent_from_legacy_expected_files() -> None:
+    case = BenchmarkCase(
+        task="fix auth",
+        expected_files=["src/auth.py", "tests/test_auth.py", "CHANGELOG.md"],
+        action_owner_files=["src/auth.py"],
+        required_support_files=["tests/test_auth.py"],
+        incidental_changed_files=["CHANGELOG.md"],
+        optional_context_files=["src/tokens.py"],
+    )
+
+    metrics = _ownership_metrics(
+        case,
+        {"src/auth.py", "src/tokens.py", "CHANGELOG.md", "src/noise.py"},
+    )
+
+    assert metrics == {
+        "owner_recall": 1.0,
+        "support_recall": 0.0,
+        "useful_context_precision": 0.5,
+        "selected_incidental_files": ["CHANGELOG.md"],
+        "incidental_selection_rate": 1.0,
+    }
 
 
 def test_load_public_repo_specs_defaults_to_balanced_mode(tmp_path: Path) -> None:

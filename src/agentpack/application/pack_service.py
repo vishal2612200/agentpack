@@ -59,6 +59,7 @@ from agentpack.core.thread_context import (
 )
 from agentpack.core.token_contract import build_token_contract
 from agentpack.core.token_estimator import estimate_tokens
+from agentpack.core.selection_models import SelectionEngine
 from agentpack.learning.feedback import ranking_feedback_boosts
 from agentpack.renderers.markdown import render_claude, render_generic
 from agentpack.analysis.ranking import (
@@ -145,6 +146,7 @@ class RankResult:
 class PackPlan:
     """Shared planning output used by both pack and explain."""
     task: str
+    selection_engine: SelectionEngine
     requested_mode: str
     mode: str
     budget: int
@@ -432,7 +434,15 @@ def _read_agent_lessons(root: Path, cfg: Any, limit: int = 2000) -> str:
 class PackPlanner:
     """Runs scan → summarize → graph → rank → select; shared by pack and explain."""
 
-    def plan(self, request: PackRequest) -> PackPlan:
+    def plan(
+        self,
+        request: PackRequest,
+        *,
+        selection_engine: SelectionEngine = SelectionEngine.V1,
+    ) -> PackPlan:
+        selection_engine = SelectionEngine(selection_engine)
+        if selection_engine is not SelectionEngine.V1:
+            raise NotImplementedError(f"selection engine {selection_engine.value} is not implemented")
         root = request.root
         cfg = load_config(root)
         requested_mode = request.mode or cfg.context.default_mode
@@ -687,6 +697,7 @@ class PackPlanner:
 
         return PackPlan(
             task=request.task,
+            selection_engine=selection_engine,
             requested_mode=requested_mode,
             mode=effective_mode,
             budget=effective_budget,

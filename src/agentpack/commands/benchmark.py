@@ -45,9 +45,14 @@ class BenchmarkCase:
     task_type: str = "general"
     workspace: str | None = None
     budget: int = 0
+    action_owner_files: list[str] = field(default_factory=list)
+    required_support_files: list[str] = field(default_factory=list)
+    incidental_changed_files: list[str] = field(default_factory=list)
+    optional_context_files: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.mode = normalize_mode(self.mode)
+        _validate_ownership_partition(self)
 
 
 @dataclass
@@ -109,9 +114,38 @@ class PublicRepoCase:
     task_type: str = "general"
     workspace: str | None = None
     budget: int = 0
+    action_owner_files: list[str] = field(default_factory=list)
+    required_support_files: list[str] = field(default_factory=list)
+    incidental_changed_files: list[str] = field(default_factory=list)
+    optional_context_files: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
         self.mode = normalize_mode(self.mode)
+        _validate_ownership_partition(self)
+
+
+def _validate_ownership_partition(case: BenchmarkCase | PublicRepoCase) -> None:
+    """Validate optional benchmark-only role labels without inferring runtime ownership."""
+
+    role_lists = (
+        case.action_owner_files,
+        case.required_support_files,
+        case.incidental_changed_files,
+    )
+    if not any(role_lists) and not case.optional_context_files:
+        return
+    role_sets = [set(paths) for paths in role_lists]
+    duplicates = (role_sets[0] & role_sets[1]) | (role_sets[0] & role_sets[2]) | (role_sets[1] & role_sets[2])
+    expected = set(case.expected_files)
+    partition = set().union(*role_sets)
+    if duplicates or partition != expected:
+        raise ValueError(
+            "action_owner_files, required_support_files, and incidental_changed_files "
+            "must be disjoint and partition expected_files"
+        )
+    optional = set(case.optional_context_files)
+    if optional & expected:
+        raise ValueError("optional_context_files must be disjoint from expected_files")
 
 
 @dataclass
@@ -290,6 +324,10 @@ def _load_public_repo_specs(path: Path) -> list[PublicRepoSpec]:
                 task_type=raw_case.get("task_type", "general"),
                 workspace=raw_case.get("workspace"),
                 budget=raw_case.get("budget", 0),
+                action_owner_files=raw_case.get("action_owner_files", []),
+                required_support_files=raw_case.get("required_support_files", []),
+                incidental_changed_files=raw_case.get("incidental_changed_files", []),
+                optional_context_files=raw_case.get("optional_context_files", []),
             )
             for raw_case in raw_repo.get("cases", [])
         ]
@@ -368,6 +406,10 @@ def _load_cases(path: Path) -> list[BenchmarkCase]:
             task_type=raw.get("task_type", "general"),
             workspace=raw.get("workspace"),
             budget=raw.get("budget", 0),
+            action_owner_files=raw.get("action_owner_files", []),
+            required_support_files=raw.get("required_support_files", []),
+            incidental_changed_files=raw.get("incidental_changed_files", []),
+            optional_context_files=raw.get("optional_context_files", []),
         ))
     return cases
 
@@ -780,6 +822,16 @@ def _run_public_repo_suite(
                             f"for repo={spec.name} commit={public_case.commit} parent={parent}; "
                             f"`{command}` exited {exc.returncode}{detail}"
                         ) from exc
+                    missing_optional = [
+                        path
+                        for path in public_case.optional_context_files
+                        if not (work_root / path).is_file()
+                    ]
+                    if missing_optional:
+                        raise ValueError(
+                            "optional_context_files must exist in the parent checkout "
+                            f"for repo={spec.name} commit={public_case.commit}: {missing_optional}"
+                        )
                     result = _run_case(
                         work_root,
                         BenchmarkCase(
@@ -789,6 +841,10 @@ def _run_public_repo_suite(
                             task_type=public_case.task_type,
                             workspace=public_case.workspace,
                             budget=public_case.budget,
+                            action_owner_files=public_case.action_owner_files,
+                            required_support_files=public_case.required_support_files,
+                            incidental_changed_files=public_case.incidental_changed_files,
+                            optional_context_files=public_case.optional_context_files,
                         ),
                     )
                     results.append(result)
@@ -867,6 +923,18 @@ def _write_public_repo_lock(path: Path, specs: list[PublicRepoSpec]) -> Path:
                 f"budget = {int(case.budget)}",
                 f"expected_files = {_toml_string_list(case.expected_files)}",
             ])
+            if any((
+                case.action_owner_files,
+                case.required_support_files,
+                case.incidental_changed_files,
+                case.optional_context_files,
+            )):
+                lines.extend([
+                    f"action_owner_files = {_toml_string_list(case.action_owner_files)}",
+                    f"required_support_files = {_toml_string_list(case.required_support_files)}",
+                    f"incidental_changed_files = {_toml_string_list(case.incidental_changed_files)}",
+                    f"optional_context_files = {_toml_string_list(case.optional_context_files)}",
+                ])
             if case.workspace:
                 lines.append(f"workspace = {_toml_string(case.workspace)}")
             lines.append("")
@@ -3725,6 +3793,9 @@ def _run_case(root: Path, case: BenchmarkCase) -> CaseResult:
                 expected_set=expected_set,
             ),
         }
+        ownership_metrics = _ownership_metrics(case, selected_set)
+        if ownership_metrics is not None:
+            selection_diagnostics["ownership_metrics"] = ownership_metrics
     else:
         missed_expected = []
 
@@ -8254,6 +8325,34 @@ def _precision_recall(result: CaseResult) -> tuple[float, float, float]:
     return p, r, f1
 
 
+def _ownership_metrics(case: BenchmarkCase, selected_paths: set[str]) -> dict[str, Any] | None:
+    """Score reviewed ownership labels independently from legacy changed-file metrics."""
+
+    if not any((
+        case.action_owner_files,
+        case.required_support_files,
+        case.incidental_changed_files,
+        case.optional_context_files,
+    )):
+        return None
+    owners = set(case.action_owner_files)
+    support = set(case.required_support_files)
+    incidental = set(case.incidental_changed_files)
+    optional = set(case.optional_context_files)
+    useful = owners | support | optional
+    return {
+        "owner_recall": len(selected_paths & owners) / len(owners) if owners else None,
+        "support_recall": len(selected_paths & support) / len(support) if support else None,
+        "useful_context_precision": (
+            len(selected_paths & useful) / len(selected_paths) if selected_paths else 0.0
+        ),
+        "selected_incidental_files": sorted(selected_paths & incidental),
+        "incidental_selection_rate": (
+            len(selected_paths & incidental) / len(incidental) if incidental else None
+        ),
+    }
+
+
 def _route_skills_for_case(root: Path, case: BenchmarkCase) -> tuple[list[str], int]:
     if not case.expected_skills and not case.avoid_skills:
         return [], 0
@@ -8342,6 +8441,13 @@ def _result_record(result: CaseResult) -> dict[str, Any]:
         "mode": result.case.mode,
         "budget": result.case.budget,
         "expected_files": result.case.expected_files,
+        "ownership_labels": {
+            "action_owner_files": result.case.action_owner_files,
+            "required_support_files": result.case.required_support_files,
+            "incidental_changed_files": result.case.incidental_changed_files,
+            "optional_context_files": result.case.optional_context_files,
+        },
+        "ownership_metrics": result.selection_diagnostics.get("ownership_metrics"),
         "selected_paths": result.selected_paths,
         "selected_tokens": result.selected_tokens,
         "selected_modes": result.selected_modes,
