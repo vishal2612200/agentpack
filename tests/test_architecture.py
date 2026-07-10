@@ -6,7 +6,7 @@ from pathlib import Path
 
 from typer.testing import CliRunner
 
-from agentpack.architecture.service import build_snapshot_for_ref, run_check, serialize_model
+from agentpack.architecture.service import capability_registry, build_snapshot_for_ref, run_check, serialize_model
 from agentpack.cli import app
 from agentpack.core.config import load_config
 
@@ -84,6 +84,67 @@ def test_architecture_check_blocks_new_forbidden_import(tmp_path) -> None:
     assert any(violation.blocking for violation in result.violations)
     assert result.violations[0].invariant_id == "no-public-internal-imports"
     assert "imports" in result.violations[0].message
+
+
+def test_best_effort_relationships_can_warn_but_never_block(tmp_path) -> None:
+    _init_repo(tmp_path)
+    _write(
+        tmp_path / ".agentpack" / "config.toml",
+        "\n".join(
+            [
+                "[[architecture.invariant]]",
+                'id = "no-client-server-imports"',
+                'kind = "forbid_edge"',
+                'enforcement = "block"',
+                'edge_types = ["imports"]',
+                'min_confidence = "best_effort"',
+                'source = { path_globs = ["src/client/**"] }',
+                'target = { path_globs = ["src/server/**"] }',
+            ]
+        )
+        + "\n",
+    )
+    _write(tmp_path / "src" / "server" / "secret.ts", "export const secret = 1;\n")
+    _write(tmp_path / "src" / "client" / "api.ts", "export const api = 1;\n")
+    base_sha = _commit_all(tmp_path, "base")
+
+    _write(tmp_path / "src" / "client" / "api.ts", "import { secret } from '../server/secret';\nexport const api = secret;\n")
+    head_sha = _commit_all(tmp_path, "head")
+
+    result = run_check(tmp_path, base_sha, head_sha, load_config(tmp_path))
+
+    assert result.violations
+    assert not any(violation.blocking for violation in result.violations)
+    assert result.violations[0].requested_enforcement == "block"
+    assert result.violations[0].enforcement == "warn"
+
+
+def test_capability_registry_reports_all_planned_language_tiers() -> None:
+    capabilities = capability_registry()
+
+    assert capabilities["python"] == "structured"
+    assert {capabilities[language] for language in ("javascript", "typescript", "go", "rust")} == {"best_effort"}
+    for language in ("java", "kotlin", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"):
+        assert capabilities[language] in {"structured", "unavailable"}
+
+
+def test_all_language_fixture_emits_honest_file_entities(tmp_path) -> None:
+    fixture_root = Path(__file__).parent / "fixtures" / "architecture_languages"
+    manifest = json.loads((fixture_root / "manifest.json").read_text(encoding="utf-8"))
+    for name in manifest:
+        _write(tmp_path / name, (fixture_root / name).read_text(encoding="utf-8"))
+
+    snapshot = build_snapshot_for_ref(tmp_path)
+    file_entities = {
+        entity.locator.path: entity
+        for entity in snapshot.entities
+        if entity.entity_type in {"module", "config"}
+    }
+
+    assert set(manifest).issubset(file_entities)
+    for path, language in manifest.items():
+        assert file_entities[path].language == language
+        assert file_entities[path].confidence_tier == snapshot.capabilities[language]
 
 
 def test_architecture_snapshot_command_emits_json(tmp_path, monkeypatch) -> None:

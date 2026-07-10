@@ -92,6 +92,26 @@ same-worktree, same-branch file overlap.
 | Antigravity | Medium | `init` writes `GEMINI.md`, VS Code task + git hooks |
 | Generic | Basic | `watch` mode + read `context.md` |
 
+### PR Context Capability Matrix
+
+On an explicit PR review request, every MCP-capable host should call
+`get_pr_context(pr, focus, format="toon")` before reading the diff. It returns
+the immutable base/head pair, changed files, architecture evidence, tests,
+invariant results, and the bounded memory retrieval chain used by the CLI.
+
+| Host | PR context path | Automatic preparation |
+|---|---|---|
+| Claude Code | MCP `get_pr_context` | Safe prompt hook may prepare context after an explicit review request |
+| Codex | MCP `get_pr_context` | Review skill instructs the active agent to call MCP |
+| Cursor | MCP `get_pr_context` when configured | Rules instruct the active agent to call MCP |
+| Windsurf | MCP `get_pr_context` when configured | Rules instruct the active agent to call MCP |
+| Antigravity | MCP `get_pr_context` when configured | Skill/rules instruct the active agent to call MCP |
+| Generic | CLI `agentpack review` | No automatic prompt hook |
+
+Hosts without an MCP hook must not infer a PR base/head from the current branch.
+They should call the MCP tool or use `agentpack review --pr <number>`; local
+fallback is explicit and advisory only.
+
 ### Integration limitations
 
 - **Advisory vs enforced:** because AgentPack cannot intercept prompts or edits, native integrations are *advisory* — they strongly suggest, but the host is free to proceed without them. An integration only becomes *enforced* if the host exposes a blocking API (e.g. a `preEdit` hook that can cancel an edit when readiness fails). No entry is claimed as hard-enforced without such a blocking host API. See [`native-integrations/README.md`](https://github.com/vishal2612200/agentpack/blob/main/native-integrations/README.md#advisory-vs-enforced-examples) for advisory and enforcement examples.

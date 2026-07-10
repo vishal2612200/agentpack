@@ -13,6 +13,7 @@ from agentpack.analysis.tree_sitter_backend import (
     extract_imports_ts,
     extract_symbols_ts,
     is_available,
+    supports_language,
 )
 from agentpack.analysis.dependency_graph import build
 from agentpack.core.models import FileInfo
@@ -20,6 +21,37 @@ from agentpack.core.models import FileInfo
 
 def test_backend_available():
     assert is_available() is True
+
+
+def test_backend_reports_supported_language_capabilities():
+    assert supports_language("kotlin") is True
+    assert supports_language("unsupported") is False
+
+
+# ---------------------------------------------------------------------------
+# Kotlin symbols and imports
+# ---------------------------------------------------------------------------
+
+def test_kotlin_class_function_and_import(tmp_path):
+    f = tmp_path / "Greeter.kt"
+    f.write_text(
+        "package example\n"
+        "import example.support.Helper\n"
+        "\n"
+        "class Greeter {\n"
+        "    fun greet(): String = Helper.message\n"
+        "}\n"
+        "\n"
+        "fun topLevel(): Int = 1\n"
+    )
+
+    symbols = extract_symbols_ts(f, "kotlin")
+    names = {(symbol.name, symbol.kind) for symbol in symbols}
+
+    assert ("Greeter", "class") in names
+    assert ("Greeter.greet", "method") in names
+    assert ("topLevel", "function") in names
+    assert "example.support.Helper" in extract_imports_ts(f, None, "kotlin")
 
 
 # ---------------------------------------------------------------------------

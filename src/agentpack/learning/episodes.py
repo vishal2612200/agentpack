@@ -104,14 +104,14 @@ def episodic_memory_matches(
     procedures_path: str = ".agentpack/procedures.jsonl",
     max_boost: float = 12.0,
     limit: int = 500,
+    eligible_paths: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     task_terms = _terms(task)
     if not task_terms:
         return []
     matches: list[dict[str, Any]] = []
+    eligible = {normalize_repo_path(path) for path in eligible_paths or [] if path}
     for record in _read_jsonl(root / output_path, limit=limit):
-        if record.get("passed") is False:
-            continue
         episode_terms = _terms(str(record.get("task") or ""))
         for concept in record.get("concepts") or []:
             if isinstance(concept, str):
@@ -119,15 +119,16 @@ def episodic_memory_matches(
         overlap = task_terms & episode_terms
         if not overlap:
             continue
-        weight = min(max_boost, 4.0 + len(overlap) * 2.0)
+        failed = record.get("passed") is False
+        weight = 0.0 if failed else min(max_boost, 4.0 + len(overlap) * 2.0)
         confidence = min(0.95, 0.55 + len(overlap) * 0.06)
         procedures = matching_procedures(root, task, record, output_path=procedures_path)
-        if procedures:
+        if procedures and not failed:
             weight = min(max_boost, weight + 2.0)
             confidence = min(0.98, confidence + 0.1)
         path_hashes = record.get("path_hashes") if isinstance(record.get("path_hashes"), dict) else {}
         for path in record.get("changed_files") or []:
-            if isinstance(path, str) and _path_is_current(root, path, path_hashes):
+            if isinstance(path, str) and (not eligible or normalize_repo_path(path) in eligible) and _path_is_current(root, path, path_hashes):
                 matches.append(
                     {
                         "path": normalize_repo_path(path),
@@ -135,9 +136,14 @@ def episodic_memory_matches(
                         "episode_id": str(record.get("episode_id") or ""),
                         "task_id": str(record.get("task_id") or ""),
                         "confidence": confidence,
+                        "negative_guidance": failed,
                         "visible_reason": (
-                            f"episodic memory similar task; overlap={', '.join(sorted(overlap)[:5])}; "
-                            "source hash still current"
+                            (
+                                f"failed episode: avoid repeating the prior approach; overlap={', '.join(sorted(overlap)[:5])}; "
+                                "source hash still current"
+                                if failed
+                                else f"episodic memory similar task; overlap={', '.join(sorted(overlap)[:5])}; source hash still current"
+                            )
                         ),
                         "node_ids": _node_ids_for_path(record, path),
                         "procedures": procedures,
@@ -209,17 +215,21 @@ def _bounded_nodes(nodes: list[dict[str, Any]], limit: int = 80) -> list[dict[st
         if not isinstance(node, dict):
             continue
         node_id = str(node.get("node_id") or "").strip()
+        node_key = str(node.get("node_key") or node_id).strip()
         path = normalize_repo_path(str(node.get("path") or ""))
-        if not node_id or node_id in seen:
+        if not node_key or node_key in seen:
             continue
-        seen.add(node_id)
+        seen.add(node_key)
+        source_hash = str(node.get("source_hash") or "")[:120]
         result.append(
             {
-                "node_id": node_id[:160],
+                "node_id": node_key[:160],
+                "node_key": node_key[:160],
+                "revision_id": str(node.get("revision_id") or "node-revision:" + hash_text(f"{node_key}|{source_hash}")[:20])[:160],
                 "path": path,
                 "symbol": str(node.get("symbol") or "")[:160],
                 "kind": str(node.get("kind") or "")[:40],
-                "source_hash": str(node.get("source_hash") or "")[:120],
+                "source_hash": source_hash,
                 "confidence": _confidence(node.get("confidence"), default=1.0),
                 "observed_at": str(node.get("observed_at") or "")[:80],
                 "visible_reason": str(node.get("visible_reason") or "node touched by task")[:240],
@@ -248,9 +258,9 @@ def _node_ids_for_path(record: dict[str, Any], path: str) -> list[str]:
     ids: list[str] = []
     for node in record.get("touched_nodes") or []:
         if isinstance(node, dict) and normalize_repo_path(str(node.get("path") or "")) == rel:
-            node_id = str(node.get("node_id") or "")
-            if node_id:
-                ids.append(node_id)
+            node_key = str(node.get("node_key") or node.get("node_id") or "")
+            if node_key:
+                ids.append(node_key)
     return ids[:10]
 
 
@@ -266,7 +276,7 @@ def _record_episode_edges(root: Path, record: dict[str, Any]) -> None:
             continue
         record_memory_edge(
             root,
-            from_id=str(node.get("node_id") or ""),
+            from_id=str(node.get("node_key") or node.get("node_id") or ""),
             to_id=episode_id,
             edge_type="node_episode",
             confidence=_confidence(node.get("confidence"), default=_confidence(record.get("confidence"), default=0.6)),

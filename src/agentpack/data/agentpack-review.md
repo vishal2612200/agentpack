@@ -17,13 +17,13 @@ Review the current PR or checked-out branch using the full AgentPack review work
 
 ## Steps
 
-1. Refresh AgentPack context for this exact review task before reading PR diff or code. Prefer MCP:
+1. Resolve the immutable PR context before reading the diff or code. Prefer MCP:
 
 ```text
-agentpack_pack_context(task="review current PR $ARGUMENTS")
+agentpack_get_pr_context(pr="$ARGUMENTS", focus="$ARGUMENTS", format="toon")
 ```
 
-If MCP is unavailable, run:
+Then refresh task context as needed. If MCP is unavailable, run:
 
 ```bash
 agentpack guard --agent auto --repair-stale --refresh-context

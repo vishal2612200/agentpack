@@ -571,6 +571,35 @@ def _get_stats_impl(root: Path) -> str:
     return "\n".join(lines)
 
 
+def _get_pr_context_impl(
+    root: Path,
+    *,
+    pr: str = "",
+    focus: str = "",
+    output_format: StructuredFormat = "toon",
+    allow_local_fallback: bool = False,
+) -> str:
+    """Testable implementation for the MCP PR-context contract."""
+    from agentpack.application.pr_context import PRContextError, resolve_pr_context
+
+    try:
+        context = resolve_pr_context(
+            root,
+            pr=pr or None,
+            focus=focus,
+            allow_local_fallback=allow_local_fallback,
+        )
+    except PRContextError as exc:
+        payload = {"ok": False, "error": str(exc), "allow_local_fallback": allow_local_fallback}
+        return to_llm(root, payload, requested=output_format, root_name="agentpack_pr_context")
+    return to_llm(
+        root,
+        {"ok": True, "pr_context": context.model_dump(mode="json")},
+        requested=output_format,
+        root_name="agentpack_pr_context",
+    )
+
+
 def _get_delta_context_impl(root: Path, max_files: int = 12) -> str:
     """Return the latest saved delta summary and selected-file changes."""
     metadata_path = root / ".agentpack" / "pack_metadata.json"
@@ -1042,5 +1071,25 @@ def serve() -> None:
         Returns a markdown summary: packed tokens, raw tokens, saving %, selected files, task, generated_at.
         """
         return _get_stats_impl(_repo_root())
+
+    @mcp.tool()
+    def get_pr_context(
+        pr: str = "",
+        focus: str = "",
+        format: str = "toon",
+        allow_local_fallback: bool = False,
+    ) -> str:
+        """Return immutable PR evidence shared by local review entry points.
+
+        GitHub PR refs are fetched and verified against GitHub's base/head SHAs.
+        Local commits are used only when allow_local_fallback is explicitly true.
+        """
+        return _get_pr_context_impl(
+            _repo_root(),
+            pr=pr,
+            focus=focus,
+            output_format=format,
+            allow_local_fallback=allow_local_fallback,
+        )
 
     mcp.run()

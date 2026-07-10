@@ -1379,6 +1379,7 @@ def _apply_ranking_feedback_boosts(
             output_path=cfg.learning.episodic_cases_output,
             procedures_path=getattr(cfg.learning, "procedures_output", ".agentpack/procedures.jsonl"),
             max_boost=float(getattr(cfg.context, "memory_boost_weight", 12.0)),
+            eligible_paths={fi.path for fi, score, _reasons in scored if score > 0},
         )
     except Exception:
         episodic_matches = []

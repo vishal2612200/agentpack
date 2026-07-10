@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 import typer
 from rich.table import Table
@@ -84,3 +85,26 @@ def check(
             console.print(f"[yellow]{warning}[/]")
     if any(violation.blocking for violation in result.violations):
         raise typer.Exit(1)
+
+
+@architecture_app.command("artifacts")
+def artifacts(
+    diff: Path = typer.Option(..., "--diff", exists=True, readable=True, help="Raw architecture diff JSON."),
+    check: Path = typer.Option(..., "--check", exists=True, readable=True, help="Raw architecture check JSON."),
+    output_dir: Path = typer.Option(Path(".agentpack/artifacts"), "--output-dir", help="Directory for sanitized artifacts."),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON."),
+) -> None:
+    """Write source-free architecture CI artifacts and a receipt."""
+    from agentpack.architecture.ci import write_ci_artifacts
+
+    root = _root()
+    result = write_ci_artifacts(
+        diff_path=diff if diff.is_absolute() else root / diff,
+        check_path=check if check.is_absolute() else root / check,
+        output_dir=output_dir if output_dir.is_absolute() else root / output_dir,
+    )
+    if json_output:
+        typer.echo(json.dumps(result, indent=2, sort_keys=True))
+        return
+    for label, path in result.items():
+        console.print(f"[green]✓[/] {label}: {path}")

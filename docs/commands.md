@@ -1013,6 +1013,25 @@ packs, and use `get_context()` when task/context freshness is the question.
 
 ---
 
+### `agentpack architecture`
+
+Build a local deterministic architecture snapshot, compare two commits, and
+evaluate declared invariants without any model call.
+
+```bash
+agentpack architecture snapshot --ref HEAD --json
+agentpack architecture diff --base origin/main --head HEAD --json
+agentpack architecture check --base origin/main --head HEAD --json
+agentpack architecture artifacts --diff .agentpack/raw/architecture-diff.json --check .agentpack/raw/architecture-check.json
+```
+
+Snapshots are cache-addressed by commit, schema version, and extractor profile.
+Only citation-backed structured or declared evidence may block a check;
+best-effort and file-level signals remain advisory. `artifacts` removes source
+hashes and absolute paths before writing the CI diff, summary, and receipt.
+
+---
+
 ### `agentpack review`
 
 Prepare the full two-stage PR review bundle for the current branch or checked-out PR.
@@ -1816,13 +1835,17 @@ Generate a GitHub Actions workflow for AgentPack checks.
 agentpack ci init
 agentpack ci init --force
 agentpack ci init --json
+agentpack ci init --architecture
 ```
 
-The workflow runs `dev-check` on pull requests and
+The default workflow runs `dev-check` on pull requests and
 `release-check --profile auto` on pushes to `main`. Auto keeps the full release
 gate for code changes, but uses the docs/plugin profile for docs, agent-rule,
 plugin, and native-integration-only diffs. Existing workflows are not
-overwritten unless `--force` is present.
+overwritten unless `--force` is present. `--architecture` instead writes a
+pull-request-only workflow that installs the optional parser extra, uploads a
+sanitized architecture artifact, and publishes a check/sticky summary only
+when repository permissions allow it.
 
 ---
 

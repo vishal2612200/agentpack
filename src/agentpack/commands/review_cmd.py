@@ -15,6 +15,7 @@ from uuid import uuid4
 import typer
 
 from agentpack.analysis.tests import find_related_tests
+from agentpack.application.pr_context import build_pr_context
 from agentpack.application.pack_service import PackRequest, PackService
 from agentpack.commands._shared import _atomic_write, _now_iso, _root, console
 from agentpack.core import git as git_core
@@ -255,6 +256,21 @@ def _build_review_preflight(
     review_target = _preflight_target(target, pr)
     observer_notes = observer_notes_for_task(root, review_context)
     review_mode = _review_scaffold_mode(changed_files, review_context, override=review_mode_override)
+    try:
+        shared_pr_context = build_pr_context(
+            root,
+            base_ref=str(diff_info["base_ref"]),
+            head_ref=str(diff_info.get("head_ref") or "HEAD"),
+            source="github" if diff_info["source"] in {"pr-target", "current-pr"} else "local-fallback",
+            pr_number=int(pr["number"]) if isinstance(pr, dict) and pr.get("number") else None,
+            pr_url=str(pr.get("url") or "") if isinstance(pr, dict) else "",
+            focus=review_context,
+        )
+        shared_pr_context_payload = shared_pr_context.model_dump(mode="json")
+    except Exception:
+        # Existing review preflight remains usable when a shallow checkout or
+        # test fixture cannot materialize architecture snapshots.
+        shared_pr_context_payload = None
 
     return {
         "generated_at": _now_iso(),
@@ -293,6 +309,7 @@ def _build_review_preflight(
             "fallback": "working-tree" if diff_info["source"] == "local-fallback" else "",
         },
         "pr": pr,
+        "pr_context": shared_pr_context_payload,
         "diff": {
             "range": diff_info["range"],
             "base_ref": diff_info["base_ref"],

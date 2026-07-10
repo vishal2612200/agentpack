@@ -18,6 +18,8 @@ def register(app: typer.Typer) -> None:
     @app.command()
     def memory(
         json_output: bool = typer.Option(False, "--json", help="Print JSON."),
+        task: str = typer.Option("", "--task", help="Show the bounded retrieval chain for this task."),
+        path: list[str] = typer.Option([], "--path", help="Live candidate path; repeat to bound memory retrieval."),
         timeline: bool = typer.Option(False, "--timeline", help="Show timestamped task, episode, procedure, and edge rows."),
         limit: int = typer.Option(50, "--limit", help="Maximum timeline rows to show."),
         prune: bool = typer.Option(False, "--prune", help="Prune local memory files to configured retention limits."),
@@ -28,6 +30,15 @@ def register(app: typer.Typer) -> None:
         """Show local cross-agent task memory from events and learning artifacts."""
         root = _root()
         cfg = load_config(root)
+        if task.strip():
+            from agentpack.learning.graph_memory import retrieve_memory_chain
+
+            payload = retrieve_memory_chain(root, task=task, live_paths=path)
+            if json_output:
+                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+                return
+            console.print_json(json.dumps(payload, indent=2, sort_keys=True))
+            return
         if prune:
             result = {
                 "session_events": _prune_jsonl(

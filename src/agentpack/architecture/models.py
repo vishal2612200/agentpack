@@ -120,10 +120,23 @@ class ArchitectureDiff(BaseModel):
     changed_confidence: list[str] = Field(default_factory=list)
 
 
+class ArchitectureInvariant(BaseModel):
+    """Portable invariant declaration used by local checks and CI configuration."""
+
+    id: str
+    kind: Literal["forbid_edge", "require_test", "require_consumer_update"]
+    enforcement: Literal["block", "warn"] = "warn"
+    edge_types: list[EdgeType] = Field(default_factory=lambda: ["imports"])
+    min_confidence: CapabilityTier = "best_effort"
+    source: dict[str, Any] = Field(default_factory=dict)
+    target: dict[str, Any] = Field(default_factory=dict)
+
+
 class ArchitectureViolation(BaseModel):
     invariant_id: str
     kind: str
     enforcement: Literal["block", "warn"]
+    requested_enforcement: Literal["block", "warn"] = "warn"
     message: str
     blocking: bool
     entity_keys: list[str] = Field(default_factory=list)

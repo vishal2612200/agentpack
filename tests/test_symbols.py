@@ -5,7 +5,7 @@ from agentpack.analysis.naming_signals import (
     collect_public_name_candidates,
 )
 from agentpack.analysis.symbols import extract_python_symbols, extract_js_symbols, extract_go_symbols, extract_rust_symbols, extract_symbols
-from agentpack.core.node_identity import symbol_node_id, symbol_node_ref
+from agentpack.core.node_identity import symbol_node_id, symbol_node_ref, symbol_node_revision
 
 
 def test_python_function(tmp_path):
@@ -23,6 +23,8 @@ def test_python_function(tmp_path):
     assert node_ref["symbol"] == "hello"
     assert node_ref["source_hash"] == "abc123"
     assert symbol_node_id("src/mod.py", fn, source_hash="abc123") == node_ref["node_id"]
+    assert node_ref["node_key"] == node_ref["node_id"]
+    assert node_ref["revision_id"] == symbol_node_revision(node_ref["node_key"], source_hash="abc123")
 
 
 def test_python_class_and_method(tmp_path):

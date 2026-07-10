@@ -40,8 +40,8 @@ _CONFIDENCE_ORDER = {
     "structured": 3,
 }
 _CONFIG_LANGS = {"json", "yaml", "toml", "xml", "terraform", "dockerfile"}
-_BEST_EFFORT_LANGS = {"javascript", "typescript", "go", "rust", "kotlin"}
-_TREE_SITTER_LANGS = {"java", "ruby", "php", "protobuf", "terraform", "dockerfile", "graphql"}
+_BEST_EFFORT_LANGS = {"javascript", "typescript", "go", "rust"}
+_TREE_SITTER_LANGS = {"java", "kotlin", "ruby", "php", "protobuf", "terraform", "dockerfile", "graphql"}
 
 
 def serialize_model(model: object) -> str:
@@ -186,12 +186,11 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                 if not _matches_selector(source, invariant.source) or not _matches_selector(target, invariant.target):
                     continue
                 violations.append(
-                    ArchitectureViolation(
+                    _violation(
                         invariant_id=invariant.id,
                         kind=kind,
-                        enforcement=invariant.enforcement,
+                        requested_enforcement=invariant.enforcement,
                         message=f"{source.qualified_name} {edge.edge_type} {target.qualified_name}",
-                        blocking=invariant.enforcement == "block",
                         entity_keys=[source.entity_key, target.entity_key],
                         edge_keys=[edge.edge_key],
                         evidence=edge.evidence,
@@ -210,12 +209,11 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                 if entity.entity_key in tested_targets:
                     continue
                 violations.append(
-                    ArchitectureViolation(
+                    _violation(
                         invariant_id=invariant.id,
                         kind=kind,
-                        enforcement=invariant.enforcement,
+                        requested_enforcement=invariant.enforcement,
                         message=f"{entity.qualified_name} changed without a related test edge",
-                        blocking=invariant.enforcement == "block",
                         entity_keys=[entity.entity_key],
                         evidence=entity.evidence,
                     )
@@ -232,15 +230,20 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                 }
                 if any(consumer in changed_entity_keys for consumer in consumers):
                     continue
+                consumer_evidence = [
+                    evidence
+                    for edge in head.edges
+                    if edge.edge_type == "imports" and edge.target_entity_key == entity.entity_key
+                    for evidence in edge.evidence
+                ]
                 violations.append(
-                    ArchitectureViolation(
+                    _violation(
                         invariant_id=invariant.id,
                         kind=kind,
-                        enforcement=invariant.enforcement,
+                        requested_enforcement=invariant.enforcement,
                         message=f"{entity.qualified_name} changed without a matching consumer update",
-                        blocking=invariant.enforcement == "block",
                         entity_keys=[entity.entity_key, *sorted(consumers)],
-                        evidence=entity.evidence,
+                        evidence=[*entity.evidence, *consumer_evidence],
                     )
                 )
         else:
@@ -251,6 +254,7 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
 
 def capability_registry() -> dict[str, str]:
     from agentpack.analysis.tree_sitter_backend import is_available as tree_sitter_available
+    from agentpack.analysis.tree_sitter_backend import supports_language as tree_sitter_supports_language
 
     available = tree_sitter_available()
     languages = sorted(set(LANGUAGE_MAP.values()) | {"dockerfile"})
@@ -261,7 +265,7 @@ def capability_registry() -> dict[str, str]:
         elif language in _BEST_EFFORT_LANGS:
             capabilities[language] = "best_effort"
         elif language in _TREE_SITTER_LANGS:
-            capabilities[language] = "structured" if available else "unavailable"
+            capabilities[language] = "structured" if available and tree_sitter_supports_language(language) else "unavailable"
         elif language in _CONFIG_LANGS or language in {"markdown", "bash", "sql", "html", "css", "scss"}:
             capabilities[language] = "file_level"
         else:
@@ -415,6 +419,40 @@ def _matches_selector(entity: ArchitectureEntity, selector) -> bool:
     if substrings and not any(part in entity.qualified_name for part in substrings):
         return False
     return True
+
+
+def _violation(
+    *,
+    invariant_id: str,
+    kind: str,
+    requested_enforcement: str,
+    message: str,
+    entity_keys: list[str],
+    evidence: list[ArchitectureEvidence],
+    edge_keys: list[str] | None = None,
+) -> ArchitectureViolation:
+    """Keep blocking architecture policy limited to high-confidence source evidence."""
+    blocking = requested_enforcement == "block" and _has_blocking_evidence(evidence)
+    if requested_enforcement == "block" and not blocking:
+        message += " (advisory: evidence is not declared or structured)"
+    return ArchitectureViolation(
+        invariant_id=invariant_id,
+        kind=kind,
+        enforcement="block" if blocking else "warn",
+        requested_enforcement=requested_enforcement,
+        message=message,
+        blocking=blocking,
+        entity_keys=entity_keys,
+        edge_keys=edge_keys or [],
+        evidence=evidence,
+    )
+
+
+def _has_blocking_evidence(evidence: list[ArchitectureEvidence]) -> bool:
+    return any(
+        item.confidence_tier == "structured" or item.source.startswith("declared:")
+        for item in evidence
+    )
 
 
 def _load_cached_snapshot(root: Path, commit_sha: str) -> ArchitectureSnapshot | None:
@@ -606,6 +644,7 @@ def _detect_aliases(
     removed_by_path = {entity.locator.path: entity for entity in removed_entities}
     added_by_path = {entity.locator.path: entity for entity in added_entities}
     aliases: list[ArchitectureAlias] = []
+    seen_pairs: set[tuple[str, str]] = set()
     for old_path, new_path in sorted(rename_map.items()):
         before = removed_by_path.get(old_path)
         after = added_by_path.get(new_path)
@@ -620,7 +659,36 @@ def _detect_aliases(
                 after_path=new_path,
             )
         )
+        seen_pairs.add((before.entity_key, after.entity_key))
+
+    # Git rename data is authoritative for moved files. For semantic entities,
+    # add an alias only when the same qualified name/signature is unique on both
+    # sides; ambiguous candidates are intentionally left unaliased.
+    removed_by_identity = _unique_alias_candidates(removed_entities)
+    added_by_identity = _unique_alias_candidates(added_entities)
+    for identity in sorted(removed_by_identity.keys() & added_by_identity.keys()):
+        before = removed_by_identity[identity]
+        after = added_by_identity[identity]
+        if before.entity_key == after.entity_key or (before.entity_key, after.entity_key) in seen_pairs:
+            continue
+        aliases.append(
+            ArchitectureAlias(
+                before_entity_key=before.entity_key,
+                after_entity_key=after.entity_key,
+                reason="unique qualified-name/signature match",
+                before_path=before.locator.path,
+                after_path=after.locator.path,
+            )
+        )
     return aliases
+
+
+def _unique_alias_candidates(entities: list[ArchitectureEntity]) -> dict[tuple[str, str, str], ArchitectureEntity]:
+    grouped: dict[tuple[str, str, str], list[ArchitectureEntity]] = {}
+    for entity in entities:
+        identity = (entity.entity_type, entity.qualified_name, entity.normalized_signature)
+        grouped.setdefault(identity, []).append(entity)
+    return {identity: candidates[0] for identity, candidates in grouped.items() if len(candidates) == 1}
 
 
 def _git_renames(root: Path, base_ref: str, head_ref: str) -> dict[str, str]:
