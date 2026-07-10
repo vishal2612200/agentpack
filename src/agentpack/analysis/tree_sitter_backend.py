@@ -14,10 +14,24 @@ Design:
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
+from typing import Any
+from typing import Literal
+from typing import cast
 
 from agentpack.core.models import Symbol
 
 _QUERIES_DIR = Path(__file__).parent / "queries"
+
+if TYPE_CHECKING:
+    from tree_sitter import Language
+    from tree_sitter import Node
+    from tree_sitter import Parser
+    from tree_sitter import Query
+
+    QueryMatches = list[tuple[int, dict[str, list[Node]]]]
+else:
+    QueryMatches = list[tuple[int, dict[str, list[object]]]]
 
 # Languages this backend can extract symbols for.
 TS_SYMBOL_LANGS: set[str] = {"java", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"}
@@ -25,7 +39,9 @@ TS_SYMBOL_LANGS: set[str] = {"java", "ruby", "php", "terraform", "dockerfile", "
 TS_IMPORT_LANGS: set[str] = {"ruby", "php", "protobuf"}
 
 # Map AgentPack's language string to tree-sitter-language-pack's grammar name.
-_TS_LANG_NAME: dict[str, str] = {
+_TreeSitterGrammarName = Literal["java", "ruby", "php", "terraform", "dockerfile", "proto", "graphql"]
+_SymbolKind = Literal["class", "function", "method", "variable"]
+_TS_LANG_NAME: dict[str, _TreeSitterGrammarName] = {
     "java": "java",
     "ruby": "ruby",
     "php": "php",
@@ -37,9 +53,9 @@ _TS_LANG_NAME: dict[str, str] = {
 
 
 _available: bool | None = None
-_language_cache: dict[str, object] = {}
-_parser_cache: dict[str, object] = {}
-_query_cache: dict[str, object] = {}
+_language_cache: dict[str, Language] = {}
+_parser_cache: dict[str, Parser] = {}
+_query_cache: dict[str, Query] = {}
 
 
 def is_available() -> bool:
@@ -63,8 +79,12 @@ def is_available() -> bool:
     return _available
 
 
-def _get_parser(language: str):
-    ts_name = _TS_LANG_NAME.get(language, language)
+def _ts_language_name(language: str) -> _TreeSitterGrammarName:
+    return _TS_LANG_NAME.get(language, cast(_TreeSitterGrammarName, language))
+
+
+def _get_parser(language: str) -> Parser:
+    ts_name = _ts_language_name(language)
     if ts_name in _parser_cache:
         return _parser_cache[ts_name]
     import tree_sitter_language_pack as pack
@@ -73,8 +93,8 @@ def _get_parser(language: str):
     return parser
 
 
-def _get_language(language: str):
-    ts_name = _TS_LANG_NAME.get(language, language)
+def _get_language(language: str) -> Language:
+    ts_name = _ts_language_name(language)
     if ts_name in _language_cache:
         return _language_cache[ts_name]
     import tree_sitter_language_pack as pack
@@ -83,7 +103,7 @@ def _get_language(language: str):
     return lang
 
 
-def _get_query(language: str):
+def _get_query(language: str) -> Query:
     if language in _query_cache:
         return _query_cache[language]
     from tree_sitter import Query
@@ -96,7 +116,20 @@ def _get_query(language: str):
     return query
 
 
-def _enclosing_scope_chain(node, class_node_ids: set) -> list:
+def _node_text(node: Node) -> str:
+    raw = node.text or b""
+    return raw.decode("utf-8", errors="replace")
+
+
+def _query_matches(query: Query, root_node: Node) -> QueryMatches:
+    # ponytail: keep the optional floor broad by supporting both query APIs.
+    if hasattr(query, "matches"):
+        return cast(QueryMatches, cast(Any, query).matches(root_node))
+    from tree_sitter import QueryCursor
+    return cast(QueryMatches, QueryCursor(query).matches(root_node))
+
+
+def _enclosing_scope_chain(node: Node, class_node_ids: set[int]) -> list[Node]:
     """Walk up from `node`, collecting captured class/module ancestors.
 
     Returns outermost-first (e.g. for `def greet` inside `class User` inside
@@ -115,7 +148,7 @@ def _enclosing_scope_chain(node, class_node_ids: set) -> list:
     return chain
 
 
-def _qualify(own_name: str, node, class_node_ids: set, class_name_by_id: dict) -> str:
+def _qualify(own_name: str, node: Node, class_node_ids: set[int], class_name_by_id: dict[int, str]) -> str:
     """Prefix `own_name` with its full enclosing scope chain, `::`-joined."""
     chain = _enclosing_scope_chain(node, class_node_ids)
     if not chain:
@@ -124,15 +157,15 @@ def _qualify(own_name: str, node, class_node_ids: set, class_name_by_id: dict) -
     return f"{prefix}.{own_name}"
 
 
-def _node_signature(node, src: bytes, max_len: int = 120) -> str:
+def _node_signature(node: Node, src: bytes, max_len: int = 120) -> str:
     """Return a single-line snippet of the node's leading source text."""
-    text = node.text.decode("utf-8", errors="replace")
+    text = _node_text(node)
     first_line = text.split("\n", 1)[0].strip()
     return first_line[:max_len]
 
 
-def _decode_name(name_node) -> str:
-    return name_node.text.decode("utf-8", errors="replace")
+def _decode_name(name_node: Node) -> str:
+    return _node_text(name_node)
 
 
 def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
@@ -149,21 +182,19 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
         return []
 
     try:
-        from tree_sitter import QueryCursor
         parser = _get_parser(language)
         tree = parser.parse(src_bytes)
         query = _get_query(language)
-        cursor = QueryCursor(query)
-        matches = cursor.matches(tree.root_node)
+        matches = _query_matches(query, tree.root_node)
     except Exception:
         return []
 
     # First pass: collect all class/module-like nodes so method/function
     # captures can find their enclosing scope for `Owner.method` qualification.
-    class_matches: list[tuple[object, str]] = []  # (outer_node, name)
-    method_matches: list[tuple[object, str]] = []
-    function_matches: list[tuple[object, str]] = []
-    variable_matches: list[tuple[object, str]] = []
+    class_matches: list[tuple[Node, str]] = []  # (outer_node, name)
+    method_matches: list[tuple[Node, str]] = []
+    function_matches: list[tuple[Node, str]] = []
+    variable_matches: list[tuple[Node, str]] = []
     for _pat_idx, cap in matches:
         # cap is dict[str, list[Node]] — one entry per capture name in the pattern.
         for outer_key, name_key, bucket in (
@@ -206,7 +237,7 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
                 signature=_node_signature(node, src_bytes),
-                body=node.text.decode("utf-8", errors="replace"),
+                body=_node_text(node),
             )
         )
 
@@ -221,7 +252,7 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
                 signature=_node_signature(node, src_bytes),
-                body=node.text.decode("utf-8", errors="replace"),
+                body=_node_text(node),
             )
         )
 
@@ -234,7 +265,7 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
                 signature=_node_signature(node, src_bytes),
-                body=node.text.decode("utf-8", errors="replace"),
+                body=_node_text(node),
             )
         )
 
@@ -243,7 +274,7 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
         chain = _enclosing_scope_chain(node, class_node_ids)
         if chain:
             qualified = _qualify(name, node, class_node_ids, class_name_by_id)
-            kind = "method"
+            kind: _SymbolKind = "method"
         else:
             qualified = name
             kind = "function"
@@ -254,7 +285,7 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
                 signature=_node_signature(node, src_bytes),
-                body=node.text.decode("utf-8", errors="replace"),
+                body=_node_text(node),
             )
         )
 
@@ -275,12 +306,10 @@ def extract_imports_ts(path: Path, cached_text: str | None, language: str) -> li
         return []
 
     try:
-        from tree_sitter import QueryCursor
         parser = _get_parser(language)
         tree = parser.parse(src_bytes)
         query = _get_query(language)
-        cursor = QueryCursor(query)
-        matches = cursor.matches(tree.root_node)
+        matches = _query_matches(query, tree.root_node)
     except Exception:
         return []
 
@@ -288,7 +317,7 @@ def extract_imports_ts(path: Path, cached_text: str | None, language: str) -> li
     seen: set[str] = set()
     for _pat_idx, cap in matches:
         for node in cap.get("import.path", []):
-            raw = node.text.decode("utf-8", errors="replace").strip()
+            raw = _node_text(node).strip()
             # Ruby/PHP capture a content-only sub-node (no surrounding quotes).
             # Protobuf's grammar has no such sub-node, so @import.path is the
             # whole `string` node including its quote-mark tokens — strip them
