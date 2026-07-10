@@ -252,6 +252,12 @@ class FileRanker:
         keyword_plan.weights = keyword_weights
         keywords = set(keyword_weights)
         generic_ratio = generic_task_term_ratio(task)
+        # Note: classify_task(task) is also called inside build_keyword_plan
+        # above, populating KeywordPlan.task_class (read by
+        # _path_concrete_term_bonus for scoring). This call is kept separate
+        # since it feeds RankResult/PackPlan/ContextPack.task_class for
+        # telemetry — both are pure functions of the same `task` string, so
+        # they always agree, but there is no single source of truth.
         task_classification = classify_task(task)
         all_paths = {f.path for f in packable}
 

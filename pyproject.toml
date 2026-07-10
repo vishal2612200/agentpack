@@ -48,9 +48,16 @@ mcp = [
   "mcp>=1.0.0"
 ]
 
+tree-sitter = [
+  "tree-sitter>=0.23.2",
+  "tree-sitter-language-pack>=0.7.4"
+]
+
 all = [
   "watchdog>=4.0.0",
-  "mcp>=1.0.0"
+  "mcp>=1.0.0",
+  "tree-sitter>=0.23.2",
+  "tree-sitter-language-pack>=0.7.4"
 ]
 
 dev = [

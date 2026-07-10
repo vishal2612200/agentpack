@@ -125,8 +125,21 @@ jobs:
       - name: Type check
         run: mypy
 
+  tree-sitter-floor:
+    needs: [check-release-branch, check-changelog, check-version-sync, check-pypi-version-available]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.10"
+      - name: Install tree-sitter floor
+        run: pip install -e ".[dev,tree-sitter]" "tree-sitter==0.23.2" "tree-sitter-language-pack==0.7.4"
+      - name: Run tree-sitter backend tests
+        run: pytest tests/test_tree_sitter_backend.py -q
+
   build:
-    needs: test
+    needs: [test, tree-sitter-floor]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

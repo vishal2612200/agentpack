@@ -10,6 +10,10 @@ from agentpack.analysis.js_ts_imports import resolve_relative_import as js_resol
 from agentpack.analysis.go_imports import extract_imports as go_imports
 from agentpack.analysis.rust_imports import extract_imports as rust_imports
 from agentpack.analysis.java_imports import extract_imports as java_imports
+from agentpack.analysis.ruby_imports import extract_imports as ruby_imports
+from agentpack.analysis.ruby_imports import resolve_relative_import as ruby_resolve
+from agentpack.analysis.php_imports import extract_imports as php_imports
+from agentpack.analysis.protobuf_imports import extract_imports as protobuf_imports
 
 _GRAPH_CACHE: dict[tuple[tuple[tuple[str, str | None], ...], bool], DependencyGraph] = {}
 
@@ -68,6 +72,12 @@ def build(
             raw_imports = rust_imports(fi.abs_path, cached)
         elif lang in ("java", "kotlin"):
             raw_imports = java_imports(fi.abs_path, cached)
+        elif lang == "ruby":
+            raw_imports = ruby_imports(fi.abs_path, cached)
+        elif lang == "php":
+            raw_imports = php_imports(fi.abs_path, cached)
+        elif lang == "protobuf":
+            raw_imports = protobuf_imports(fi.abs_path, cached)
 
         resolved = _resolve_imports(fi.path, lang, raw_imports, root, path_set)
 
@@ -94,10 +104,20 @@ def _resolve_imports(
                 r = py_resolve(importer, imp, root)
             elif language in ("javascript", "typescript"):
                 r = js_resolve(importer, imp, root)
+            elif language == "ruby":
+                r = ruby_resolve(importer, imp, root)
             else:
                 r = None
             if r and r in path_set:
                 resolved.append(r)
         else:
+            # Bare `require "foo/bar"` (no dot prefix) resolves against
+            # Ruby's $LOAD_PATH (typically a gem's lib/ root), not relative
+            # to the importing file's directory. ruby_resolve only
+            # implements importer-relative resolution (require_relative
+            # semantics), so it isn't applied here — a coincidental file at
+            # the guessed importer-relative path would otherwise silently
+            # resolve to the wrong target. Kept as a raw string, matching
+            # how PHP's non-relative `use` imports are handled.
             resolved.append(imp)
     return resolved
