@@ -2,7 +2,7 @@
 
 `agentpack dashboard` writes three local artifacts:
 
-- `.agentpack/dashboard.html` - bundled cockpit shell with embedded data for `file://` use.
+- `.agentpack/index.html` - bundled cockpit shell with embedded data for `file://` use and clean local serving at `/`.
 - `.agentpack/dashboard-data.json` - normalized project, context, task-map, learning, observer, loop, and action snapshot.
 - `.agentpack/dashboard-graph.json` - task-scoped decision graph consumed by the cockpit.
 
@@ -16,13 +16,18 @@ schema version bump and frontend compatibility handling.
 
 - `root_id`: the active task node, currently `task:active`.
 - `summary`: node and edge counts, selected/omitted counts, memory count, high-risk count, truncation metadata, and the node cap used by the builder.
+- `project_index`: bounded local AgentPack project index from the current checkout's parent directory, including context health, token savings, review count, memory count, and copyable open/refresh commands.
+- `learning_prep`: recent task-backed quiz/interview/failure-drill sessions plus copyable `agentpack learn` commands for interview preparation from recorded task memory.
 - `nodes`: typed graph nodes for `task`, `file`, `symbol`, `test`, `episode`, `procedure`, and `action`.
-- `edges`: typed relationships for selection, omission, tests, memory influence, procedure applicability, breakage risk, and retrieval.
+- `edges`: typed relationships for file/symbol containment, selection, omission, tests, memory influence, procedure applicability, breakage risk, and retrieval.
+  `memory_influenced` edges may point at files or selected symbols when recorded learning memory references the file and matches the symbol by concept or symbol name.
+- `review_runs`: recent `.agentpack/reviews/<branch-prefix>/<run-id>/preflight.json` records with PR target, stage status, artifact paths, and copyable review commands.
 
 Node IDs are stable within a generated dashboard:
 
 - `task:active`
 - `file:<repo-relative-path>`
+- `symbol:<stable-symbol-node-id>` when selected context contains AST/symbol metadata
 - `test:<repo-relative-path-or-command>`
 - `episode:<memory-id>`
 - `procedure:<memory-id>`

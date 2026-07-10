@@ -1,43 +1,58 @@
-import type { DashboardGraph, DashboardSnapshot } from "./schema";
+import type { ActionHistoryRow, DashboardGraph, DashboardMap, DashboardSnapshot } from "./schema";
 
 declare global {
   interface Window {
-    __AGENTPACK_DASHBOARD_DATA__?: string;
-    __AGENTPACK_DASHBOARD_GRAPH__?: string;
+    __AGENTPACK_DASHBOARD_API__?: string;
+    __AGENTPACK_DASHBOARD_TOKEN__?: string;
   }
 }
 
 export interface DashboardPayload {
   snapshot: DashboardSnapshot;
   graph: DashboardGraph;
+  map: DashboardMap;
+  action_history: ActionHistoryRow[];
 }
 
 export async function loadDashboardPayload(): Promise<DashboardPayload> {
-  const snapshot = readEmbeddedJson<DashboardSnapshot>("agentpack-dashboard-data");
-  const graph = readEmbeddedJson<DashboardGraph>("agentpack-dashboard-graph");
-  if (snapshot && graph) {
-    return { snapshot, graph };
+  if (window.location.protocol === "file:") {
+    throw new Error("Static dashboard files are no longer supported. Run `agentpack dashboard` and open the served URL.");
   }
-
-  const [snapshotResponse, graphResponse] = await Promise.all([
-    fetch(window.__AGENTPACK_DASHBOARD_DATA__ || "./dashboard-data.json"),
-    fetch(window.__AGENTPACK_DASHBOARD_GRAPH__ || "./dashboard-graph.json")
-  ]);
-  return {
-    snapshot: await snapshotResponse.json(),
-    graph: await graphResponse.json()
-  };
+  const apiBase = normalizedApiBase();
+  if (apiBase === null) {
+    throw new Error("Dashboard server API is unavailable. Run `agentpack dashboard` and open the served URL.");
+  }
+  const response = await fetch(`${apiBase}/api/dashboard`, {
+    headers: authHeaders()
+  });
+  if (!response.ok) {
+    throw new Error(`Dashboard API failed: ${response.status}`);
+  }
+  return (await response.json()) as DashboardPayload;
 }
 
-function readEmbeddedJson<T>(id: string): T | null {
-  const el = document.getElementById(id);
-  const text = el?.textContent?.trim();
-  if (!text || text.startsWith("__AGENTPACK_")) {
-    return null;
+export function authHeaders(): HeadersInit {
+  const token = window.__AGENTPACK_DASHBOARD_TOKEN__;
+  return token && !token.startsWith("__AGENTPACK_") ? { "X-AgentPack-Token": token } : {};
+}
+
+export function apiUrl(path: string): string {
+  const base = normalizedApiBase() || "";
+  return `${base}${path}`;
+}
+
+export function dashboardToken(): string {
+  const token = window.__AGENTPACK_DASHBOARD_TOKEN__;
+  return token && !token.startsWith("__AGENTPACK_") ? token : "";
+}
+
+function normalizedApiBase(): string | null {
+  const value = window.__AGENTPACK_DASHBOARD_API__;
+  if (value && !value.startsWith("__AGENTPACK_")) {
+    return value.replace(/\/$/, "");
   }
-  try {
-    return JSON.parse(text) as T;
-  } catch {
-    return null;
+  if (window.location.protocol === "http:" || window.location.protocol === "https:") {
+    return "";
   }
+  return null;
 }

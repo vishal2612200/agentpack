@@ -22,7 +22,6 @@ export interface DashboardAction {
   label: string;
   command?: string;
   kind?: string;
-  reason?: string;
 }
 
 export interface DashboardNode {
@@ -65,12 +64,118 @@ export interface DashboardGraph {
     omitted_files: number;
     memory_nodes: number;
     high_risk_files: number;
-    max_nodes?: number;
-    truncated_reason?: string;
     truncated: boolean;
   };
   nodes: DashboardNode[];
   edges: DashboardEdge[];
+}
+
+export interface MapDistrict {
+  id: string;
+  label: string;
+  path?: string;
+  x: number;
+  z: number;
+  building_count: number;
+  selected_count: number;
+}
+
+export interface MapBuilding {
+  id: string;
+  node_id: string;
+  label: string;
+  path: string;
+  district_id: string;
+  building_type?: string;
+  building_tier?: string;
+  confidence_source?: string;
+  confidence_breakdown?: Record<string, number | string | boolean>;
+  layout_group?: string;
+  action_refs?: string[];
+  score: number;
+  confidence: number;
+  height: number;
+  risk: string;
+  selected: boolean;
+  include_mode?: string;
+  memory_linked?: boolean;
+  tests?: string[];
+  reasons?: string[];
+  actions?: DashboardAction[];
+  x: number;
+  z: number;
+  color: string;
+}
+
+export interface MapRoad {
+  id: string;
+  source: string;
+  target: string;
+  type: string;
+  confidence?: number;
+  reason?: string;
+  route_class?: string;
+  relationship_strength?: number;
+  relationship_source?: string;
+  source_kind?: string;
+  target_kind?: string;
+}
+
+export interface MapLandmark {
+  id: string;
+  label: string;
+  type: string;
+  status?: string;
+  detail?: string;
+  tone?: string;
+  x: number;
+  z: number;
+}
+
+export interface MapWeather {
+  id: string;
+  label: string;
+  tone?: string;
+  detail?: string;
+}
+
+export interface DashboardMap {
+  schema_version: number;
+  generated_at?: string;
+  summary: {
+    district_count: number;
+    building_count: number;
+    road_count: number;
+    selected_buildings: number;
+    high_risk_buildings: number;
+    max_score: number;
+    stale: boolean;
+    building_type_counts?: Record<string, number>;
+    route_class_counts?: Record<string, number>;
+    confidence_source_counts?: Record<string, number>;
+  };
+  districts: MapDistrict[];
+  buildings: MapBuilding[];
+  roads: MapRoad[];
+  landmarks: MapLandmark[];
+  weather: MapWeather[];
+}
+
+export interface ActionHistoryRow {
+  action_id: string;
+  label?: string;
+  command?: string;
+  cwd?: string;
+  status?: string;
+  started_at?: string;
+  ended_at?: string;
+  returncode?: number | null;
+  confirmed?: boolean;
+  source?: string;
+  session_id?: string;
+  duration_ms?: number | null;
+  output_summary?: string;
+  follow_up_actions?: string[];
 }
 
 export interface DashboardSnapshot {
@@ -146,6 +251,26 @@ export interface DashboardSnapshot {
       evidence?: string[];
     }>;
   };
+  mcp_health?: {
+    status?: "healthy" | "warning" | "missing" | "unknown";
+    runtime_status?: string;
+    runtime_ok?: boolean;
+    runtime_detail?: string;
+    registered?: boolean;
+    registrations?: Array<{
+      scope: string;
+      path: string;
+      status?: string;
+      detail?: string;
+    }>;
+    live_exposure?: "confirmed" | "unknown";
+    expected_tools?: string[];
+    remediation?: string[];
+  };
+  threads?: {
+    active_count?: number;
+    conflicts?: Array<Record<string, unknown>>;
+  };
   benchmarks: {
     latest?: Record<string, unknown>;
     averages?: Record<string, number>;
@@ -154,8 +279,116 @@ export interface DashboardSnapshot {
   loop: {
     exists?: boolean;
     status?: string;
+    task?: string;
+    iteration?: number;
+    max_iterations?: number;
+    runner?: string;
     blocked_reason?: string;
     next_action?: string;
   };
   suggested_actions: DashboardAction[];
+  config?: {
+    path?: string;
+    exists?: boolean;
+    valid?: boolean;
+    error?: string;
+    editable_fields?: string[];
+    sections?: Array<{
+      name: string;
+      fields: Array<{
+        section: string;
+        key: string;
+        value: unknown;
+        default?: unknown;
+        value_type?: string;
+        editable?: boolean;
+        source?: string;
+        description?: string;
+        allowed_values?: string[];
+        doc_ref?: string;
+      }>;
+    }>;
+  };
+  task_control?: Array<{
+    scope: "global" | "thread";
+    thread_id?: string | null;
+    task?: string;
+    task_path?: string;
+    state?: string;
+    state_path?: string;
+    status?: string;
+    summary?: string;
+    done?: boolean;
+    exists?: boolean;
+  }>;
+  thread_rows?: Array<{
+    thread_id: string;
+    task?: string;
+    status?: string;
+    summary?: string;
+    branch?: string;
+    updated_at?: string;
+    worktree?: string;
+    selected_count?: number;
+    dirty_count?: number;
+    conflicts?: string[];
+    overlap_files?: string[];
+    prune_eligible?: boolean;
+  }>;
+  integrations?: Array<{
+    agent: string;
+    label: string;
+    path: string;
+    exists?: boolean;
+    status?: string;
+    detail?: string;
+    repair_command?: string;
+  }>;
+  command_catalog?: Array<{
+    id: string;
+    group: string;
+    label: string;
+    command: string;
+    description?: string;
+    risk?: "low" | "medium" | "high";
+    confirm_required?: boolean;
+    primary?: boolean;
+  }>;
+  artifacts?: Array<{
+    label: string;
+    path: string;
+    exists?: boolean;
+    kind?: string;
+    modified_at?: string;
+    size?: number;
+    destination?: string;
+  }>;
+  projects?: Array<{
+    name: string;
+    path: string;
+    branch?: string;
+    git_sha?: string;
+    source?: string;
+    current?: boolean;
+      exists?: boolean;
+      valid?: boolean;
+      detail?: string;
+      context_status?: string;
+      mcp_status?: string;
+      map_ready?: boolean;
+      last_seen_at?: string;
+    }>;
+  task_history?: Array<{
+    task: string;
+    source: string;
+    observed_at?: string;
+    thread_id?: string;
+    agent?: string;
+    branch?: string;
+    git_sha?: string;
+    cwd?: string;
+    context_path?: string;
+    status?: string;
+    summary?: string;
+  }>;
 }

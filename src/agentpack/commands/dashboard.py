@@ -7,46 +7,38 @@ from pathlib import Path
 
 import typer
 
-from agentpack.commands._shared import _atomic_write, _root, console
-from agentpack.dashboard.app_shell import write_dashboard_shell
+from agentpack.commands._shared import _root, console
 from agentpack.dashboard.collectors import build_project_dashboard_snapshot
-from agentpack.dashboard.graph import build_dashboard_graph
-from agentpack.dashboard.renderers import render_dashboard_html
+from agentpack.dashboard.server import DEFAULT_DASHBOARD_HOST, DEFAULT_DASHBOARD_PORT, serve_dashboard
 
 
 def register(app: typer.Typer) -> None:
     @app.command()
     def dashboard(
         json_output: bool = typer.Option(False, "--json", help="Print normalized dashboard snapshot JSON."),
-        open_browser: bool = typer.Option(False, "--open", help="Open the generated HTML dashboard."),
-        output: str = typer.Option("", "--output", "-o", help="Dashboard HTML output path."),
-        legacy: bool = typer.Option(False, "--legacy", help="Write the legacy static HTML dashboard."),
+        open_browser: bool = typer.Option(False, "--open", help="Open the served dashboard in a browser."),
+        port: int = typer.Option(DEFAULT_DASHBOARD_PORT, "--port", help="Local dashboard server port."),
+        output: str = typer.Option("", "--output", "-o", help="Deprecated. Static dashboard files are no longer written."),
+        legacy: bool = typer.Option(False, "--legacy", help="Deprecated. The dashboard is serve-only."),
     ) -> None:
-        """Generate a local AgentPack dashboard."""
+        """Serve the local AgentPack dashboard."""
         root = _root()
         snapshot = build_project_dashboard_snapshot(root)
-        graph = build_dashboard_graph(snapshot, root)
         if json_output:
             typer.echo(json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True))
             return
-
-        out = root / (output or ".agentpack/dashboard.html")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        data_out = out.parent / "dashboard-data.json"
-        graph_out = out.parent / "dashboard-graph.json"
-        _atomic_write(data_out, json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True) + "\n")
-        _atomic_write(graph_out, json.dumps(graph.model_dump(mode="json"), indent=2, sort_keys=True) + "\n")
-        if legacy:
-            _atomic_write(out, render_dashboard_html(snapshot))
-            modern = False
-        else:
-            modern = write_dashboard_shell(out, snapshot, graph)
-        label = "cockpit" if modern else "legacy dashboard"
-        console.print(f"[green]✓[/] Wrote {label} [bold]{out}[/]")
-        console.print(f"[green]✓[/] Wrote data [bold]{data_out}[/]")
-        console.print(f"[green]✓[/] Wrote graph [bold]{graph_out}[/]")
-        if open_browser:
-            _open_file(out)
+        if output or legacy:
+            console.print("[red]Static dashboard output is deprecated.[/] Run `agentpack dashboard` and open the served URL instead.")
+            raise typer.Exit(2)
+        url = f"http://{DEFAULT_DASHBOARD_HOST}:{port}/"
+        console.print(f"[green]✓[/] Serving AgentPack dashboard at [bold]{url}[/]")
+        console.print("[dim]Press Ctrl+C to stop.[/]")
+        try:
+            serve_dashboard(root, host=DEFAULT_DASHBOARD_HOST, port=port, open_browser=open_browser)
+        except OSError as exc:
+            console.print(f"[red]Dashboard server failed on {DEFAULT_DASHBOARD_HOST}:{port}: {exc}[/]")
+            console.print("[dim]Use `agentpack dashboard --port <port>` if this port is already in use.[/]")
+            raise typer.Exit(1) from exc
 
 
 def _open_file(path: Path) -> None:

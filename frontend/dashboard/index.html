@@ -4,8 +4,10 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>AgentPack Cockpit</title>
-    <script id="agentpack-dashboard-data" type="application/json">__AGENTPACK_DASHBOARD_DATA_JSON__</script>
-    <script id="agentpack-dashboard-graph" type="application/json">__AGENTPACK_DASHBOARD_GRAPH_JSON__</script>
+    <script>
+      window.__AGENTPACK_DASHBOARD_API__ = "__AGENTPACK_DASHBOARD_API__";
+      window.__AGENTPACK_DASHBOARD_TOKEN__ = "__AGENTPACK_DASHBOARD_TOKEN__";
+    </script>
   </head>
   <body>
     <div id="root"></div>

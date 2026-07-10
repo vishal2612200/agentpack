@@ -15,6 +15,8 @@ SkillFeedbackStatus = Literal[
     "ignored",
     "bad_recommendation",
 ]
+McpHealthStatus = Literal["healthy", "warning", "missing", "unknown"]
+McpLiveExposure = Literal["confirmed", "unknown"]
 DashboardNodeType = Literal["task", "file", "symbol", "test", "episode", "procedure", "action"]
 DashboardEdgeType = Literal[
     "selected_because",
@@ -185,6 +187,25 @@ class ThreadSummary(BaseModel):
     conflicts: list[dict[str, Any]] = Field(default_factory=list)
 
 
+class McpRegistration(BaseModel):
+    scope: str
+    path: str
+    status: str = "unknown"
+    detail: str = ""
+
+
+class McpHealth(BaseModel):
+    status: McpHealthStatus = "unknown"
+    runtime_status: str = ""
+    runtime_ok: bool = False
+    runtime_detail: str = ""
+    registered: bool = False
+    registrations: list[McpRegistration] = Field(default_factory=list)
+    live_exposure: McpLiveExposure = "unknown"
+    expected_tools: list[str] = Field(default_factory=list)
+    remediation: list[str] = Field(default_factory=list)
+
+
 class LoopSummary(BaseModel):
     exists: bool = False
     status: str = ""
@@ -213,6 +234,122 @@ class SuggestedAction(BaseModel):
     label: str
     command: str
     reason: str = ""
+
+
+class DashboardConfigField(BaseModel):
+    section: str
+    key: str
+    value: Any = None
+    default: Any = None
+    value_type: str = "unknown"
+    editable: bool = False
+    source: str = "effective"
+    description: str = ""
+    allowed_values: list[str] = Field(default_factory=list)
+    doc_ref: str = ""
+
+
+class DashboardConfigSection(BaseModel):
+    name: str
+    fields: list[DashboardConfigField] = Field(default_factory=list)
+
+
+class DashboardConfigSummary(BaseModel):
+    path: str = ""
+    exists: bool = False
+    valid: bool = True
+    error: str = ""
+    sections: list[DashboardConfigSection] = Field(default_factory=list)
+    editable_fields: list[str] = Field(default_factory=list)
+
+
+class TaskControlRow(BaseModel):
+    scope: Literal["global", "thread"] = "global"
+    thread_id: str | None = None
+    task: str = ""
+    task_path: str = ""
+    state: TaskState = "unknown"
+    state_path: str = ""
+    status: str = ""
+    summary: str = ""
+    done: bool = False
+    exists: bool = False
+
+
+class ThreadRow(BaseModel):
+    thread_id: str
+    task: str = ""
+    status: str = ""
+    summary: str = ""
+    branch: str = ""
+    updated_at: str = ""
+    worktree: str = ""
+    selected_count: int = 0
+    dirty_count: int = 0
+    conflicts: list[str] = Field(default_factory=list)
+    overlap_files: list[str] = Field(default_factory=list)
+    prune_eligible: bool = False
+
+
+class IntegrationFileRow(BaseModel):
+    agent: str
+    label: str
+    path: str
+    exists: bool = False
+    status: str = "missing"
+    detail: str = ""
+    repair_command: str = ""
+
+
+class CommandCatalogItem(BaseModel):
+    id: str
+    group: str
+    label: str
+    command: str
+    description: str = ""
+    risk: Literal["low", "medium", "high"] = "low"
+    confirm_required: bool = False
+    primary: bool = False
+
+
+class ArtifactRow(BaseModel):
+    label: str
+    path: str
+    exists: bool = False
+    kind: str = ""
+    modified_at: str = ""
+    size: int = 0
+    destination: str = ""
+
+
+class ProjectCandidate(BaseModel):
+    name: str
+    path: str
+    branch: str = ""
+    git_sha: str = ""
+    source: str = ""
+    current: bool = False
+    exists: bool = False
+    valid: bool = False
+    detail: str = ""
+    context_status: str = "unknown"
+    mcp_status: str = "unknown"
+    map_ready: bool = False
+    last_seen_at: str = ""
+
+
+class TaskHistoryRow(BaseModel):
+    task: str
+    source: str
+    observed_at: str = ""
+    thread_id: str = ""
+    agent: str = ""
+    branch: str = ""
+    git_sha: str = ""
+    cwd: str = ""
+    context_path: str = ""
+    status: str = ""
+    summary: str = ""
 
 
 class DashboardEvidence(BaseModel):
@@ -265,8 +402,6 @@ class DashboardGraphSummary(BaseModel):
     omitted_files: int = 0
     memory_nodes: int = 0
     high_risk_files: int = 0
-    max_nodes: int = 0
-    truncated_reason: str = ""
     truncated: bool = False
 
 
@@ -277,6 +412,116 @@ class DashboardGraph(BaseModel):
     summary: DashboardGraphSummary = Field(default_factory=DashboardGraphSummary)
     nodes: list[DashboardNode] = Field(default_factory=list)
     edges: list[DashboardEdge] = Field(default_factory=list)
+
+
+class MapDistrict(BaseModel):
+    id: str
+    label: str
+    path: str = ""
+    x: float = 0.0
+    z: float = 0.0
+    building_count: int = 0
+    selected_count: int = 0
+
+
+class MapBuilding(BaseModel):
+    id: str
+    node_id: str
+    label: str
+    path: str
+    district_id: str
+    building_type: str = "unknown"
+    building_tier: str = "pavilion"
+    confidence_source: str = "fallback"
+    confidence_breakdown: dict[str, float | str | bool] = Field(default_factory=dict)
+    layout_group: str = "unknown"
+    action_refs: list[str] = Field(default_factory=list)
+    score: float = 0.0
+    confidence: float = 0.08
+    height: float = 7.36
+    risk: str = "unknown"
+    selected: bool = False
+    include_mode: str = ""
+    memory_linked: bool = False
+    tests: list[str] = Field(default_factory=list)
+    reasons: list[str] = Field(default_factory=list)
+    actions: list[DashboardAction] = Field(default_factory=list)
+    x: float = 0.0
+    z: float = 0.0
+    color: str = "#6b7280"
+
+
+class MapRoad(BaseModel):
+    id: str
+    source: str
+    target: str
+    type: str
+    confidence: float = 0.0
+    reason: str = ""
+    route_class: str = "local"
+    relationship_strength: float = 0.0
+    relationship_source: str = "fallback"
+    source_kind: str = "unknown"
+    target_kind: str = "unknown"
+
+
+class MapLandmark(BaseModel):
+    id: str
+    label: str
+    type: str
+    status: str = ""
+    detail: str = ""
+    tone: str = "neutral"
+    x: float = 0.0
+    z: float = 0.0
+
+
+class MapWeather(BaseModel):
+    id: str
+    label: str
+    tone: str = "neutral"
+    detail: str = ""
+
+
+class DashboardMapSummary(BaseModel):
+    district_count: int = 0
+    building_count: int = 0
+    road_count: int = 0
+    selected_buildings: int = 0
+    high_risk_buildings: int = 0
+    max_score: float = 0.0
+    stale: bool = False
+    building_type_counts: dict[str, int] = Field(default_factory=dict)
+    route_class_counts: dict[str, int] = Field(default_factory=dict)
+    confidence_source_counts: dict[str, int] = Field(default_factory=dict)
+
+
+class DashboardMap(BaseModel):
+    schema_version: int = 1
+    generated_at: str = ""
+    summary: DashboardMapSummary = Field(default_factory=DashboardMapSummary)
+    districts: list[MapDistrict] = Field(default_factory=list)
+    buildings: list[MapBuilding] = Field(default_factory=list)
+    roads: list[MapRoad] = Field(default_factory=list)
+    landmarks: list[MapLandmark] = Field(default_factory=list)
+    weather: list[MapWeather] = Field(default_factory=list)
+
+
+class ActionHistoryRow(BaseModel):
+    action_id: str
+    label: str = ""
+    command: str = ""
+    cwd: str = ""
+    status: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    returncode: int | None = None
+    confirmed: bool = False
+    source: str = "dashboard"
+    session_id: str = ""
+    duration_ms: int | None = None
+    output_summary: str = ""
+    follow_up_actions: list[str] = Field(default_factory=list)
 
 
 class DashboardSnapshot(BaseModel):
@@ -296,5 +541,14 @@ class DashboardSnapshot(BaseModel):
     observer: ObserverSummary = Field(default_factory=ObserverSummary)
     benchmarks: BenchmarkSummary = Field(default_factory=BenchmarkSummary)
     threads: ThreadSummary = Field(default_factory=ThreadSummary)
+    mcp_health: McpHealth = Field(default_factory=McpHealth)
     loop: LoopSummary = Field(default_factory=LoopSummary)
     suggested_actions: list[SuggestedAction] = Field(default_factory=list)
+    config: DashboardConfigSummary = Field(default_factory=DashboardConfigSummary)
+    task_control: list[TaskControlRow] = Field(default_factory=list)
+    thread_rows: list[ThreadRow] = Field(default_factory=list)
+    integrations: list[IntegrationFileRow] = Field(default_factory=list)
+    command_catalog: list[CommandCatalogItem] = Field(default_factory=list)
+    artifacts: list[ArtifactRow] = Field(default_factory=list)
+    projects: list[ProjectCandidate] = Field(default_factory=list)
+    task_history: list[TaskHistoryRow] = Field(default_factory=list)

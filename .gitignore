@@ -50,3 +50,4 @@ env/
 .ruff_cache/
 
 *.dist-info/
+frontend/dashboard/node_modules/

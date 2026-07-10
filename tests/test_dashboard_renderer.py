@@ -7,6 +7,8 @@ from agentpack.dashboard.models import (
     LearningArtifact,
     LearningWeakSpot,
     LoopSummary,
+    McpHealth,
+    McpRegistration,
     ObserverInsightRow,
     ObserverSummary,
     ProjectInfo,
@@ -73,6 +75,23 @@ def test_render_dashboard_html_contains_core_sections() -> None:
                 ],
             ),
             benchmarks=BenchmarkSummary(averages={"selection_recall": 0.8, "skill_recall_at_3": 0.9}),
+            mcp_health=McpHealth(
+                status="healthy",
+                runtime_status="stdio_waiting",
+                runtime_ok=True,
+                runtime_detail="agentpack mcp started and waited for MCP stdio",
+                registered=True,
+                registrations=[
+                    McpRegistration(
+                        scope="Codex",
+                        path="/Users/example/.codex/config.toml",
+                        status="present",
+                        detail="agentpack server registered.",
+                    )
+                ],
+                expected_tools=["readiness", "get_context"],
+                remediation=["Call agentpack_readiness() from the agent host to prove live exposure."],
+            ),
             loop=LoopSummary(
                 exists=True,
                 status="ready_to_finish",
@@ -93,6 +112,10 @@ def test_render_dashboard_html_contains_core_sections() -> None:
     assert 'href="#task-map"' in html
     assert "tests/test_auth.py" in html
     assert "retrieve_context(block_id=&quot;src__auth.py:abc123&quot;)" in html
+    assert "Integrations" in html
+    assert 'href="#integrations"' in html
+    assert "stdio_waiting" in html
+    assert "agentpack_readiness()" in html
     assert "auth-review" in html
     assert "selection_recall" in html
     assert "Guarded Loop" in html

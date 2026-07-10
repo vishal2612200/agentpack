@@ -30,7 +30,7 @@ def test_dashboard_html_renders_in_headless_browser(tmp_path: Path, monkeypatch)
             "--allow-file-access-from-files",
             "--window-size=1280,900",
             f"--screenshot={screenshot}",
-            (tmp_path / ".agentpack" / "dashboard.html").as_uri(),
+            (tmp_path / ".agentpack" / "index.html").as_uri(),
         ],
         check=True,
         stdout=subprocess.PIPE,

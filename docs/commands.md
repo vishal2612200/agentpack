@@ -61,7 +61,7 @@ Advanced command map:
 | `agentpack eval` | Run deterministic failure evals with tests, diff limits, and taxonomy labels |
 | `agentpack tune` | Suggest fixes from recent pack metrics and benchmark misses |
 | `agentpack status` | Inspect current pack freshness and metadata |
-| `agentpack dashboard` | Generate a local HTML dashboard for context, skills, learning, observer signals, and quality |
+| `agentpack dashboard` | Serve a local dashboard for context, skills, learning, observer signals, integrations, and quality |
 | `agentpack threads` | List, archive, prune, and inspect thread-scoped contexts |
 | `agentpack state` | Show or update task execution state |
 | `agentpack diff` | Show what changed between context snapshots |
@@ -1489,40 +1489,39 @@ Newer metrics include token-weighted precision. File precision answers "how many
 
 ### `agentpack dashboard`
 
-Generate a local context-decision cockpit from existing `.agentpack/`
-artifacts.
+Serve a local context-decision cockpit from existing `.agentpack/` artifacts.
 
 ```bash
 agentpack dashboard
 agentpack dashboard --open
+agentpack dashboard --port 8766
 agentpack dashboard --json
-agentpack dashboard --legacy
 ```
 
-The dashboard writes `.agentpack/dashboard.html` by default. The default output
-is a bundled React/Vite cockpit that runs locally from packaged assets, embeds
-the current snapshot for `file://` browser use, and also writes the explicit data
-contracts beside the HTML:
+The dashboard serves at `http://127.0.0.1:8765/` by default. It no longer writes
+or supports static dashboard HTML; run `agentpack dashboard` and keep the local
+server process alive while using the cockpit. If port `8765` is occupied, use
+`--port`.
 
-- `.agentpack/dashboard-data.json` - normalized project/context/task snapshot
-- `.agentpack/dashboard-graph.json` - task-scoped context decision graph
-
-The cockpit is local-only and does not load remote scripts or assets. Missing
-artifacts render empty states with suggested commands such as
+The cockpit is local-only and does not load remote scripts or assets. It uses a
+loopback-only Python server for the dashboard data API and PTY-backed terminal
+sessions. Missing artifacts render empty states with suggested commands such as
 `agentpack pack --task auto`, `agentpack learn`, and
 `agentpack benchmark --init`. It shows selected and omitted context, task-map
 risk, tests, memory influence, observer signals from
-`.agentpack/observer-events.jsonl`, and loop/action state. Use `--legacy` only
-for the old static HTML fallback.
+`.agentpack/observer-events.jsonl`, MCP health, and loop/action state.
 
-The emitted JSON contracts are documented in
-[`docs/dashboard-schema.md`](dashboard-schema.md).
+Command rows in the cockpit run through the local PTY runner instead of asking
+you to copy/paste. The server only allows AgentPack-related commands, runs them
+from the project folder, rejects shell operators, and requires confirmation for
+risky commands such as `agentpack repair`, `agentpack init`, or commands using
+flags like `--fix`, `--force`, or `--repair-stale`.
 
-`--json` prints the normalized dashboard snapshot to stdout instead of writing
-HTML. Use it when you want to inspect the underlying project, context, selected
-files, skill feedback, learning artifacts, observer signals, benchmark metrics,
-and suggested actions programmatically. Observer cards are hypotheses from local
-history, not source evidence.
+`--json` prints the normalized dashboard snapshot to stdout instead of starting
+the server. Use it when you want to inspect the underlying project, context,
+selected files, skill feedback, learning artifacts, observer signals, benchmark
+metrics, and suggested actions programmatically. Observer cards are hypotheses
+from local history, not source evidence.
 
 To build a real usefulness signal for your repo:
 

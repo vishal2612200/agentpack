@@ -15,6 +15,11 @@ from agentpack.commands.init import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_agentpack_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+
+
 def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     block = _repo_gitignore_block()
     lines = block.splitlines()
@@ -165,6 +170,7 @@ def test_patch_agentignore_force_backs_up_even_when_content_is_unchanged(tmp_pat
 
 def test_init_writes_repo_gitignore_block(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
     runner = CliRunner()
 
     result = runner.invoke(app, ["init", "--yes"])
@@ -188,6 +194,10 @@ def test_init_writes_repo_gitignore_block(tmp_path, monkeypatch) -> None:
     assert "[loop]" in config
     assert "enabled = true" in config
     assert 'runner = ""' in config
+
+    index = json.loads((tmp_path / "home" / ".agentpack" / "projects.json").read_text(encoding="utf-8"))
+    assert index["schema_version"] == 1
+    assert index["projects"][0]["path"] == str(tmp_path.resolve())
 
 
 def test_init_writes_agent_specific_gitignore_entries(tmp_path, monkeypatch) -> None:

@@ -4,10 +4,14 @@ import json
 
 from agentpack.core.config import LoopConfig
 from agentpack.core.loop_protocol import LoopCommandResult, initialize_loop, save_loop_state
+from agentpack.core.mcp_runtime import McpRuntimeCheck
+from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
 from agentpack.dashboard.collectors import build_project_dashboard_snapshot
 from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
+    McpHealth,
+    McpRegistration,
     ProjectInfo,
     SelectedFileRow,
     SkillRow,
@@ -44,6 +48,22 @@ def test_dashboard_snapshot_is_json_safe() -> None:
                 retrieve_ref="src__auth.py:abc123",
             )
         ],
+        mcp_health=McpHealth(
+            status="healthy",
+            runtime_status="stdio_waiting",
+            runtime_ok=True,
+            runtime_detail="agentpack mcp started and waited for MCP stdio",
+            registered=True,
+            registrations=[
+                McpRegistration(
+                    scope="Codex",
+                    path="/Users/example/.codex/config.toml",
+                    status="present",
+                    detail="agentpack server registered.",
+                )
+            ],
+            expected_tools=["readiness", "get_context"],
+        ),
         skills=SkillSection(
             task_specific=[
                 SkillRow(
@@ -65,20 +85,44 @@ def test_dashboard_snapshot_is_json_safe() -> None:
     assert payload["project"]["name"] == "repo"
     assert payload["selected_files"][0]["path"] == "src/auth.py"
     assert payload["task_map"][0]["risk_level"] == "medium"
+    assert payload["mcp_health"]["status"] == "healthy"
+    assert payload["mcp_health"]["registrations"][0]["scope"] == "Codex"
     assert payload["skills"]["task_specific"][0]["status"] == "used_helpful"
 
 
-def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path) -> None:
+def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "agentpack.dashboard.collectors.check_mcp_runtime",
+        lambda **_kwargs: McpRuntimeCheck(
+            status="command_missing",
+            ok=False,
+            detail="agentpack command not found on PATH",
+        ),
+    )
+    monkeypatch.setattr("agentpack.dashboard.collectors._mcp_registrations", lambda _root: [])
     snapshot = build_project_dashboard_snapshot(tmp_path)
 
     assert snapshot.project.name == tmp_path.name
     assert snapshot.context.status == "missing"
+    assert snapshot.mcp_health.status == "missing"
     assert any(action.command == "agentpack init --yes" for action in snapshot.suggested_actions)
 
 
-def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
+def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr(
+        "agentpack.dashboard.collectors.check_mcp_runtime",
+        lambda **_kwargs: McpRuntimeCheck(
+            status="stdio_waiting",
+            ok=True,
+            detail="agentpack mcp started and waited for MCP stdio",
+        ),
+    )
     agentpack = tmp_path / ".agentpack"
     agentpack.mkdir()
+    (tmp_path / ".mcp.json").write_text(
+        json.dumps({"mcpServers": {"agentpack": {"command": "agentpack", "args": ["mcp"]}}}),
+        encoding="utf-8",
+    )
     (agentpack / "task.md").write_text("fix auth token expiry\n", encoding="utf-8")
     (agentpack / "pack_metadata.json").write_text(
         json.dumps(
@@ -130,7 +174,134 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path) -> None:
     assert snapshot.selected_files[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].risk_level == "high"
+    assert snapshot.mcp_health.status == "healthy"
+    assert snapshot.mcp_health.registered is True
+    assert "readiness" in snapshot.mcp_health.expected_tools
+    assert "agentpack_readiness()" not in " ".join(snapshot.mcp_health.remediation)
     assert snapshot.benchmarks.averages["selection_recall"] == 0.8
+
+
+def test_project_dashboard_includes_control_plane_sections(tmp_path, monkeypatch) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (agentpack / "config.toml").write_text("[context]\ndefault_budget = 12000\ninclude_tests = false\n", encoding="utf-8")
+    (agentpack / "task.md").write_text("build dashboard control plane\n", encoding="utf-8")
+    (agentpack / "task_state.md").write_text("Status: in_progress\nSummary: wiring UI\n", encoding="utf-8")
+    (agentpack / "thread_index.jsonl").write_text(
+        json.dumps(
+            {
+                "thread_id": "abc",
+                "task": "thread task",
+                "status": "active",
+                "branch": "main",
+                "worktree": str(tmp_path),
+                "selected_files": ["src/app.py"],
+                "dirty_files": ["tests/test_app.py"],
+                "updated_at": "2026-07-08T00:00:00+00:00",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (agentpack / "task-starts.jsonl").write_text(
+        json.dumps(
+            {
+                "task": "history task",
+                "thread": "hist-thread",
+                "agent": "codex",
+                "started_at": "2026-07-07T00:00:00+00:00",
+                "branch": "main",
+                "git_sha": "abcdef123456",
+                "context_path": ".agentpack/context.md",
+                "provenance": {"cwd": str(tmp_path)},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (agentpack / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-08T00:00:00+00:00",
+                "task": "memory task",
+                "thread": "mem-thread",
+                "stage": "finish",
+                "status": "done",
+                "summary": "finished",
+                "provenance": {"cwd": str(tmp_path)},
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".cursor" / "rules").mkdir(parents=True)
+    (tmp_path / ".cursor" / "rules" / "agentpack.mdc").write_text("rule\n", encoding="utf-8")
+    indexed_repo = tmp_path.parent / "indexed-repo"
+    (indexed_repo / ".agentpack").mkdir(parents=True)
+    (indexed_repo / ".agentpack" / "config.toml").write_text("[context]\ndefault_budget = 8000\n", encoding="utf-8")
+    (tmp_path / "home" / ".agentpack").mkdir(parents=True)
+    (tmp_path / "home" / ".agentpack" / "projects.json").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "projects": [
+                    {
+                        "path": str(indexed_repo),
+                        "name": "indexed-repo",
+                        "last_seen_at": "2026-07-08T00:00:00+00:00",
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    context = next(section for section in snapshot.config.sections if section.name == "context")
+    budget = next(field for field in context.fields if field.key == "default_budget")
+    assert budget.value == 12000
+    assert budget.description
+    assert "context.default_budget" in snapshot.config.editable_fields
+    assert snapshot.task_control[0].task == "build dashboard control plane"
+    assert snapshot.task_control[0].state == "in_progress"
+    assert snapshot.thread_rows[0].thread_id == "abc"
+    assert snapshot.thread_rows[0].selected_count == 1
+    assert any(item.task == "history task" and item.thread_id == "hist-thread" for item in snapshot.task_history)
+    assert any(item.task == "memory task" and item.status == "done" for item in snapshot.task_history)
+    assert any(item.path == str(tmp_path) and item.current and item.valid for item in snapshot.projects)
+    assert any(item.path == str(indexed_repo.resolve()) and item.source == "global index" and item.valid for item in snapshot.projects)
+    assert any(item.label == "Cursor rule" and item.status == "present" for item in snapshot.integrations)
+    assert any(item.id == "guard_refresh" for item in snapshot.command_catalog)
+    assert any(item.path == ".agentpack/config.toml" and item.exists for item in snapshot.artifacts)
+
+
+def test_dashboard_config_update_only_allows_safe_fields(tmp_path) -> None:
+    summary = update_dashboard_config(tmp_path, {"context.default_budget": 16000, "skills.always_recommend": ["qa"]})
+
+    context = next(section for section in summary.sections if section.name == "context")
+    skills = next(section for section in summary.sections if section.name == "skills")
+    assert next(field for field in context.fields if field.key == "default_budget").value == 16000
+    assert next(field for field in skills.fields if field.key == "always_recommend").value == ["qa"]
+
+    try:
+        update_dashboard_config(tmp_path, {"scoring.modified": 1})
+    except DashboardActionError as exc:
+        assert "invalid config field" in str(exc)
+    else:
+        raise AssertionError("read-only config field should be rejected")
+
+
+def test_dashboard_action_builder_generates_agentpack_commands() -> None:
+    command = build_dashboard_action_command(
+        "set_task",
+        {"task": "fix auth", "thread": "global", "refresh": True, "mode": "balanced"},
+    )
+
+    assert command == "agentpack task set 'fix auth' --thread global --guard --mode balanced"
 
 
 def test_project_dashboard_reads_task_memory_events(tmp_path) -> None:
