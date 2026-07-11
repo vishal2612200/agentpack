@@ -36,15 +36,16 @@
 
 ### Task 3: Calibration Report
 
-- [ ] Add repository identity and feature data to benchmark JSONL.
-- [ ] Add `benchmark --owner-evidence-report <jsonl>`.
-- [ ] Report micro, per-repository, strength-level, path-family, availability, false-positive, missed-owner, and protection metrics.
-- [ ] Require strong-owner recall >=65%, leave-one-repository-out precision >=95%, every repository precision >=90%, no repository recall regression, zero protection errors, and deterministic V1 output.
-- [ ] Commit `test(benchmark): add owner evidence calibration report`.
+- [x] Add repository identity and feature data to benchmark JSONL.
+- [x] Add `benchmark --owner-evidence-report <jsonl>`.
+- [x] Report micro, per-repository, strength-level, path-family, availability, false-positive, missed-owner, and protection metrics.
+- [x] Evaluate strong-owner recall >=65%, leave-one-repository-out precision >=95%, every repository precision >=90%, no repository recall regression, zero protection errors, and deterministic V1 output.
+- [x] Stop after the first frozen run: audited strong-owner precision was 98.4%, but recall was 39.0%; ItsDangerous and Spring PetClinic recall regressed versus the legacy rule.
+- [x] Commit `test(benchmark): add owner evidence calibration report`.
 
 ### Task 4: Conservative Replacement Treatment
 
-- [ ] Proceed only if Task 3 gates pass.
+- [x] Do not proceed because Task 3 gates failed.
 - [ ] Permit at most one same-family, same-scope, token-neutral strong-owner replacement per case.
 - [ ] Preserve file count, protected incumbents, representations, ranking, and budgets.
 - [ ] Expose only through hidden `--compare-owner-selection`.
@@ -52,7 +53,13 @@
 
 ### Task 5: Frozen Validation And Decision
 
-- [ ] Run focused tests, Ruff, mypy, and the known repository-wide checks.
-- [ ] Run V1 and treatment three times against the identical lock.
-- [ ] Ship treatment only for >=2 percentage-point recall gain, no precision/F1/repository/case regression, no token increase, unchanged candidate R@50 and file count, zero protected replacement, p95 <20 ms, and planning overhead <5%.
-- [ ] If any gate fails, remove treatment and retain calibration/reporting only.
+- [x] Run focused tests, Ruff, mypy, and the known repository-wide checks.
+- [x] Stop frozen validation after the first V1 evidence run failed the Task 3 calibration gate; no treatment exists to repeat.
+- [x] Do not ship a treatment because owner recall and per-repository non-regression gates failed.
+- [x] Retain calibration/reporting only and leave V1 production selection unchanged.
+
+Validation notes:
+
+- 284 focused tests passed and changed-file Ruff passed.
+- Mypy remains blocked by the existing duplicate `agent_lessons` definition in `core/models.py`.
+- Full pytest remains blocked by unchanged main-branch dashboard, license, performance, and browser-smoke failures.

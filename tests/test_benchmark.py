@@ -20,6 +20,7 @@ from agentpack.commands.benchmark import (
     ReleaseGateConfig,
     _precision_recall,
     _ownership_metrics,
+    _owner_evidence_report,
     _selection_v2_evidence_diagnostics,
     _skill_metrics,
     _sample_fixture_cases,
@@ -4108,6 +4109,71 @@ def test_selection_v2_evidence_diagnostic_uses_labels_only_for_scoring(tmp_path:
     assert diagnostic["protected_file_misclassifications"] == 0
     assert diagnostic["candidates"][0]["label"] == "action_owner"
     assert diagnostic["candidates"][0]["owner_strength"] == 3
+
+
+def test_owner_evidence_report_scores_repositories_and_drift() -> None:
+    records = [
+        {
+            "repository": "vite",
+            "task": "fix optimizer",
+            "selected_paths": ["src/optimizer.ts"],
+            "precision": 1.0,
+            "recall": 1.0,
+            "f1": 1.0,
+            "token_precision": 1.0,
+            "packed_tokens": 20,
+            "selection_diagnostics": {"selection_v2": {"evidence": {
+                "protected_file_misclassifications": 0,
+                "candidates": [
+                    {
+                        "path": "src/optimizer.ts",
+                        "rank": 1,
+                        "owner_strength": 3,
+                        "legacy_owner_strength": 1,
+                        "support_strength": 0,
+                        "carrier_strength": 0,
+                        "codes": ["unique_definition_owner"],
+                        "protections": [],
+                        "owner_features": {"anchor_codes": ["definition"]},
+                        "label": "action_owner",
+                    },
+                    {
+                        "path": "tests/optimizer.spec.ts",
+                        "rank": 2,
+                        "owner_strength": 0,
+                        "legacy_owner_strength": 0,
+                        "support_strength": 1,
+                        "carrier_strength": 3,
+                        "codes": ["call_site_only"],
+                        "protections": [],
+                        "owner_features": {"penalty_codes": ["broad_test_match"]},
+                        "label": "required_support",
+                    },
+                ],
+            }}},
+        }
+    ]
+
+    report = _owner_evidence_report(records)
+
+    assert report["micro_by_min_strength"]["3"] == {
+        "tp": 1,
+        "fp": 0,
+        "fn": 0,
+        "precision": 1.0,
+        "recall": 1.0,
+    }
+    assert report["per_repository"]["vite"]["legacy_strong_recall"] == 0.0
+    assert report["owner_availability"]["r@20"] == 1.0
+    assert report["path_family_confusion"]["test"]["tn"] == 1
+    assert report["determinism"] == {
+        "minimum_case_repetitions": 1,
+        "three_run_coverage": False,
+        "feature_drift_groups": 0,
+        "selected_path_drift_groups": 0,
+        "legacy_metric_drift_groups": 0,
+    }
+    assert report["passed"] is False
 
 
 def test_load_public_repo_specs_defaults_to_balanced_mode(tmp_path: Path) -> None:

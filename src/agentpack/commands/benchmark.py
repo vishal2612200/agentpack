@@ -14,7 +14,7 @@ from collections import Counter
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
 from fnmatch import fnmatch
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable
 
 import typer
@@ -49,6 +49,7 @@ class BenchmarkCase:
     required_support_files: list[str] = field(default_factory=list)
     incidental_changed_files: list[str] = field(default_factory=list)
     optional_context_files: list[str] = field(default_factory=list)
+    repository: str = ""
 
     def __post_init__(self) -> None:
         self.mode = normalize_mode(self.mode)
@@ -836,6 +837,7 @@ def _run_public_repo_suite(
                         work_root,
                         BenchmarkCase(
                             task=public_case.task,
+                            repository=spec.name,
                             mode=public_case.mode,
                             expected_files=public_case.expected_files,
                             task_type=public_case.task_type,
@@ -3916,6 +3918,11 @@ def _selection_v2_evidence_diagnostics(
             changed_paths=changed_paths,
         )
         evidence_by_path[candidate.path] = evidence
+        legacy_owner_strength = _legacy_independent_owner_strength(
+            candidate=candidate,
+            task=task,
+            summary=summaries.get(candidate.path),
+        )
         expected_protections = _benchmark_expected_protections(
             path=candidate.path,
             reasons=reasons,
@@ -3945,6 +3952,7 @@ def _selection_v2_evidence_diagnostics(
             "rank": rank,
             "score": round(candidate.score, 1),
             "owner_strength": evidence.owner_strength,
+            "legacy_owner_strength": legacy_owner_strength,
             "support_strength": evidence.support_strength,
             "carrier_strength": evidence.carrier_strength,
             "codes": list(evidence.codes),
@@ -3988,6 +3996,41 @@ def _selection_v2_evidence_diagnostics(
         "protection_misclassification_examples": protection_misclassifications[:10],
         "candidates": rows,
     }
+
+
+def _legacy_independent_owner_strength(*, candidate: Any, task: str, summary: Any) -> int:
+    """Reproduce the pre-calibration owner rule for benchmark-only regression comparison."""
+
+    reasons = tuple(reason.lower() for reason in candidate.legacy_reasons)
+    dump = getattr(summary, "model_dump", None)
+    summary_data = summary if isinstance(summary, dict) else dump() if callable(dump) else {}
+    task_terms = set(re.findall(r"[a-z0-9]+", task.lower().replace("_", "-")))
+    path_terms = set(re.findall(r"[a-z0-9]+", candidate.path.lower().replace("_", "-")))
+    summary_values: list[str] = []
+    for key in ("role", "domain", "defines", "entrypoints", "public_api", "ranking_keywords"):
+        value = summary_data.get(key)
+        if isinstance(value, str):
+            summary_values.append(value)
+        elif isinstance(value, list):
+            summary_values.extend(str(item) for item in value)
+    summary_terms = set(re.findall(r"[a-z0-9]+", " ".join(summary_values).lower().replace("_", "-")))
+    explicit = any(
+        marker in reason
+        for reason in reasons
+        for marker in ("filename keyword match", "conventional scope path match", "multi-term path match")
+    )
+    corroborated = explicit or bool(task_terms & path_terms) or bool(task_terms & path_terms & summary_terms)
+    definition = any("matched define:" in reason or "multi-token defines match" in reason for reason in reasons)
+    literal = any("literal definition match:" in reason for reason in reasons)
+    entrypoint = any("matched entrypoint:" in reason for reason in reasons)
+    role = any("implementation role match" in reason or "matched role keyword:" in reason for reason in reasons)
+    if (definition or literal or entrypoint) and corroborated:
+        return 3
+    if role and corroborated:
+        return 2
+    if definition or literal or entrypoint:
+        return 1
+    return 0
 
 
 def _benchmark_expected_protections(
@@ -8616,6 +8659,7 @@ def _result_record(result: CaseResult) -> dict[str, Any]:
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
         "task": result.case.task,
+        "repository": result.case.repository,
         "task_type": result.case.task_type,
         "workspace": result.case.workspace,
         "mode": result.case.mode,
@@ -8696,6 +8740,219 @@ def _write_results_jsonl(path: Path, results: list[CaseResult]) -> Path:
         for result in results:
             fh.write(json.dumps(_result_record(result), sort_keys=True) + "\n")
     return path
+
+
+def _owner_evidence_report(records: list[dict[str, Any]]) -> dict[str, Any]:
+    """Aggregate deterministic owner calibration metrics from benchmark JSONL."""
+
+    candidate_rows: list[dict[str, Any]] = []
+    protection_errors = 0
+    signatures: dict[tuple[str, str], set[str]] = {}
+    metric_signatures: dict[tuple[str, str], set[str]] = {}
+    feature_signatures: dict[tuple[str, str, str], set[str]] = {}
+    case_repetitions: Counter[tuple[str, str]] = Counter()
+    for record in records:
+        repository = str(record.get("repository") or "unknown")
+        task = str(record.get("task") or "")
+        evidence = (
+            record.get("selection_diagnostics", {})
+            .get("selection_v2", {})
+            .get("evidence", {})
+        )
+        protection_errors += int(evidence.get("protected_file_misclassifications") or 0)
+        for row in evidence.get("candidates", []):
+            enriched = dict(row)
+            enriched["repository"] = repository
+            enriched["task"] = task
+            candidate_rows.append(enriched)
+            feature_signatures.setdefault((repository, task, str(row.get("path"))), set()).add(
+                json.dumps(
+                    {
+                        "owner_strength": row.get("owner_strength"),
+                        "owner_features": row.get("owner_features"),
+                        "codes": row.get("codes"),
+                        "protections": row.get("protections"),
+                    },
+                    sort_keys=True,
+                )
+            )
+        key = (repository, task)
+        case_repetitions[key] += 1
+        signatures.setdefault(key, set()).add(json.dumps(record.get("selected_paths", []), sort_keys=True))
+        metric_signatures.setdefault(key, set()).add(json.dumps({
+            name: record.get(name)
+            for name in ("precision", "recall", "f1", "token_precision", "packed_tokens")
+        }, sort_keys=True))
+
+    audited_rows = [row for row in candidate_rows if row.get("label") is not None]
+    repositories = sorted({row["repository"] for row in audited_rows})
+    thresholds = {
+        str(strength): _owner_classification_metrics(audited_rows, strength=strength)
+        for strength in (1, 2, 3)
+    }
+    per_repository = {
+        repository: {
+            "strong": _owner_classification_metrics(
+                [row for row in audited_rows if row["repository"] == repository],
+                strength=2,
+            ),
+            "legacy_strong_recall": _owner_legacy_recall(
+                [row for row in audited_rows if row["repository"] == repository]
+            ),
+        }
+        for repository in repositories
+    }
+    leave_one_out = {
+        repository: _owner_classification_metrics(
+            [row for row in audited_rows if row["repository"] == repository],
+            strength=2,
+        )
+        for repository in repositories
+    }
+    false_by_code: dict[str, list[dict[str, Any]]] = {}
+    missed_by_code: dict[str, list[dict[str, Any]]] = {}
+    for row in audited_rows:
+        if int(row.get("owner_strength") or 0) >= 2 and row.get("label") != "action_owner":
+            _append_owner_example(false_by_code, row)
+        if row.get("label") == "action_owner" and int(row.get("owner_strength") or 0) < 2:
+            _append_owner_example(missed_by_code, row)
+
+    path_families: dict[str, dict[str, int]] = {}
+    for row in audited_rows:
+        family = _owner_path_family(str(row.get("path") or ""))
+        cell = path_families.setdefault(family, {"tp": 0, "fp": 0, "fn": 0, "tn": 0})
+        predicted = int(row.get("owner_strength") or 0) >= 2
+        actual = row.get("label") == "action_owner"
+        cell["tp" if predicted and actual else "fp" if predicted else "fn" if actual else "tn"] += 1
+
+    owners = [row for row in audited_rows if row.get("label") == "action_owner"]
+    availability = {
+        f"r@{limit}": (
+            sum(1 for row in owners if int(row.get("rank") or 10**9) <= limit) / len(owners)
+            if owners else None
+        )
+        for limit in (20, 50, 100, 200)
+    }
+    strong = thresholds["2"]
+    repository_precision = [data["strong"]["precision"] for data in per_repository.values()]
+    repository_recall_ok = all(
+        data["strong"]["recall"] >= data["legacy_strong_recall"]
+        for data in per_repository.values()
+    )
+    three_run_coverage = bool(case_repetitions) and min(case_repetitions.values()) >= 3
+    deterministic = three_run_coverage and all(len(values) == 1 for values in feature_signatures.values())
+    report = {
+        "rule_version": 2,
+        "record_count": len(records),
+        "candidate_count": len(candidate_rows),
+        "audited_candidate_count": len(audited_rows),
+        "strong_owner_min_strength": 2,
+        "micro_by_min_strength": thresholds,
+        "per_repository": per_repository,
+        "leave_one_repository_out": leave_one_out,
+        "path_family_confusion": path_families,
+        "false_owner_examples_by_code": false_by_code,
+        "missed_owner_examples_by_code": missed_by_code,
+        "owner_availability": availability,
+        "protection_misclassifications": protection_errors,
+        "determinism": {
+            "minimum_case_repetitions": min(case_repetitions.values()) if case_repetitions else 0,
+            "three_run_coverage": three_run_coverage,
+            "feature_drift_groups": sum(1 for values in feature_signatures.values() if len(values) > 1),
+            "selected_path_drift_groups": sum(1 for values in signatures.values() if len(values) > 1),
+            "legacy_metric_drift_groups": sum(1 for values in metric_signatures.values() if len(values) > 1),
+        },
+    }
+    report["gates"] = {
+        "strong_owner_micro_recall": strong["recall"] >= 0.65,
+        "strong_owner_leave_one_repository_out_precision": (
+            bool(leave_one_out)
+            and min(metrics["precision"] for metrics in leave_one_out.values()) >= 0.95
+        ),
+        "every_repository_precision": bool(repository_precision) and min(repository_precision) >= 0.90,
+        "no_repository_recall_regression": repository_recall_ok,
+        "zero_protection_misclassifications": protection_errors == 0,
+        "deterministic_classification": deterministic,
+        "legacy_v1_selected_paths_identical": (
+            three_run_coverage and report["determinism"]["selected_path_drift_groups"] == 0
+        ),
+        "legacy_v1_metrics_identical": (
+            three_run_coverage and report["determinism"]["legacy_metric_drift_groups"] == 0
+        ),
+    }
+    report["passed"] = all(report["gates"].values())
+    return report
+
+
+def _owner_classification_metrics(rows: list[dict[str, Any]], *, strength: int) -> dict[str, Any]:
+    tp = sum(1 for row in rows if row.get("label") == "action_owner" and int(row.get("owner_strength") or 0) >= strength)
+    fp = sum(1 for row in rows if row.get("label") != "action_owner" and int(row.get("owner_strength") or 0) >= strength)
+    fn = sum(1 for row in rows if row.get("label") == "action_owner" and int(row.get("owner_strength") or 0) < strength)
+    return {
+        "tp": tp,
+        "fp": fp,
+        "fn": fn,
+        "precision": tp / (tp + fp) if tp + fp else 1.0,
+        "recall": tp / (tp + fn) if tp + fn else 1.0,
+    }
+
+
+def _owner_legacy_recall(rows: list[dict[str, Any]]) -> float:
+    owners = [row for row in rows if row.get("label") == "action_owner"]
+    return (
+        sum(1 for row in owners if int(row.get("legacy_owner_strength") or 0) >= 2) / len(owners)
+        if owners else 1.0
+    )
+
+
+def _append_owner_example(grouped: dict[str, list[dict[str, Any]]], row: dict[str, Any]) -> None:
+    codes = row.get("codes") or row.get("owner_features", {}).get("penalty_codes") or ["no_owner_code"]
+    example = {
+        "repository": row["repository"],
+        "task": row["task"],
+        "path": row.get("path"),
+        "rank": row.get("rank"),
+        "strength": row.get("owner_strength"),
+    }
+    for code in codes:
+        bucket = grouped.setdefault(str(code), [])
+        if len(bucket) < 10:
+            bucket.append(example)
+
+
+def _owner_path_family(path: str) -> str:
+    lowered = path.lower()
+    parts = set(PurePosixPath(lowered).parts)
+    name = PurePosixPath(lowered).name
+    if parts & {"test", "tests", "__tests__"} or ".test." in name or ".spec." in name:
+        return "test"
+    if parts & {"docs", "examples"}:
+        return "docs_example"
+    if parts & {"build", "dist", "generated", "vendor"}:
+        return "generated"
+    if name in {"changelog.md", "package.json", "pom.xml", "pyproject.toml", "version.go"} or PurePosixPath(name).suffix in {".json", ".toml", ".yaml", ".yml"}:
+        return "config_metadata"
+    if PurePosixPath(name).suffix in {".py", ".go", ".java", ".js", ".jsx", ".ts", ".tsx", ".rb", ".rs"}:
+        return "source"
+    return "other"
+
+
+def _print_owner_evidence_report(report: dict[str, Any], *, label: str) -> None:
+    strong = report["micro_by_min_strength"][str(report["strong_owner_min_strength"])]
+    console.print(f"[bold]Owner evidence report:[/] {label}")
+    console.print(
+        f"  strong precision [bold]{strong['precision']:.1%}[/]  "
+        f"recall [bold]{strong['recall']:.1%}[/]  "
+        f"tp/fp/fn {strong['tp']}/{strong['fp']}/{strong['fn']}"
+    )
+    for repository, data in report["per_repository"].items():
+        current = data["strong"]
+        console.print(
+            f"  {repository}: precision {current['precision']:.1%}, "
+            f"recall {current['recall']:.1%}, legacy recall {data['legacy_strong_recall']:.1%}"
+        )
+    status = "green" if report["passed"] else "red"
+    console.print(f"[{status}]Calibration gates: {'PASS' if report['passed'] else 'FAIL'}[/]")
 
 
 def _print_case_detail(result: CaseResult, show_misses: bool = False) -> None:
@@ -10206,6 +10463,7 @@ def benchmark(
     refresh_public_repos: bool = typer.Option(False, "--refresh-public-repos", help="Delete and reclone public repo benchmark cache before running."),
     write_public_repos_lock: str = typer.Option("", "--write-public-repos-lock", help="Write resolved public repo sampled cases to a replayable TOML manifest."),
     benchmark_jsonl: str = typer.Option("", "--benchmark-jsonl", help="Write benchmark case metrics to this JSONL path."),
+    owner_evidence_report: str = typer.Option("", "--owner-evidence-report", help="Analyze comparative owner evidence from benchmark JSONL and exit."),
     ablation_jsonl: str = typer.Option("", "--ablation-jsonl", help="Analyze an existing benchmark JSONL for pruning/replacement ceiling and exit."),
     public_table: bool = typer.Option(False, "--public-table", help="Write a publishable Markdown benchmark table under benchmarks/results/."),
     no_public_table: bool = typer.Option(False, "--no-public-table", help="Do not write a benchmark results markdown table."),
@@ -10222,6 +10480,14 @@ def benchmark(
         raise typer.Exit(1)
     mode = normalize_mode(mode)
     root = _root()
+    if owner_evidence_report:
+        records = _load_jsonl(Path(owner_evidence_report))
+        if not records:
+            console.print(f"[red]No benchmark records found in {owner_evidence_report}[/]")
+            raise typer.Exit(1)
+        report = _owner_evidence_report(records)
+        _print_owner_evidence_report(report, label=owner_evidence_report)
+        return
     if ablation_jsonl:
         records = _load_jsonl(Path(ablation_jsonl))
         if not records:
