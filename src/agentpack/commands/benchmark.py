@@ -3445,6 +3445,17 @@ def _run_case(root: Path, case: BenchmarkCase) -> CaseResult:
             selected_set=selected_set,
             expected_set=expected_set,
         )
+        selection_v2_evidence = _selection_v2_evidence_diagnostics(
+            ranked_scored=ranked_scored,
+            task=case.task,
+            summaries=plan.summaries,
+            dependency_graph=plan.dep_graph,
+            changed_paths=plan.all_changed,
+            action_owner_files=set(case.action_owner_files),
+            required_support_files=set(case.required_support_files),
+            incidental_changed_files=set(case.incidental_changed_files),
+            optional_context_files=set(case.optional_context_files),
+        )
         all_file_map = {fi.path: fi for fi in plan.scan_result.all_files}
         receipt_map = {receipt.path: receipt.reason for receipt in plan.receipts}
         found: set[str] = set()
@@ -3745,6 +3756,7 @@ def _run_case(root: Path, case: BenchmarkCase) -> CaseResult:
             selected_noise=selected_noise,
         )
         selection_diagnostics = {
+            "selection_v2": {"evidence": selection_v2_evidence},
             "intent_profile": intent_profile,
             "selected_noise": selected_noise[:10],
             "selected_noise_family_tokens": selected_family_waste_tokens,
@@ -3859,6 +3871,153 @@ def _candidate_precision_at(scored_paths: list[str], expected_files: set[str], k
     if not candidates:
         return 0.0
     return len(set(candidates) & expected_files) / len(candidates)
+
+
+def _selection_v2_evidence_diagnostics(
+    *,
+    ranked_scored: list[tuple[Any, float, list[str]]],
+    task: str,
+    summaries: dict[str, Any],
+    dependency_graph: Any,
+    changed_paths: set[str],
+    action_owner_files: set[str],
+    required_support_files: set[str],
+    incidental_changed_files: set[str],
+    optional_context_files: set[str],
+) -> dict[str, Any]:
+    """Build benchmark-only evidence traces; labels score but never construct evidence."""
+
+    from agentpack.analysis.ownership import build_candidate_evidence
+    from agentpack.core.selection_models import adapt_ranked_candidate
+
+    labeled_paths = (
+        action_owner_files
+        | required_support_files
+        | incidental_changed_files
+        | optional_context_files
+    )
+    rows: list[dict[str, Any]] = []
+    evidence_by_path: dict[str, Any] = {}
+    protection_misclassifications: list[dict[str, Any]] = []
+    for rank, (file_info, score, reasons) in enumerate(ranked_scored, start=1):
+        candidate = adapt_ranked_candidate(file_info, score, reasons)
+        evidence = build_candidate_evidence(
+            candidate,
+            task=task,
+            summary=summaries.get(candidate.path),
+            dependency_graph=dependency_graph,
+            changed_paths=changed_paths,
+        )
+        evidence_by_path[candidate.path] = evidence
+        expected_protections = _benchmark_expected_protections(
+            path=candidate.path,
+            reasons=reasons,
+            task=task,
+            changed_paths=changed_paths,
+        )
+        missing_protections = sorted(expected_protections - set(evidence.protections))
+        if missing_protections:
+            protection_misclassifications.append({
+                "path": candidate.path,
+                "rank": rank,
+                "missing_protections": missing_protections,
+            })
+        if rank > 200 and candidate.path not in labeled_paths:
+            continue
+        label = None
+        if candidate.path in action_owner_files:
+            label = "action_owner"
+        elif candidate.path in required_support_files:
+            label = "required_support"
+        elif candidate.path in incidental_changed_files:
+            label = "incidental_changed"
+        elif candidate.path in optional_context_files:
+            label = "optional_context"
+        rows.append({
+            "path": candidate.path,
+            "rank": rank,
+            "score": round(candidate.score, 1),
+            "owner_strength": evidence.owner_strength,
+            "support_strength": evidence.support_strength,
+            "carrier_strength": evidence.carrier_strength,
+            "codes": list(evidence.codes),
+            "protections": list(evidence.protections),
+            "label": label,
+        })
+
+    def _label_recall(paths: set[str], field: str) -> float | None:
+        if not paths:
+            return None
+        found = sum(
+            1
+            for path in paths
+            if getattr(evidence_by_path.get(path), field, 0) >= 2
+        )
+        return found / len(paths)
+
+    protected_rows = [row for row in rows if row["protections"]]
+    return {
+        "policy": "selection_v2_typed_evidence_v1",
+        "candidate_count": len(ranked_scored),
+        "emitted_candidate_count": len(rows),
+        "owner_label_recall": _label_recall(action_owner_files, "owner_strength"),
+        "support_label_recall": _label_recall(required_support_files, "support_strength"),
+        "protected_candidate_count": len(protected_rows),
+        "protected_file_misclassifications": len(protection_misclassifications),
+        "protection_misclassification_examples": protection_misclassifications[:10],
+        "candidates": rows,
+    }
+
+
+def _benchmark_expected_protections(
+    *,
+    path: str,
+    reasons: list[str],
+    task: str,
+    changed_paths: set[str],
+) -> set[str]:
+    """Independently audit safety signals consumed by typed ownership inference."""
+
+    lowered_reasons = "\n".join(reasons).lower()
+    lowered_path = path.lower()
+    name = Path(lowered_path).name
+    protections: set[str] = set()
+    if path in changed_paths:
+        protections.add("changed")
+    if "episodic memory similar task" in lowered_reasons or "learning feedback miss" in lowered_reasons:
+        protections.add("memory_confirmed")
+    release_path = (
+        name in {"changelog.md", "package.json", "pom.xml", "pyproject.toml", "version.go"}
+        or "changelog" in name
+        or "version" in name
+    )
+    release_signal = (
+        "release/version metadata" in lowered_reasons
+        or "build/dependency metadata" in lowered_reasons
+    )
+    if release_path and release_signal:
+        protections.add("release_metadata")
+    if set(Path(lowered_path).parts) & {"build", "coverage", "dist", "generated", "__generated__", "vendor"}:
+        protections.add("generated")
+    if "secret redaction candidate" in lowered_reasons:
+        protections.add("redaction_sensitive")
+    if (
+        _is_test_path(path)
+        and _benchmark_task_is_explicit_test(task)
+        and "explicit test task file" in lowered_reasons
+    ):
+        protections.add("explicit_task_test")
+    return protections
+
+
+def _benchmark_task_is_explicit_test(task: str) -> bool:
+    lowered = task.strip().lower()
+    return (
+        lowered.startswith(("test", "add test", "add missing validation test"))
+        or "regression test" in lowered
+        or "(test)" in lowered
+        or "refactor(test)" in lowered
+    )
 
 
 def _top_candidate_diagnostics(

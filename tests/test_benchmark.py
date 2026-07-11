@@ -10,7 +10,7 @@ import pytest
 from typer.testing import CliRunner
 
 from agentpack.cli import app
-from agentpack.core.models import Receipt
+from agentpack.core.models import DependencyGraph, FileInfo, Receipt
 from agentpack.commands.benchmark import (
     BenchmarkCase,
     CaseResult,
@@ -20,6 +20,7 @@ from agentpack.commands.benchmark import (
     ReleaseGateConfig,
     _precision_recall,
     _ownership_metrics,
+    _selection_v2_evidence_diagnostics,
     _skill_metrics,
     _sample_fixture_cases,
     _load_cases,
@@ -4075,6 +4076,36 @@ def test_ownership_metrics_are_independent_from_legacy_expected_files() -> None:
         "selected_incidental_files": ["CHANGELOG.md"],
         "incidental_selection_rate": 1.0,
     }
+
+
+def test_selection_v2_evidence_diagnostic_uses_labels_only_for_scoring(tmp_path: Path) -> None:
+    file_info = FileInfo(
+        path="src/auth.py",
+        abs_path=tmp_path / "src/auth.py",
+        size_bytes=100,
+        estimated_tokens=25,
+    )
+
+    diagnostic = _selection_v2_evidence_diagnostics(
+        ranked_scored=[(
+            file_info,
+            120.0,
+            ["matched define: authenticate", "filename keyword match"],
+        )],
+        task="fix auth validation",
+        summaries={"src/auth.py": {"defines": ["authenticate"]}},
+        dependency_graph=DependencyGraph(),
+        changed_paths=set(),
+        action_owner_files={"src/auth.py"},
+        required_support_files=set(),
+        incidental_changed_files=set(),
+        optional_context_files=set(),
+    )
+
+    assert diagnostic["owner_label_recall"] == 1.0
+    assert diagnostic["protected_file_misclassifications"] == 0
+    assert diagnostic["candidates"][0]["label"] == "action_owner"
+    assert diagnostic["candidates"][0]["owner_strength"] == 3
 
 
 def test_load_public_repo_specs_defaults_to_balanced_mode(tmp_path: Path) -> None:
