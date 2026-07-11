@@ -44,6 +44,28 @@ class RankedCandidate:
 
 
 @dataclass(frozen=True)
+class OwnerCaseContext:
+    """Task-level ownership signals shared by candidates in one ranking result."""
+
+    task_objects: tuple[str, ...]
+    scope_terms: tuple[str, ...]
+    literal_phrases: tuple[str, ...]
+    anchor_counts: tuple[tuple[str, int], ...]
+    candidate_count: int
+
+
+@dataclass(frozen=True)
+class OwnerFeatureVector:
+    """Comparative, label-free ownership features for one ranked candidate."""
+
+    anchor_codes: tuple[str, ...]
+    corroboration_codes: tuple[str, ...]
+    penalty_codes: tuple[str, ...]
+    matched_task_objects: tuple[str, ...]
+    competing_anchor_count: int
+
+
+@dataclass(frozen=True)
 class RepresentationOption:
     """One budgeted rendering of a candidate file."""
 
