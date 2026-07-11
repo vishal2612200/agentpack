@@ -3449,6 +3449,7 @@ def _run_case(root: Path, case: BenchmarkCase) -> CaseResult:
             ranked_scored=ranked_scored,
             task=case.task,
             summaries=plan.summaries,
+            keyword_plan=plan.keyword_plan,
             dependency_graph=plan.dep_graph,
             changed_paths=plan.all_changed,
             action_owner_files=set(case.action_owner_files),
@@ -3878,6 +3879,7 @@ def _selection_v2_evidence_diagnostics(
     ranked_scored: list[tuple[Any, float, list[str]]],
     task: str,
     summaries: dict[str, Any],
+    keyword_plan: Any,
     dependency_graph: Any,
     changed_paths: set[str],
     action_owner_files: set[str],
@@ -3887,6 +3889,7 @@ def _selection_v2_evidence_diagnostics(
 ) -> dict[str, Any]:
     """Build benchmark-only evidence traces; labels score but never construct evidence."""
 
+    from agentpack.analysis.owner_features import build_owner_case_context, extract_owner_features
     from agentpack.analysis.ownership import build_candidate_evidence
     from agentpack.core.selection_models import adapt_ranked_candidate
 
@@ -3896,15 +3899,19 @@ def _selection_v2_evidence_diagnostics(
         | incidental_changed_files
         | optional_context_files
     )
+    candidates = [adapt_ranked_candidate(file_info, score, reasons) for file_info, score, reasons in ranked_scored]
+    owner_context = build_owner_case_context(task, keyword_plan, candidates, summaries)
     rows: list[dict[str, Any]] = []
     evidence_by_path: dict[str, Any] = {}
     protection_misclassifications: list[dict[str, Any]] = []
-    for rank, (file_info, score, reasons) in enumerate(ranked_scored, start=1):
-        candidate = adapt_ranked_candidate(file_info, score, reasons)
+    for rank, ((file_info, score, reasons), candidate) in enumerate(zip(ranked_scored, candidates), start=1):
+        owner_features = extract_owner_features(candidate, summaries.get(candidate.path), owner_context)
         evidence = build_candidate_evidence(
             candidate,
             task=task,
             summary=summaries.get(candidate.path),
+            owner_context=owner_context,
+            owner_features=owner_features,
             dependency_graph=dependency_graph,
             changed_paths=changed_paths,
         )
@@ -3942,6 +3949,13 @@ def _selection_v2_evidence_diagnostics(
             "carrier_strength": evidence.carrier_strength,
             "codes": list(evidence.codes),
             "protections": list(evidence.protections),
+            "owner_features": {
+                "anchor_codes": list(owner_features.anchor_codes),
+                "corroboration_codes": list(owner_features.corroboration_codes),
+                "penalty_codes": list(owner_features.penalty_codes),
+                "matched_task_objects": list(owner_features.matched_task_objects),
+                "competing_anchor_count": owner_features.competing_anchor_count,
+            },
             "label": label,
         })
 
@@ -3957,7 +3971,14 @@ def _selection_v2_evidence_diagnostics(
 
     protected_rows = [row for row in rows if row["protections"]]
     return {
-        "policy": "selection_v2_typed_evidence_v1",
+        "policy": "comparative_owner_evidence_v2",
+        "rule_version": 2,
+        "case_context": {
+            "task_objects": list(owner_context.task_objects),
+            "scope_terms": list(owner_context.scope_terms),
+            "literal_phrases": list(owner_context.literal_phrases),
+            "anchor_counts": [list(item) for item in owner_context.anchor_counts],
+        },
         "candidate_count": len(ranked_scored),
         "emitted_candidate_count": len(rows),
         "owner_label_recall": _label_recall(action_owner_files, "owner_strength"),

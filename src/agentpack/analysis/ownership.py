@@ -5,7 +5,12 @@ from pathlib import PurePosixPath
 from typing import Any, Iterable
 
 from agentpack.core.models import DependencyGraph
-from agentpack.core.selection_models import CandidateEvidence, RankedCandidate
+from agentpack.core.selection_models import (
+    CandidateEvidence,
+    OwnerCaseContext,
+    OwnerFeatureVector,
+    RankedCandidate,
+)
 
 
 _TASK_STOPWORDS = {
@@ -37,6 +42,8 @@ def build_candidate_evidence(
     *,
     task: str,
     summary: Any,
+    owner_context: OwnerCaseContext,
+    owner_features: OwnerFeatureVector,
     dependency_graph: DependencyGraph,
     changed_paths: set[str],
     memory_confirmed_paths: set[str] | None = None,
@@ -45,37 +52,15 @@ def build_candidate_evidence(
 
     path = candidate.path
     reasons = tuple(reason.lower() for reason in candidate.legacy_reasons)
-    summary_data = _summary_dict(summary)
     task_terms = _terms(task)
-    path_terms = _terms(path)
-    summary_terms = _summary_terms(summary_data)
-    corroborated = _has_path_corroboration(reasons, task_terms, path_terms, summary_terms)
     codes: list[str] = []
     protections: list[str] = []
     owner_strength = 0
     support_strength = 0
     carrier_strength = 0
 
-    definition = _has_reason(reasons, "matched define:", "multi-token defines match")
-    literal_definition = _has_reason(reasons, "literal definition match:")
-    entrypoint = _has_reason(reasons, "matched entrypoint:")
-    role = _has_reason(reasons, "implementation role match", "matched role keyword:")
-
-    if literal_definition and corroborated:
-        owner_strength = 3
-        _append(codes, "literal_definition_owner")
-    elif entrypoint and corroborated:
-        owner_strength = 3
-        _append(codes, "entrypoint_owner")
-    elif definition and corroborated:
-        owner_strength = 3
-        _append(codes, "definition_owner")
-    elif role and corroborated:
-        owner_strength = 2
-        _append(codes, "role_owner")
-    elif definition or literal_definition or entrypoint:
-        owner_strength = 1
-        _append(codes, "uncorroborated_owner_signal")
+    owner_strength, owner_codes = _classify_owner_features(owner_context, owner_features)
+    codes.extend(owner_codes)
 
     node = dependency_graph.nodes.get(path)
     direct_dependency = _has_reason(reasons, "direct dependency")
@@ -123,11 +108,11 @@ def build_candidate_evidence(
         owner_strength = max(owner_strength, 3)
         _append(codes, "memory_owner")
     release_signal = _has_reason(reasons, "release/version metadata", "build/dependency metadata")
-    if _is_release_metadata(path) and release_signal:
+    release_intent = bool(task_terms & {"release", "version", "dependency", "dependencies", "build"})
+    if _is_direct_release_metadata(path) and release_signal and release_intent:
         _append(protections, "release_metadata")
-        if task_terms & {"release", "version", "dependency", "dependencies", "build"}:
-            owner_strength = max(owner_strength, 2)
-            _append(codes, "release_owner")
+        owner_strength = max(owner_strength, 3)
+        _append(codes, "release_owner")
     if _is_generated_path(path):
         _append(protections, "generated")
     if _has_reason(reasons, "secret redaction candidate"):
@@ -150,41 +135,43 @@ def build_candidate_evidence(
     )
 
 
-def _summary_dict(summary: Any) -> dict[str, Any]:
-    if summary is None:
-        return {}
-    if isinstance(summary, dict):
-        return summary
-    dump = getattr(summary, "model_dump", None)
-    return dump() if callable(dump) else {}
+def _classify_owner_features(
+    context: OwnerCaseContext,
+    features: OwnerFeatureVector,
+) -> tuple[int, list[str]]:
+    anchors = set(features.anchor_codes)
+    corroboration = set(features.corroboration_codes)
+    penalties = set(features.penalty_codes)
+    direct_anchors = anchors & {"definition", "literal_definition", "entrypoint"}
+    path_scope = bool(corroboration & {"filename_task_object", "path_task_object", "scope_path"})
+    summary = bool(corroboration & {"summary_definition", "summary_public_api", "summary_entrypoint"})
+    unique = features.competing_anchor_count == 1 and "non_unique_definition" not in penalties
+    scope_ok = "scope_mismatch" not in penalties
 
-
-def _summary_terms(summary: dict[str, Any]) -> set[str]:
-    values: list[str] = []
-    for key in ("role", "domain", "defines", "entrypoints", "public_api", "ranking_keywords"):
-        value = summary.get(key)
-        if isinstance(value, str):
-            values.append(value)
-        elif isinstance(value, list):
-            values.extend(str(item) for item in value)
-    return _terms(" ".join(values))
-
-
-def _has_path_corroboration(
-    reasons: tuple[str, ...],
-    task_terms: set[str],
-    path_terms: set[str],
-    summary_terms: set[str],
-) -> bool:
-    explicit = _has_reason(
-        reasons,
-        "filename keyword match",
-        "conventional scope path match",
-        "multi-term path match",
-    )
-    scoped_overlap = len(task_terms & path_terms) >= 1
-    multi_source_overlap = len(task_terms & path_terms & summary_terms) >= 1
-    return explicit or scoped_overlap or multi_source_overlap
+    if "broad_test_match" in penalties:
+        return (1, ["broad_test_match"]) if direct_anchors else (0, ["broad_test_match"])
+    if "literal_definition" in anchors and unique and scope_ok and (path_scope or summary):
+        return 3, ["literal_task_object_owner"]
+    if "entrypoint" in anchors and unique and scope_ok and (path_scope or summary):
+        return 3, ["unique_entrypoint_owner"]
+    if "definition" in anchors and unique and scope_ok and path_scope and summary:
+        return 3, ["unique_definition_owner"]
+    if direct_anchors and not unique and sum((path_scope, summary)) >= 2 and scope_ok:
+        return 2, ["non_unique_definition"]
+    if "role" in anchors and path_scope and "summary_role_path" in corroboration and scope_ok:
+        return 2, ["role_path_owner"]
+    if direct_anchors:
+        codes = ["direct_owner_anchor"]
+        if "non_unique_definition" in penalties:
+            codes.append("non_unique_definition")
+        if "scope_mismatch" in penalties:
+            codes.append("scope_mismatch")
+        return 1, codes
+    if "call_site_only" in penalties:
+        return 0, ["call_site_only"]
+    if "generic_path" in penalties:
+        return 0, ["generic_path"]
+    return 0, []
 
 
 def _terms(value: str) -> set[str]:
@@ -231,6 +218,10 @@ def _is_release_metadata(path: str) -> bool:
     lowered = path.lower()
     name = PurePosixPath(lowered).name
     return name in _RELEASE_NAMES or "changelog" in name or "version" in name
+
+
+def _is_direct_release_metadata(path: str) -> bool:
+    return _is_release_metadata(path) and len(PurePosixPath(path).parts) <= 2
 
 
 def _is_generated_path(path: str) -> bool:

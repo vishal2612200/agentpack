@@ -29,10 +29,10 @@
 
 ### Task 2: Deterministic Owner Rule
 
-- [ ] Classify strong owners only from direct anchors plus comparative structural corroboration.
-- [ ] Preserve independent support, carrier, and protection evidence.
-- [ ] Emit stable comparative owner and penalty codes.
-- [ ] Commit `feat(selection): calibrate comparative owner evidence`.
+- [x] Classify strong owners only from direct anchors plus comparative structural corroboration.
+- [x] Preserve independent support, carrier, and protection evidence.
+- [x] Emit stable comparative owner and penalty codes.
+- [x] Commit `feat(selection): calibrate comparative owner evidence`.
 
 ### Task 3: Calibration Report
 

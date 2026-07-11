@@ -105,10 +105,15 @@ def extract_owner_features(
         if _object_matches_terms(task_object, path_terms)
         or any(_values_match(task_object, value) for _kind, value in anchors)
     ))
+    direct_reason_kinds = {
+        kind
+        for kind, prefixes in _ANCHOR_REASON_PREFIXES.items()
+        if any(prefix in reason.lower() for reason in candidate.legacy_reasons for prefix in prefixes)
+    }
     anchor_codes = tuple(dict.fromkeys(
         kind
         for kind, value in anchors
-        if _matches_any(value, context.task_objects)
+        if kind in direct_reason_kinds or _matches_any(value, context.task_objects)
     ))
 
     corroboration: list[str] = []
@@ -177,6 +182,9 @@ def _candidate_anchors(candidate: RankedCandidate, summary: dict[str, Any]) -> t
                 break
     for field, kind in (("defines", "definition"), ("public_api", "definition"), ("entrypoints", "entrypoint")):
         anchors.extend((kind, value) for value in _summary_values(summary, field))
+    reasons = "\n".join(candidate.legacy_reasons).lower()
+    if "implementation role match" in reasons or "matched role keyword:" in reasons:
+        anchors.extend(("role", value) for value in _summary_values(summary, "role"))
     return tuple(dict.fromkeys(anchors))
 
 

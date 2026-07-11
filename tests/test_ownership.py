@@ -1,6 +1,8 @@
 from pathlib import Path
 
+from agentpack.analysis.owner_features import build_owner_case_context, extract_owner_features
 from agentpack.analysis.ownership import build_candidate_evidence
+from agentpack.analysis.ranking import KeywordPlan
 from agentpack.core.models import DependencyGraph, DependencyNode, FileInfo
 from agentpack.core.selection_models import adapt_ranked_candidate
 
@@ -15,20 +17,44 @@ def _candidate(path: str, reasons: list[str]):
     return adapt_ranked_candidate(info, 100.0, reasons)
 
 
+def _evidence(candidate, *, task: str, summary, dependency_graph, changed_paths, memory_confirmed_paths=None):
+    terms = tuple(sorted({term for term in task.lower().replace(":", " ").split() if len(term) >= 3}))
+    plan = KeywordPlan(
+        weights={term: 1.0 for term in terms},
+        generic_terms=(),
+        ambiguous_terms=(),
+        learned_ambiguous_terms=(),
+        concrete_terms=terms,
+        rarity={term: 1.0 for term in terms},
+    )
+    context = build_owner_case_context(task, plan, [candidate], {candidate.path: summary})
+    features = extract_owner_features(candidate, summary, context)
+    return build_candidate_evidence(
+        candidate,
+        task=task,
+        summary=summary,
+        owner_context=context,
+        owner_features=features,
+        dependency_graph=dependency_graph,
+        changed_paths=changed_paths,
+        memory_confirmed_paths=memory_confirmed_paths,
+    )
+
+
 def test_definition_owner_requires_path_or_scope_corroboration() -> None:
-    without_path = build_candidate_evidence(
+    without_path = _evidence(
         _candidate("src/misc.py", ["matched define: authenticate"]),
-        task="fix auth token validation",
+        task="fix authenticate token validation",
         summary={"defines": ["authenticate"]},
         dependency_graph=DependencyGraph(),
         changed_paths=set(),
     )
-    with_path = build_candidate_evidence(
+    with_path = _evidence(
         _candidate(
-            "src/auth/token.py",
+            "src/authenticate/token.py",
             ["matched define: authenticate", "conventional scope path match"],
         ),
-        task="fix auth token validation",
+        task="fix authenticate token validation",
         summary={"defines": ["authenticate"]},
         dependency_graph=DependencyGraph(),
         changed_paths=set(),
@@ -36,11 +62,11 @@ def test_definition_owner_requires_path_or_scope_corroboration() -> None:
 
     assert without_path.owner_strength == 1
     assert with_path.owner_strength == 3
-    assert "definition_owner" in with_path.codes
+    assert "unique_definition_owner" in with_path.codes
 
 
 def test_literal_definition_owner_keeps_carrier_evidence_independent() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate(
             "src/click/types.py",
             [
@@ -57,7 +83,7 @@ def test_literal_definition_owner_keeps_carrier_evidence_independent() -> None:
 
     assert evidence.owner_strength == 3
     assert evidence.carrier_strength == 1
-    assert "literal_definition_owner" in evidence.codes
+    assert "literal_task_object_owner" in evidence.codes
 
 
 def test_dependency_and_paired_test_signals_build_support_evidence() -> None:
@@ -69,7 +95,7 @@ def test_dependency_and_paired_test_signals_build_support_evidence() -> None:
             )
         }
     )
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate(
             "tests/test_auth.py",
             ["test for high-scoring src/auth.py", "direct dependency of changed file"],
@@ -98,8 +124,8 @@ def test_protected_signals_are_deterministic_and_do_not_need_labels() -> None:
         "memory_confirmed_paths": {"tests/test_release.py"},
     }
 
-    first = build_candidate_evidence(candidate, **kwargs)
-    second = build_candidate_evidence(candidate, **kwargs)
+    first = _evidence(candidate, **kwargs)
+    second = _evidence(candidate, **kwargs)
 
     assert first == second
     assert first.owner_strength == 3
@@ -112,7 +138,7 @@ def test_protected_signals_are_deterministic_and_do_not_need_labels() -> None:
 
 
 def test_direct_release_metadata_signal_is_protected() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate("pyproject.toml", ["release/version metadata"]),
         task="start version 3.1.0",
         summary={},
@@ -124,7 +150,7 @@ def test_direct_release_metadata_signal_is_protected() -> None:
 
 
 def test_generated_paths_are_protected() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate("src/generated/client.py", ["content keyword match (1)"]),
         task="fix generated client",
         summary={},
@@ -136,7 +162,7 @@ def test_generated_paths_are_protected() -> None:
 
 
 def test_unrelated_nested_package_metadata_is_not_protected() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate("fixtures/invalid/package.json", ["config file"]),
         task="fix ssr stacktrace column",
         summary={},
@@ -148,7 +174,7 @@ def test_unrelated_nested_package_metadata_is_not_protected() -> None:
 
 
 def test_recall_neighbor_is_weak_support_not_a_direct_dependency() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate("src/neighbor.py", ["recall neighbor of src/owner.py"]),
         task="fix owner behavior",
         summary={},
@@ -164,11 +190,11 @@ def test_recall_neighbor_is_weak_support_not_a_direct_dependency() -> None:
     )
 
     assert evidence.support_strength == 1
-    assert evidence.codes == ("recall_neighbor",)
+    assert "recall_neighbor" in evidence.codes
 
 
 def test_test_package_initializer_is_not_paired_support() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate("tests/__init__.py", ["test for high-scoring src/owner.py"]),
         task="remove deprecated owner behavior",
         summary={},
@@ -180,7 +206,7 @@ def test_test_package_initializer_is_not_paired_support() -> None:
 
 
 def test_unrelated_test_path_is_not_protected_by_task_type_alone() -> None:
-    evidence = build_candidate_evidence(
+    evidence = _evidence(
         _candidate("playground/demo/__test__/serve.ts", ["content keyword match (1)"]),
         task="test: avoid scanner warnings",
         summary={},

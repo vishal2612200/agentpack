@@ -94,6 +94,7 @@ from agentpack.commands.benchmark import (
     _expected_rank_distribution,
     _package_boundary_diagnostics,
 )
+from agentpack.analysis.ranking import build_keyword_plan
 
 
 # ---------------------------------------------------------------------------
@@ -4080,7 +4081,7 @@ def test_ownership_metrics_are_independent_from_legacy_expected_files() -> None:
 
 def test_selection_v2_evidence_diagnostic_uses_labels_only_for_scoring(tmp_path: Path) -> None:
     file_info = FileInfo(
-        path="src/auth.py",
+        path="src/authenticate.py",
         abs_path=tmp_path / "src/auth.py",
         size_bytes=100,
         estimated_tokens=25,
@@ -4092,11 +4093,12 @@ def test_selection_v2_evidence_diagnostic_uses_labels_only_for_scoring(tmp_path:
             120.0,
             ["matched define: authenticate", "filename keyword match"],
         )],
-        task="fix auth validation",
-        summaries={"src/auth.py": {"defines": ["authenticate"]}},
+        task="fix authenticate validation",
+        summaries={"src/authenticate.py": {"defines": ["authenticate"]}},
+        keyword_plan=build_keyword_plan("fix authenticate validation"),
         dependency_graph=DependencyGraph(),
         changed_paths=set(),
-        action_owner_files={"src/auth.py"},
+        action_owner_files={"src/authenticate.py"},
         required_support_files=set(),
         incidental_changed_files=set(),
         optional_context_files=set(),
