@@ -38,7 +38,7 @@ Advanced command map:
 | `agentpack work` | Convenience wrapper for init, task, context refresh, and next steps |
 | `agentpack work --run` | Advanced optional proof harness around a configured external runner |
 | `agentpack start` | Write a task and run the default guard/refresh workflow |
-| `agentpack review` | Prepare the full two-stage PR review bundle for the current branch or PR |
+| `agentpack review` | Prepare the Anchor, Judge, Critic, Actor PR review bundle for the current branch or PR |
 | `agentpack finish` | Run finish checks, capture benchmark evidence, and mark state done |
 | `agentpack learn` | Generate developer learning notes, skill progress, and future-agent lessons from task context and git changes |
 | `agentpack task` | Show, set, or clear global/thread-scoped task files |
@@ -500,7 +500,7 @@ Claude installs also refresh `/agentpack`, `/agentpack-review`, and `/agentpack-
 Codex installs refresh the local plugin cache, enable `agentpack@local`, and
 disable stale enabled AgentPack marketplace entries so Codex loads the same
 version as the installed CLI.
-The review slash command runs the local two-stage review bundle; the learning
+The review slash command runs the local Anchor, Judge, Critic, Actor review bundle; the learning
 slash command uses current local AgentPack session context and keeps the user
 learning statement at the end for prompt caching.
 
@@ -960,12 +960,13 @@ Validate TOON syntax for agent-facing artifacts. Review artifacts can also be ch
 ```bash
 agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon
 agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --format json
+agentpack toon-validate .agentpack/reviews/pr-123/run/critique.toon --schema review-critique
 agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon --schema review-understanding
 agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --schema review-findings --allow-json --write-canonical
 ```
 
 By default the validator requires `@format toon` as the first non-empty line. Use `--allow-missing-format` only for legacy files.
-Use `--schema review-understanding` or `--schema review-findings` for review-stage files. With `--allow-json --write-canonical`, valid JSON that matches the selected schema is rewritten as canonical TOON; malformed output still fails. MCP-only agents can call `validate_toon(..., return_canonical=true)` to receive canonical TOON in the response without using the CLI rewrite path.
+Use `--schema review-understanding`, `--schema review-findings`, or `--schema review-critique` for review-stage files. With `--allow-json --write-canonical`, valid JSON that matches the selected schema is rewritten as canonical TOON; malformed output still fails. MCP-only agents can call `validate_toon(..., return_canonical=true)` to receive canonical TOON in the response without using the CLI rewrite path.
 
 ---
 
@@ -1013,9 +1014,28 @@ packs, and use `get_context()` when task/context freshness is the question.
 
 ---
 
+### `agentpack architecture`
+
+Build a local deterministic architecture snapshot, compare two commits, and
+evaluate declared invariants without any model call.
+
+```bash
+agentpack architecture snapshot --ref HEAD --json
+agentpack architecture diff --base origin/main --head HEAD --json
+agentpack architecture check --base origin/main --head HEAD --json
+agentpack architecture artifacts --diff .agentpack/raw/architecture-diff.json --check .agentpack/raw/architecture-check.json
+```
+
+Snapshots are cache-addressed by commit, schema version, and extractor profile.
+Only citation-backed structured or declared evidence may block a check;
+best-effort and file-level signals remain advisory. `artifacts` removes source
+hashes and absolute paths before writing the CI diff, summary, and receipt.
+
+---
+
 ### `agentpack review`
 
-Prepare the full two-stage PR review bundle for the current branch or checked-out PR.
+Prepare the Anchor, Judge, Critic, Actor PR review bundle for the current branch or checked-out PR.
 
 ```bash
 agentpack review
@@ -1038,20 +1058,28 @@ Writes:
 - `.agentpack/review.prompt.md`
 - `.agentpack/review-understanding.prompt.md`
 - `.agentpack/review-judge.prompt.md`
+- `.agentpack/review-critic.prompt.md`
 - `.agentpack/review-understanding.template.toon`
 - `.agentpack/review-findings.template.toon`
+- `.agentpack/review-critique.template.toon`
+- `.agentpack/review-approved-findings.toon` after Critic validation
 - `.agentpack/reviews/<branch-prefix>/<run_id>/preflight.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/runbook.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/context.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/citations.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.prompt.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/judge.prompt.md`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critic.prompt.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.template.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/findings.template.toon`
-- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.json` as the Stage 1 authoring artifact
-- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon` as the Stage 1 canonical handoff
-- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.json` as the Stage 2 authoring artifact
-- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon` as the Stage 2 canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critique.template.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.json` as the Anchor authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon` as the Anchor canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.json` as the Judge candidate authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon` as the Judge canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critique.json` as the Critic authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critique.toon` as the Critic canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/approved-findings.toon` as the Actor-only publish input
 - `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-payload.json` when inline PR comment payloads are built
 - `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-dry-run.json` when `--dry-run-post` validates the payload without calling GitHub
 - `.agentpack/reviews/<branch-prefix>/<run_id>/posted-review.json` when inline PR comments are posted or intentionally skipped because there are no findings
@@ -1060,14 +1088,14 @@ Writes:
 direct code inspection. Instead it captures the latest available PR metadata,
 selects a diff base, lists changed files and related tests, records stale/dirty
 warnings, writes run-scoped broad context, and renders the full
-understanding-plus-judge prompt bundle for a host agent to perform the actual
+Anchor-plus-Judge-plus-Critic prompt bundle for a host agent to perform the actual
 review. Review context is written under the review run directory instead of
 overwriting the active `.agentpack/context.md` pack.
 
 Review artifacts are claim-grounded. Stage agents write JSON by default, then
 `agentpack review --check` validates and canonicalizes that JSON into
-`understanding.toon` or `findings.toon`. Stage 2 reads canonical
-`understanding.toon`, so TOON remains the inter-stage handoff format while JSON
+`understanding.toon`, `findings.toon`, or `critique.toon`. Judge reads canonical
+`understanding.toon`; Critic reads both prior canonical artifacts, so TOON remains the inter-stage handoff format while JSON
 is only the authoring format. Resume/preflight validation also accepts legacy
 TOON artifacts and fenced JSON, then writes canonical TOON. If the output is
 malformed, review validation writes `<stage>-toon-repair.md` next to the
@@ -1089,21 +1117,13 @@ JSON-in/JSON-out command; review validation sends each mechanically supported
 claim/citation pair on stdin and rejects it when the command returns
 `{"supported": false, "reason": "..."}`.
 
-After Stage 2 validates, `agentpack review --check --dry-run-post` validates the
-GitHub review payload and writes it to `inline-review-payload.json` without
-calling GitHub. `--dry-run-check` is an alias for the same validation path.
-`agentpack review --check --post-inline-comments` generates the same dry-run
-record internally, verifies the payload hash, then posts validated findings as
-one GitHub PR review. GitHub only accepts inline comments on right-side lines in
-the PR diff, so AgentPack posts commentable findings inline and keeps
-non-commentable findings in the review body under `Non-inline findings`.
-Successful posts are recorded in `posted-review.json` so re-running the check
-does not duplicate PR comments.
+After Critic validates, `agentpack review --check` deterministically writes
+`approved-findings.toon` from accepted Judge findings and allowed severity downgrades. Rejected findings never reach the Actor. `agentpack review --check --dry-run-post` reads only that approved artifact and writes the GitHub review payload to `inline-review-payload.json` without calling GitHub. `--dry-run-check` is an alias for the same validation path. `agentpack review --check --post-inline-comments` generates the same dry-run record internally, verifies the payload hash, then posts only approved findings as one GitHub PR review. Actor is publish-only: it never edits or pushes a PR branch. GitHub only accepts inline comments on right-side lines in the PR diff, so AgentPack posts commentable approved findings inline and keeps non-commentable approved findings in the review body under `Non-inline findings`. Successful posts are recorded in `posted-review.json` so re-running the check does not duplicate PR comments.
 
 Review scaffolding adapts to PR size and risk. Small PRs default to a lighter
 scaffold; security/auth/billing/database/migration-style reviews default to
 strict. Use `--light` to force the compact path and `--strict` to force the full
-two-stage scaffold.
+three-artifact scaffold; `--light` reduces context but still requires Critic.
 
 The dry-run payload record has this shape:
 
@@ -1816,13 +1836,17 @@ Generate a GitHub Actions workflow for AgentPack checks.
 agentpack ci init
 agentpack ci init --force
 agentpack ci init --json
+agentpack ci init --architecture
 ```
 
-The workflow runs `dev-check` on pull requests and
+The default workflow runs `dev-check` on pull requests and
 `release-check --profile auto` on pushes to `main`. Auto keeps the full release
 gate for code changes, but uses the docs/plugin profile for docs, agent-rule,
 plugin, and native-integration-only diffs. Existing workflows are not
-overwritten unless `--force` is present.
+overwritten unless `--force` is present. `--architecture` instead writes a
+pull-request-only workflow that installs the optional parser extra, uploads a
+sanitized architecture artifact, and publishes a check/sticky summary only
+when repository permissions allow it.
 
 ---
 

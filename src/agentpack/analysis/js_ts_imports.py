@@ -31,14 +31,15 @@ def resolve_relative_import(importer: str, import_str: str, root: Path) -> str |
     if not import_str.startswith("."):
         return None
 
-    base = (root / importer).parent
+    resolved_root = root.resolve()
+    base = (resolved_root / importer).parent
     candidate = (base / import_str).resolve()
 
     for ext in _RELATIVE_EXTS:
         p = candidate.with_suffix(ext)
         if p.exists():
             try:
-                return str(p.relative_to(root))
+                return str(p.relative_to(resolved_root))
             except ValueError:
                 pass
 
@@ -46,7 +47,7 @@ def resolve_relative_import(importer: str, import_str: str, root: Path) -> str |
         p = candidate / f"index{ext}"
         if p.exists():
             try:
-                return str(p.relative_to(root))
+                return str(p.relative_to(resolved_root))
             except ValueError:
                 pass
 

@@ -10,10 +10,11 @@ from agentpack.core.toon_parser import parse_toon
 from agentpack.renderers.toon import render_toon
 
 
-REVIEW_TOON_SCHEMAS = {"review-understanding", "review-findings"}
+REVIEW_TOON_SCHEMAS = {"review-understanding", "review-findings", "review-critique"}
 _SCHEMA_ROOTS = {
     "review-understanding": "review_understanding",
     "review-findings": "review_findings",
+    "review-critique": "review_critique",
 }
 _CHANGE_UNIT_KINDS = {"core", "incidental"}
 _CONFIDENCE_VALUES = {"high", "medium", "low"}
@@ -21,6 +22,7 @@ _FINDING_LENSES = {"unit", "integration"}
 _FINDING_TYPES = {"logic", "edge_case", "naming", "complexity", "caller_break", "contract", "convention", "dependency"}
 _FINDING_SEVERITIES = {"blocker", "should-fix", "nit"}
 _FINDING_CATEGORIES = {"defect", "preference"}
+_CRITIQUE_VERDICTS = {"accept", "reject", "downgrade"}
 
 
 @dataclass(frozen=True)
@@ -222,6 +224,8 @@ def validate_toon_payload_schema(payload: Any, schema: str = "") -> list[str]:
         return _validate_review_understanding_payload(payload)
     if schema == "review-findings":
         return _validate_review_findings_payload(payload)
+    if schema == "review-critique":
+        return _validate_review_critique_payload(payload)
     return []
 
 
@@ -319,6 +323,33 @@ def _validate_review_findings_payload(payload: Any) -> list[str]:
     elif isinstance(coverage, dict):
         errors.extend(_require_string(coverage, "status", "coverage"))
         errors.extend(_validate_enum(coverage, "status", {"complete", "incomplete"}, "coverage"))
+    return errors
+
+
+def _validate_review_critique_payload(payload: Any) -> list[str]:
+    errors: list[str] = []
+    if not isinstance(payload, dict):
+        return ["review-critique must decode to an object"]
+    errors.extend(_require_keys(payload, ("head_sha", "decisions"), "review-critique"))
+    errors.extend(_require_string(payload, "head_sha", "review-critique", required="head_sha" in payload))
+    decisions = payload.get("decisions")
+    if not isinstance(decisions, list):
+        return [*errors, "decisions must be a list"]
+    for index, decision in enumerate(decisions, start=1):
+        label = f"decisions[{index}]"
+        if not isinstance(decision, dict):
+            errors.append(f"{label} must be an object")
+            continue
+        errors.extend(_require_keys(decision, ("finding_id", "verdict", "rationale"), label))
+        errors.extend(_require_string_fields(decision, ("finding_id", "verdict", "rationale"), label))
+        errors.extend(_validate_enum(decision, "verdict", _CRITIQUE_VERDICTS, label))
+        verdict = decision.get("verdict")
+        severity = decision.get("severity")
+        if verdict == "downgrade":
+            errors.extend(_require_string(decision, "severity", label, required=True))
+            errors.extend(_validate_enum(decision, "severity", _FINDING_SEVERITIES, label))
+        elif "severity" in decision and severity is not None:
+            errors.append(f"{label}.severity is only allowed for downgrade verdicts")
     return errors
 
 

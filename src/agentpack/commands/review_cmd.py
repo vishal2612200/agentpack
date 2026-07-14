@@ -15,6 +15,7 @@ from uuid import uuid4
 import typer
 
 from agentpack.analysis.tests import find_related_tests
+from agentpack.application.pr_context import build_pr_context
 from agentpack.application.pack_service import PackRequest, PackService
 from agentpack.commands._shared import _atomic_write, _now_iso, _root, console
 from agentpack.core import git as git_core
@@ -38,8 +39,11 @@ _PREFLIGHT_PATH = Path(".agentpack/review-preflight.json")
 _RUNBOOK_PATH = Path(".agentpack/review.prompt.md")
 _UNDERSTANDING_PROMPT_PATH = Path(".agentpack/review-understanding.prompt.md")
 _JUDGE_PROMPT_PATH = Path(".agentpack/review-judge.prompt.md")
+_CRITIC_PROMPT_PATH = Path(".agentpack/review-critic.prompt.md")
 _UNDERSTANDING_TEMPLATE_PATH = Path(".agentpack/review-understanding.template.toon")
 _FINDINGS_TEMPLATE_PATH = Path(".agentpack/review-findings.template.toon")
+_CRITIQUE_TEMPLATE_PATH = Path(".agentpack/review-critique.template.toon")
+_APPROVED_FINDINGS_PATH = Path(".agentpack/review-approved-findings.toon")
 _STATE_PATH = Path(".agentpack/review-state.json")
 _REVIEW_RUNS_DIR = Path(".agentpack/reviews")
 _PR_URL_RE = re.compile(r"https?://\S+/pull/(?P<number>\d+)\b", re.IGNORECASE)
@@ -97,7 +101,7 @@ def register(app: typer.Typer) -> None:
             False,
             "--post-inline-comments",
             "--post",
-            help="After Stage 2 validates, post findings as inline GitHub PR review comments.",
+            help="After Anchor, Judge, and Critic validate, post approved findings as inline GitHub PR review comments.",
         ),
         dry_run_post: bool = typer.Option(
             False,
@@ -112,7 +116,7 @@ def register(app: typer.Typer) -> None:
         strict: bool = typer.Option(False, "--strict", help="Force the full strict review scaffold even for small PRs."),
         light: bool = typer.Option(False, "--light", help="Force the lighter small-PR review scaffold."),
     ) -> None:
-        """Prepare the full two-stage PR review bundle for the current branch or PR."""
+        """Prepare the Anchor, Judge, Critic, Actor PR review bundle for the current branch or PR."""
         root = _root()
         if not git_core.is_git_repo(root):
             console.print("[red]agentpack review requires a git repository.[/]")
@@ -156,18 +160,28 @@ def register(app: typer.Typer) -> None:
                 console.print(f"[red]Review preflight blocked:[/] {exc}")
                 raise typer.Exit(1) from exc
 
+        _ensure_review_pipeline_contract(preflight, outputs, root)
         runbook = _render_review_runbook(preflight)
         understanding_prompt = _render_stage_prompt(
             "stage1-understanding.md",
             preflight,
             output_path=outputs["understanding_authoring"],
-            prior_path=None,
+            template_path=preflight["paths"]["understanding_template"],
+            prior_paths=[],
         )
         judge_prompt = _render_stage_prompt(
             "stage2-judge.md",
             preflight,
             output_path=outputs["findings_authoring"],
-            prior_path=outputs["understanding"],
+            template_path=preflight["paths"]["findings_template"],
+            prior_paths=[outputs["understanding"]],
+        )
+        critic_prompt = _render_stage_prompt(
+            "stage3-critic.md",
+            preflight,
+            output_path=outputs["critique_authoring"],
+            template_path=preflight["paths"]["critique_template"],
+            prior_paths=[outputs["understanding"], outputs["findings"]],
         )
 
         artifacts = {
@@ -175,15 +189,19 @@ def register(app: typer.Typer) -> None:
             outputs["runbook"]: runbook,
             outputs["understanding_prompt"]: understanding_prompt,
             outputs["judge_prompt"]: judge_prompt,
+            outputs["critic_prompt"]: critic_prompt,
             outputs["understanding_template"]: _review_toon_template("understanding"),
             outputs["findings_template"]: _review_toon_template("findings"),
+            outputs["critique_template"]: _review_toon_template("critique"),
             outputs["state"]: json.dumps(_review_state(root, preflight), indent=2) + "\n",
             _PREFLIGHT_PATH: json.dumps(preflight, indent=2) + "\n",
             _RUNBOOK_PATH: runbook,
             _UNDERSTANDING_PROMPT_PATH: understanding_prompt,
             _JUDGE_PROMPT_PATH: judge_prompt,
+            _CRITIC_PROMPT_PATH: critic_prompt,
             _UNDERSTANDING_TEMPLATE_PATH: _review_toon_template("understanding"),
             _FINDINGS_TEMPLATE_PATH: _review_toon_template("findings"),
+            _CRITIQUE_TEMPLATE_PATH: _review_toon_template("critique"),
             _STATE_PATH: json.dumps(_review_state(root, preflight), indent=2) + "\n",
         }
         for rel_path, content in artifacts.items():
@@ -210,14 +228,19 @@ def register(app: typer.Typer) -> None:
         console.print(f"[green]✓[/] Review run dir: [bold]{preflight['paths']['run_dir']}[/]")
         console.print(f"[green]✓[/] Review preflight: [bold]{_PREFLIGHT_PATH}[/]")
         console.print(f"[green]✓[/] Review runbook: [bold]{_RUNBOOK_PATH}[/]")
-        console.print(f"[green]✓[/] Stage 1 prompt: [bold]{_UNDERSTANDING_PROMPT_PATH}[/]")
-        console.print(f"[green]✓[/] Stage 2 prompt: [bold]{_JUDGE_PROMPT_PATH}[/]")
-        console.print(f"[green]✓[/] Stage 1 TOON template: [bold]{_UNDERSTANDING_TEMPLATE_PATH}[/]")
-        console.print(f"[green]✓[/] Stage 2 TOON template: [bold]{_FINDINGS_TEMPLATE_PATH}[/]")
-        console.print(f"[green]✓[/] Stage 1 JSON target: [bold]{_rel_to_root(outputs['understanding_authoring'], root)}[/]")
-        console.print(f"[green]✓[/] Stage 1 canonical TOON: [bold]{_rel_to_root(outputs['understanding'], root)}[/]")
-        console.print(f"[green]✓[/] Stage 2 JSON target: [bold]{_rel_to_root(outputs['findings_authoring'], root)}[/]")
-        console.print(f"[green]✓[/] Stage 2 canonical TOON: [bold]{_rel_to_root(outputs['findings'], root)}[/]")
+        console.print(f"[green]✓[/] Anchor prompt: [bold]{_UNDERSTANDING_PROMPT_PATH}[/]")
+        console.print(f"[green]✓[/] Judge prompt: [bold]{_JUDGE_PROMPT_PATH}[/]")
+        console.print(f"[green]✓[/] Critic prompt: [bold]{_CRITIC_PROMPT_PATH}[/]")
+        console.print(f"[green]✓[/] Anchor TOON template: [bold]{_UNDERSTANDING_TEMPLATE_PATH}[/]")
+        console.print(f"[green]✓[/] Judge TOON template: [bold]{_FINDINGS_TEMPLATE_PATH}[/]")
+        console.print(f"[green]✓[/] Critic TOON template: [bold]{_CRITIQUE_TEMPLATE_PATH}[/]")
+        console.print(f"[green]✓[/] Anchor JSON target: [bold]{_rel_to_root(outputs['understanding_authoring'], root)}[/]")
+        console.print(f"[green]✓[/] Anchor canonical TOON: [bold]{_rel_to_root(outputs['understanding'], root)}[/]")
+        console.print(f"[green]✓[/] Judge JSON target: [bold]{_rel_to_root(outputs['findings_authoring'], root)}[/]")
+        console.print(f"[green]✓[/] Judge canonical TOON: [bold]{_rel_to_root(outputs['findings'], root)}[/]")
+        console.print(f"[green]✓[/] Critic JSON target: [bold]{_rel_to_root(outputs['critique_authoring'], root)}[/]")
+        console.print(f"[green]✓[/] Critic canonical TOON: [bold]{_rel_to_root(outputs['critique'], root)}[/]")
+        console.print(f"[green]✓[/] Actor approved findings: [bold]{_rel_to_root(outputs['approved_findings'], root)}[/]")
         console.print(f"[green]✓[/] Review stage state: [bold]{_STATE_PATH}[/]")
         if preflight["warnings"]:
             console.print("[yellow]Warnings:[/]")
@@ -255,6 +278,21 @@ def _build_review_preflight(
     review_target = _preflight_target(target, pr)
     observer_notes = observer_notes_for_task(root, review_context)
     review_mode = _review_scaffold_mode(changed_files, review_context, override=review_mode_override)
+    try:
+        shared_pr_context = build_pr_context(
+            root,
+            base_ref=str(diff_info["base_ref"]),
+            head_ref=str(diff_info.get("head_ref") or "HEAD"),
+            source="github" if diff_info["source"] in {"pr-target", "current-pr"} else "local-fallback",
+            pr_number=int(pr["number"]) if isinstance(pr, dict) and pr.get("number") else None,
+            pr_url=str(pr.get("url") or "") if isinstance(pr, dict) else "",
+            focus=review_context,
+        )
+        shared_pr_context_payload = shared_pr_context.model_dump(mode="json")
+    except Exception:
+        # Existing review preflight remains usable when a shallow checkout or
+        # test fixture cannot materialize architecture snapshots.
+        shared_pr_context_payload = None
 
     return {
         "generated_at": _now_iso(),
@@ -274,7 +312,7 @@ def _build_review_preflight(
             "requires_read_file_between_stages": True,
             "forbid_inline_review": True,
             "blocked_without_stage_artifact": True,
-            "stage_order": ["understanding", "judge"],
+            "stage_order": ["anchor", "judge", "critic", "actor"],
         },
         "git": {
             "branch": branch,
@@ -293,6 +331,7 @@ def _build_review_preflight(
             "fallback": "working-tree" if diff_info["source"] == "local-fallback" else "",
         },
         "pr": pr,
+        "pr_context": shared_pr_context_payload,
         "diff": {
             "range": diff_info["range"],
             "base_ref": diff_info["base_ref"],
@@ -306,21 +345,30 @@ def _build_review_preflight(
             "runbook": _rel_to_root(outputs["runbook"], root),
             "understanding_prompt": _rel_to_root(outputs["understanding_prompt"], root),
             "judge_prompt": _rel_to_root(outputs["judge_prompt"], root),
+            "critic_prompt": _rel_to_root(outputs["critic_prompt"], root),
             "understanding_template": _rel_to_root(outputs["understanding_template"], root),
             "findings_template": _rel_to_root(outputs["findings_template"], root),
+            "critique_template": _rel_to_root(outputs["critique_template"], root),
             "understanding_authoring_output": _rel_to_root(outputs["understanding_authoring"], root),
             "understanding_canonical_output": _rel_to_root(outputs["understanding"], root),
             "findings_authoring_output": _rel_to_root(outputs["findings_authoring"], root),
             "findings_canonical_output": _rel_to_root(outputs["findings"], root),
+            "critique_authoring_output": _rel_to_root(outputs["critique_authoring"], root),
+            "critique_canonical_output": _rel_to_root(outputs["critique"], root),
             "understanding_output": _rel_to_root(outputs["understanding"], root),
             "findings_output": _rel_to_root(outputs["findings"], root),
+            "critique_output": _rel_to_root(outputs["critique"], root),
+            "approved_findings_output": _rel_to_root(outputs["approved_findings"], root),
             "state": _rel_to_root(outputs["state"], root),
             "active_preflight": str(_PREFLIGHT_PATH),
             "active_runbook": str(_RUNBOOK_PATH),
             "active_understanding_prompt": str(_UNDERSTANDING_PROMPT_PATH),
             "active_judge_prompt": str(_JUDGE_PROMPT_PATH),
+            "active_critic_prompt": str(_CRITIC_PROMPT_PATH),
             "active_understanding_template": str(_UNDERSTANDING_TEMPLATE_PATH),
             "active_findings_template": str(_FINDINGS_TEMPLATE_PATH),
+            "active_critique_template": str(_CRITIQUE_TEMPLATE_PATH),
+            "active_approved_findings": str(_APPROVED_FINDINGS_PATH),
             "active_state": str(_STATE_PATH),
         },
         "context_pack": context_pack,
@@ -354,14 +402,39 @@ def _review_output_paths(
         "runbook": run_dir / "runbook.md",
         "understanding_prompt": run_dir / "understanding.prompt.md",
         "judge_prompt": run_dir / "judge.prompt.md",
+        "critic_prompt": run_dir / "critic.prompt.md",
         "understanding_template": run_dir / "understanding.template.toon",
         "findings_template": run_dir / "findings.template.toon",
+        "critique_template": run_dir / "critique.template.toon",
         "understanding_authoring": run_dir / "understanding.json",
         "understanding": run_dir / "understanding.toon",
         "findings_authoring": run_dir / "findings.json",
         "findings": run_dir / "findings.toon",
+        "critique_authoring": run_dir / "critique.json",
+        "critique": run_dir / "critique.toon",
+        "approved_findings": run_dir / "approved-findings.toon",
         "state": run_dir / "state.json",
     }
+
+
+def _ensure_review_pipeline_contract(preflight: dict[str, Any], outputs: dict[str, Any], root: Path) -> None:
+    """Add Critic and Actor paths when resuming a pre-Critic review run."""
+    paths = preflight.setdefault("paths", {})
+    path_defaults = {
+        "critic_prompt": outputs["critic_prompt"],
+        "critique_template": outputs["critique_template"],
+        "critique_authoring_output": outputs["critique_authoring"],
+        "critique_canonical_output": outputs["critique"],
+        "critique_output": outputs["critique"],
+        "approved_findings_output": outputs["approved_findings"],
+    }
+    for key, path in path_defaults.items():
+        paths.setdefault(key, _rel_to_root(path, root))
+    paths.setdefault("active_critic_prompt", str(_CRITIC_PROMPT_PATH))
+    paths.setdefault("active_critique_template", str(_CRITIQUE_TEMPLATE_PATH))
+    paths.setdefault("active_approved_findings", str(_APPROVED_FINDINGS_PATH))
+    execution_contract = preflight.setdefault("execution_contract", {})
+    execution_contract["stage_order"] = ["anchor", "judge", "critic", "actor"]
 
 
 def _new_review_run_id() -> str:
@@ -425,6 +498,14 @@ def _artifact_paths(preflight: dict[str, Any], kind: str, *, root: Path) -> _Rev
     elif kind == "findings":
         authoring_rel = str(paths.get("findings_authoring_output") or paths.get("findings_output") or "")
         canonical_rel = str(paths.get("findings_canonical_output") or paths.get("findings_output") or "")
+    elif kind == "critique":
+        authoring_rel = str(paths.get("critique_authoring_output") or paths.get("critique_output") or "")
+        canonical_rel = str(paths.get("critique_canonical_output") or paths.get("critique_output") or "")
+        if not authoring_rel or not canonical_rel:
+            run_dir = str(paths.get("run_dir") or "")
+            if run_dir:
+                authoring_rel = f"{run_dir.rstrip('/')}/critique.json"
+                canonical_rel = f"{run_dir.rstrip('/')}/critique.toon"
     else:
         raise ValueError(f"unknown review artifact kind: {kind}")
     if not authoring_rel or not canonical_rel:
@@ -486,11 +567,14 @@ def _load_review_run(root: Path, run_id: str) -> dict[str, Any]:
         raise typer.Exit(1)
     understanding_paths = _artifact_paths(preflight, "understanding", root=root)
     findings_paths = _artifact_paths(preflight, "findings", root=root)
+    critique_paths = _artifact_paths(preflight, "critique", root=root)
     try:
         if understanding_paths.source is not None:
             _validate_and_canonicalize_review_artifact(understanding_paths, kind="understanding", preflight=preflight)
         if findings_paths.source is not None:
             _validate_and_canonicalize_review_artifact(findings_paths, kind="findings", preflight=preflight)
+        if critique_paths.source is not None:
+            _validate_and_canonicalize_review_artifact(critique_paths, kind="critique", preflight=preflight)
     except ValueError as exc:
         console.print(f"[red]Review run artifact invalid:[/] {exc}")
         raise typer.Exit(1)
@@ -554,7 +638,7 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
     citation_source = preflight.get("citation_source") if isinstance(preflight.get("citation_source"), dict) else {}
     return (
         "# AgentPack Review Workflow\n\n"
-        "Run the full two-stage review flow for the current PR or branch. Treat the source of truth as the latest PR head, "
+        "Run the Anchor, Judge, Critic, Actor review flow for the current PR or branch. Treat the source of truth as the latest PR head, "
         "`gh pr view`, `git diff`, and direct reads of exact changed code. The reviewer context below is a prioritization "
         "lens only; it must not replace code evidence.\n\n"
         "## Reviewer Context\n\n"
@@ -583,28 +667,37 @@ def _render_review_runbook(preflight: dict[str, Any]) -> str:
         + _render_review_observer_runbook(preflight)
         + "\n## Generated Artifacts\n\n"
         + f"- Preflight JSON: `{preflight['paths']['preflight']}`\n"
-        f"- Stage 1 prompt: `{preflight['paths']['understanding_prompt']}`\n"
-        f"- Stage 2 prompt: `{preflight['paths']['judge_prompt']}`\n"
-        f"- Stage 1 TOON fallback template: `{preflight['paths']['understanding_template']}`\n"
-        f"- Stage 2 TOON fallback template: `{preflight['paths']['findings_template']}`\n"
-        f"- Stage 1 JSON authoring output: `{preflight['paths']['understanding_authoring_output']}`\n"
-        f"- Stage 1 canonical TOON handoff: `{preflight['paths']['understanding_canonical_output']}`\n"
-        f"- Stage 2 JSON authoring output: `{preflight['paths']['findings_authoring_output']}`\n"
-        f"- Stage 2 canonical TOON handoff: `{preflight['paths']['findings_canonical_output']}`\n"
+        f"- Anchor prompt: `{preflight['paths']['understanding_prompt']}`\n"
+        f"- Judge prompt: `{preflight['paths']['judge_prompt']}`\n"
+        f"- Critic prompt: `{preflight['paths']['critic_prompt']}`\n"
+        f"- Anchor TOON fallback template: `{preflight['paths']['understanding_template']}`\n"
+        f"- Judge TOON fallback template: `{preflight['paths']['findings_template']}`\n"
+        f"- Critic TOON fallback template: `{preflight['paths']['critique_template']}`\n"
+        f"- Anchor JSON authoring output: `{preflight['paths']['understanding_authoring_output']}`\n"
+        f"- Anchor canonical TOON handoff: `{preflight['paths']['understanding_canonical_output']}`\n"
+        f"- Judge JSON authoring output: `{preflight['paths']['findings_authoring_output']}`\n"
+        f"- Judge canonical TOON handoff: `{preflight['paths']['findings_canonical_output']}`\n"
+        f"- Critic JSON authoring output: `{preflight['paths']['critique_authoring_output']}`\n"
+        f"- Critic canonical TOON handoff: `{preflight['paths']['critique_canonical_output']}`\n"
+        f"- Actor approved findings: `{preflight['paths']['approved_findings_output']}`\n"
         f"- Stage state JSON: `{preflight['paths']['state']}`\n\n"
         "## Hard Gates\n\n"
         "1. Do not perform the review inline from these prompts or this runbook.\n"
         "2. If diff source is not `pr-target` or `current-pr`, stop and rerun `agentpack review --pr <number>`.\n"
-        "3. If you cannot write the Stage 1 output file at the declared path, stop and report blocked.\n"
-        "4. After Stage 1, run `agentpack review --check`; do not start Stage 2 until it validates Stage 1.\n"
-        "5. After Stage 2, run `agentpack review --check --post-inline-comments` for PR-bound runs. "
-        "For local-only fallback reviews, run `agentpack review --check`. Do not produce a final summary unless Stage 2 validates.\n\n"
+        "3. If you cannot write the Anchor output file at the declared path, stop and report blocked.\n"
+        "4. After Anchor, run `agentpack review --check`; do not start Judge until it validates Anchor.\n"
+        "5. After Judge, run `agentpack review --check`; do not start Critic until it validates Judge.\n"
+        "6. After Critic, run `agentpack review --check`; AgentPack generates approved findings. "
+        "Only then may Actor run `agentpack review --check --post-inline-comments` for PR-bound runs. "
+        "For local-only fallback reviews, run `agentpack review --check`. Do not produce a final summary unless Critic validates.\n\n"
         "## Workflow\n\n"
-        "1. Read the Stage 1 prompt file and JSON schema completely, then produce JSON at the declared authoring path.\n"
-        "2. Run `agentpack review --check` and confirm AgentPack wrote canonical `understanding.toon` before moving on.\n"
-        "3. Read canonical `understanding.toon`, then read the Stage 2 prompt file and produce JSON findings at the declared authoring path.\n"
-        "4. Run `agentpack review --check --post-inline-comments` for PR-bound runs, or `agentpack review --check` for local fallback, and confirm the findings file exists and follows the declared schema before reporting back.\n"
-        "5. In the final user-facing response, summarize findings and validation gaps without exposing internal stage names.\n"
+        "1. Read the Anchor prompt and produce JSON at the declared understanding authoring path.\n"
+        "2. Run `agentpack review --check` and confirm AgentPack wrote canonical `understanding.toon`.\n"
+        "3. Read canonical `understanding.toon`, then read the Judge prompt and produce JSON findings at the declared authoring path.\n"
+        "4. Run `agentpack review --check`, read both canonical handoffs, then produce Critic JSON at the declared critique authoring path.\n"
+        "5. Run `agentpack review --check` and confirm AgentPack wrote `approved-findings.toon`.\n"
+        "6. Actor may publish only that approved artifact with `agentpack review --check --post-inline-comments`; it never edits or pushes the PR branch.\n"
+        "7. In the final user-facing response, summarize approved findings and validation gaps without exposing internal stage names.\n"
     )
 
 
@@ -645,15 +738,11 @@ def _render_stage_prompt(
     preflight: dict[str, Any],
     *,
     output_path: Path,
-    prior_path: Path | None,
+    template_path: str,
+    prior_paths: list[Path],
 ) -> str:
     root = _root().resolve()
     abs_output = output_path.resolve()
-    template_path = (
-        preflight["paths"]["understanding_template"]
-        if prior_path is None
-        else preflight["paths"]["findings_template"]
-    )
     output_label = "JSON authoring path" if abs_output.suffix == ".json" else "Output path"
     lines = [_load_review_template(template_name)]
     lines.extend(
@@ -679,7 +768,7 @@ def _render_stage_prompt(
     context_pack = preflight.get("context_pack") if isinstance(preflight.get("context_pack"), dict) else {}
     if context_pack.get("path"):
         lines.append(f"- Broad AgentPack context: {context_pack['path']}")
-    if prior_path is not None:
+    for prior_path in prior_paths:
         lines.append(f"- Canonical TOON input path: {_rel_to_root(prior_path.resolve(), root)}")
     lines.extend(
         [
@@ -696,7 +785,7 @@ def _render_stage_prompt(
             "- Run `agentpack review --check` after writing this artifact before continuing.",
         ]
     )
-    if prior_path is not None:
+    if prior_paths:
         lines.append("- Do not continue until the declared canonical TOON input exists and has been read from disk.")
     if preflight["warnings"]:
         lines.extend(["", "## Warnings", ""])
@@ -756,6 +845,18 @@ def _review_toon_template(kind: str) -> str:
             "    depends_on: null\n"
             "    direction: Replace with what would resolve it, or null\n"
             "coverage: Replace with units examined and any gaps\n"
+        )
+    if kind == "critique":
+        return (
+            "@format toon\n"
+            "@root review_critique\n"
+            "head_sha: Replace with the review preflight head SHA\n"
+            "decisions[]:\n"
+            "  -\n"
+            "    finding_id: f1\n"
+            "    verdict: accept\n"
+            "    rationale: Replace with the evidence-based calibration rationale\n"
+            "    severity: null\n"
         )
     raise ValueError(f"unknown review template kind: {kind}")
 
@@ -1081,13 +1182,17 @@ def _incomplete_review_run_warnings(root: Path) -> list[str]:
         if preflight:
             understanding_paths = _artifact_paths(preflight, "understanding", root=root)
             findings_paths = _artifact_paths(preflight, "findings", root=root)
+            critique_paths = _artifact_paths(preflight, "critique", root=root)
             understanding = understanding_paths.source
             findings = findings_paths.source
+            critique = critique_paths.source
         else:
             understanding = run_dir / "understanding.toon"
             findings = run_dir / "findings.toon"
+            critique = run_dir / "critique.toon"
             understanding_paths = _ReviewArtifactPaths(understanding, understanding, _rel_to_root(understanding, root), _rel_to_root(understanding, root))
             findings_paths = _ReviewArtifactPaths(findings, findings, _rel_to_root(findings, root), _rel_to_root(findings, root))
+            critique_paths = _ReviewArtifactPaths(critique, critique, _rel_to_root(critique, root), _rel_to_root(critique, root))
         if understanding and understanding.exists():
             try:
                 _validate_and_canonicalize_review_artifact(understanding_paths, kind="understanding", preflight=preflight)
@@ -1100,7 +1205,16 @@ def _incomplete_review_run_warnings(root: Path) -> list[str]:
             except ValueError as exc:
                 warnings.append(f"invalid findings artifact in {run_dir.name}: {exc}")
                 break
-        if understanding and understanding.exists() and not findings:
+        if critique and critique.exists():
+            try:
+                critique_payload = _validate_and_canonicalize_review_artifact(critique_paths, kind="critique", preflight=preflight)
+                if preflight and findings and findings.exists():
+                    findings_payload = _validate_and_canonicalize_review_artifact(findings_paths, kind="findings", preflight=preflight)
+                    _validate_critique_against_findings(critique_payload, findings_payload, preflight)
+            except ValueError as exc:
+                warnings.append(f"invalid critique artifact in {run_dir.name}: {exc}")
+                break
+        if understanding and understanding.exists() and (not findings or not critique):
             warnings.append(
                 f"incomplete previous review run {run_dir.name}; start fresh by default or resume with `agentpack review --resume {run_dir.name}`"
             )
@@ -1111,14 +1225,23 @@ def _incomplete_review_run_warnings(root: Path) -> list[str]:
 def _review_state(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
     understanding = _artifact_paths(preflight, "understanding", root=root)
     findings = _artifact_paths(preflight, "findings", root=root)
-    status = "awaiting_understanding"
+    critique = _artifact_paths(preflight, "critique", root=root)
+    status = "awaiting_anchor"
     try:
         if understanding.source is not None:
             _validate_and_canonicalize_review_artifact(understanding, kind="understanding", preflight=preflight)
-            status = "awaiting_findings"
+            status = "awaiting_judge"
         if findings.source is not None:
             _validate_and_canonicalize_review_artifact(findings, kind="findings", preflight=preflight)
-            status = "complete"
+            status = "awaiting_critic"
+        if critique.source is not None:
+            critique_payload = _validate_and_canonicalize_review_artifact(critique, kind="critique", preflight=preflight)
+            findings_payload = _validate_and_canonicalize_review_artifact(findings, kind="findings", preflight=preflight)
+            _validate_critique_against_findings(critique_payload, findings_payload, preflight)
+            status = "ready_to_publish"
+            run_dir = root / str(preflight["paths"]["run_dir"])
+            if (run_dir / "posted-review.json").exists() or (run_dir / "inline-review-dry-run.json").exists():
+                status = "complete"
     except ValueError:
         status = "blocked_invalid_artifact"
     return {
@@ -1130,6 +1253,9 @@ def _review_state(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
         "understanding_output": understanding.canonical_rel,
         "findings_authoring_output": findings.authoring_rel,
         "findings_output": findings.canonical_rel,
+        "critique_authoring_output": critique.authoring_rel,
+        "critique_output": critique.canonical_rel,
+        "approved_findings_output": str(preflight["paths"].get("approved_findings_output") or ""),
         "check_command": "agentpack review --check",
     }
 
@@ -1157,17 +1283,18 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
 
     understanding = _artifact_paths(preflight, "understanding", root=root)
     findings = _artifact_paths(preflight, "findings", root=root)
+    critique = _artifact_paths(preflight, "critique", root=root)
     state_path = root / preflight["paths"].get("state", _STATE_PATH)
 
     if understanding.source is None:
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
-        console.print(f"[red]Stage 1 artifact missing:[/] {understanding.authoring_rel}")
+        console.print(f"[red]Anchor artifact missing:[/] {understanding.authoring_rel}")
         _print_review_check_action(
-            what_failed="Stage 1 understanding artifact is missing",
-            why_it_matters="Stage 2 findings would be based on inline memory instead of a checked file artifact",
+            what_failed="Anchor understanding artifact is missing",
+            why_it_matters="Judge findings would be based on inline memory instead of a checked file artifact",
             repair_command=f"write {understanding.authoring_rel} then run `agentpack review --check`",
-            safe_to_continue="no; create the Stage 1 artifact first",
+            safe_to_continue="no; create the Anchor artifact first",
         )
         raise typer.Exit(1)
     try:
@@ -1175,40 +1302,70 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
     except ValueError as exc:
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
-        console.print(f"[red]Stage 1 artifact invalid:[/] {exc}")
+        console.print(f"[red]Anchor artifact invalid:[/] {exc}")
         _print_review_check_action(
             what_failed=str(exc),
-            why_it_matters="invalid understanding artifact blocks evidence-backed findings",
+            why_it_matters="invalid Anchor artifact blocks evidence-backed Judge findings",
             repair_command=f"repair {understanding.authoring_rel} then run `agentpack review --check`",
-            safe_to_continue="no; fix Stage 1 schema/citations first",
+            safe_to_continue="no; fix Anchor schema/citations first",
         )
         raise typer.Exit(1) from exc
 
     if findings.source is None:
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
-        console.print(f"[green]✓[/] Stage 1 valid. Canonical TOON: [bold]{understanding.canonical_rel}[/]")
-        console.print("[green]✓[/] Proceed to Stage 2 judge prompt.")
+        console.print(f"[green]✓[/] Anchor valid. Canonical TOON: [bold]{understanding.canonical_rel}[/]")
+        console.print("[green]✓[/] Proceed to Judge prompt.")
         console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
+        if post_inline_comments or dry_run_post:
+            console.print("[red]Actor blocked:[/] Judge and Critic artifacts must validate before publishing.")
+            raise typer.Exit(1)
         return
     try:
         findings_payload = _validate_and_canonicalize_review_artifact(findings, kind="findings", preflight=preflight)
     except ValueError as exc:
         state = _review_state(root, preflight)
         _write_review_state(root, preflight, state)
-        console.print(f"[red]Stage 2 artifact invalid:[/] {exc}")
+        console.print(f"[red]Judge artifact invalid:[/] {exc}")
         _print_review_check_action(
             what_failed=str(exc),
-            why_it_matters="invalid findings cannot be summarized or posted safely",
-            repair_command=f"repair {findings.authoring_rel} then run `agentpack review --check --dry-run-check`",
-            safe_to_continue="no; fix Stage 2 schema/citations first",
+            why_it_matters="invalid candidate findings cannot be evaluated by Critic or published safely",
+            repair_command=f"repair {findings.authoring_rel} then run `agentpack review --check`",
+            safe_to_continue="no; fix Judge schema/citations first",
         )
         raise typer.Exit(1) from exc
 
+    if critique.source is None:
+        state = _review_state(root, preflight)
+        _write_review_state(root, preflight, state)
+        console.print(f"[green]✓[/] Judge valid. Canonical TOON: [bold]{findings.canonical_rel}[/]")
+        console.print("[green]✓[/] Proceed to Critic prompt.")
+        console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
+        if post_inline_comments or dry_run_post:
+            console.print("[red]Actor blocked:[/] Critic artifact must validate before publishing.")
+            raise typer.Exit(1)
+        return
+    try:
+        critique_payload = _validate_and_canonicalize_review_artifact(critique, kind="critique", preflight=preflight)
+        _validate_critique_against_findings(critique_payload, findings_payload, preflight)
+    except ValueError as exc:
+        state = _review_state(root, preflight)
+        _write_review_state(root, preflight, state)
+        console.print(f"[red]Critic artifact invalid:[/] {exc}")
+        _print_review_check_action(
+            what_failed=str(exc),
+            why_it_matters="Actor may only publish Critic-approved findings for this exact Judge artifact and PR head",
+            repair_command=f"repair {critique.authoring_rel} then run `agentpack review --check`",
+            safe_to_continue="no; fix the Critic decisions first",
+        )
+        raise typer.Exit(1) from exc
+
+    _write_approved_findings(root, preflight, findings_payload, critique_payload)
+    approved_payload = _read_approved_findings(root, preflight)
     posted: dict[str, Any] | None = None
     if post_inline_comments or dry_run_post:
         try:
-            posted = _post_inline_review_comments(root, preflight, findings_payload, dry_run=dry_run_post)
+            posted = _post_inline_review_comments(root, preflight, approved_payload, dry_run=dry_run_post)
         except _ReviewPreflightError as exc:
             state = _review_state(root, preflight)
             _write_review_state(root, preflight, state)
@@ -1227,7 +1384,7 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         state["posted_review"] = posted
     _write_review_state(root, preflight, state)
     try:
-        raw_findings = findings_payload.get("findings")
+        raw_findings = approved_payload.get("findings")
         findings_count = len(raw_findings) if isinstance(raw_findings, list) else 0
         changed_file_paths = [
             str(item.get("path") or "")
@@ -1249,13 +1406,13 @@ def _check_active_review(root: Path, *, post_inline_comments: bool = False, dry_
         if posted.get("status") == "already_posted":
             console.print(f"[yellow]Review comments already posted:[/] {posted.get('url', '')}")
         elif posted.get("status") == "no_findings":
-            console.print("[green]✓[/] Stage 2 valid. No findings to post as inline comments.")
+            console.print("[green]✓[/] Critic valid. No approved findings to post as inline comments.")
         elif posted.get("status") == "dry_run":
             console.print(f"[green]✓[/] Inline review payload valid: [bold]{posted.get('request_payload', posted.get('path', ''))}[/]")
         else:
             console.print(f"[green]✓[/] Posted inline review comments: [bold]{posted.get('url', '')}[/]")
     else:
-        console.print("[green]✓[/] Stage 2 valid. Review artifacts complete; final summary is unblocked.")
+        console.print("[green]✓[/] Critic valid. Approved findings are ready for the publish-only Actor.")
     console.print(f"State: [bold]{_rel_to_root(state_path, root)}[/]")
 
 
@@ -1270,6 +1427,97 @@ def _stale_active_review_reason(root: Path, preflight: dict[str, Any]) -> str:
     if run_dir and not (root / run_dir).exists():
         return f"active review run directory is missing: {run_dir}"
     return ""
+
+
+def _validate_critique_against_findings(
+    critique_payload: dict[str, Any],
+    findings_payload: dict[str, Any],
+    preflight: dict[str, Any],
+) -> None:
+    expected_head = str(preflight.get("git", {}).get("head_sha") or "")
+    critique_head = str(critique_payload.get("head_sha") or "")
+    if not expected_head or critique_head != expected_head:
+        raise ValueError("critique head_sha must exactly match the review preflight head SHA")
+    findings = findings_payload.get("findings")
+    decisions = critique_payload.get("decisions")
+    if not isinstance(findings, list) or not isinstance(decisions, list):
+        raise ValueError("Judge findings and Critic decisions must both be lists")
+    finding_ids = [str(item.get("id") or "") for item in findings if isinstance(item, dict)]
+    if len(finding_ids) != len(findings) or len(set(finding_ids)) != len(finding_ids):
+        raise ValueError("Judge findings must have unique non-empty IDs before Critic review")
+    decision_ids = [str(item.get("finding_id") or "") for item in decisions if isinstance(item, dict)]
+    if len(decision_ids) != len(decisions) or len(set(decision_ids)) != len(decision_ids):
+        raise ValueError("Critic decisions must contain exactly one decision per unique Judge finding ID")
+    unknown = sorted(set(decision_ids) - set(finding_ids))
+    missing = sorted(set(finding_ids) - set(decision_ids))
+    if unknown:
+        raise ValueError(f"Critic decisions reference unknown Judge finding IDs: {', '.join(unknown)}")
+    if missing:
+        raise ValueError(f"Critic decisions are missing Judge finding IDs: {', '.join(missing)}")
+    severity_rank = {"nit": 0, "should-fix": 1, "blocker": 2}
+    findings_by_id = {str(item["id"]): item for item in findings if isinstance(item, dict)}
+    for decision in decisions:
+        if not isinstance(decision, dict):
+            continue
+        if str(decision.get("verdict") or "") != "downgrade":
+            continue
+        finding = findings_by_id[str(decision.get("finding_id") or "")]
+        original = str(finding.get("severity") or "")
+        replacement = str(decision.get("severity") or "")
+        if severity_rank.get(replacement, -1) >= severity_rank.get(original, -1):
+            raise ValueError(
+                f"Critic downgrade for {finding['id']} must lower severity from {original} to a lower severity"
+            )
+
+
+def _write_approved_findings(
+    root: Path,
+    preflight: dict[str, Any],
+    findings_payload: dict[str, Any],
+    critique_payload: dict[str, Any],
+) -> dict[str, Any]:
+    decisions = {
+        str(item["finding_id"]): item
+        for item in critique_payload.get("decisions", [])
+        if isinstance(item, dict)
+    }
+    approved_findings: list[dict[str, Any]] = []
+    for finding in findings_payload.get("findings", []):
+        if not isinstance(finding, dict):
+            continue
+        decision = decisions[str(finding["id"])]
+        if decision["verdict"] == "reject":
+            continue
+        approved = dict(finding)
+        if decision["verdict"] == "downgrade":
+            approved["severity"] = decision["severity"]
+        approved_findings.append(approved)
+    payload = {"findings": approved_findings, "coverage": findings_payload["coverage"]}
+    canonical = canonicalize_to_toon_text(
+        json.dumps(payload),
+        schema="review-findings",
+        source="approved findings",
+    )
+    approved_rel = str(preflight["paths"].get("approved_findings_output") or "")
+    if not approved_rel:
+        raise ValueError("active review preflight is missing approved findings path")
+    approved_path = Path(approved_rel)
+    if not approved_path.is_absolute():
+        approved_path = root / approved_path
+    _write_canonical_artifact(approved_path, canonical.text)
+    active_path = root / _APPROVED_FINDINGS_PATH
+    _write_canonical_artifact(active_path, canonical.text)
+    return payload
+
+
+def _read_approved_findings(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
+    approved_rel = str(preflight["paths"].get("approved_findings_output") or "")
+    if not approved_rel:
+        raise ValueError("active review preflight is missing approved findings path")
+    approved_path = Path(approved_rel)
+    if not approved_path.is_absolute():
+        approved_path = root / approved_path
+    return _load_review_artifact_payload(approved_path, kind="findings", canonical_path=approved_path)
 
 
 def _print_review_check_action(
@@ -1335,6 +1583,8 @@ def _validate_review_artifact(
         raise ValueError(f"{path.name} schema invalid: {details}{repair_note}")
     root = _validation_root(path)
     preflight = preflight or _preflight_for_artifact(root, path)
+    if kind == "critique":
+        return payload
     content_resolver = _review_citation_content_resolver(root, preflight)
     citation_validation = (
         _validate_understanding_citations(root, payload, content_resolver=content_resolver)
@@ -1383,13 +1633,21 @@ def _write_canonical_artifact(path: Path, text: str, *, existing_text: str | Non
 
 
 def _review_schema(kind: str) -> str:
-    return "review-understanding" if kind == "understanding" else "review-findings"
+    schemas = {
+        "understanding": "review-understanding",
+        "findings": "review-findings",
+        "critique": "review-critique",
+    }
+    try:
+        return schemas[kind]
+    except KeyError as exc:
+        raise ValueError(f"unknown review artifact kind: {kind}") from exc
 
 
 def _write_review_repair_guide(path: Path, kind: str, error: str) -> Path | None:
     try:
         guide_path = path.with_name(f"{kind}-toon-repair.md")
-        template_kind = "understanding" if kind == "understanding" else "findings"
+        template_kind = kind
         guide = (
             "# AgentPack Review TOON Repair\n\n"
             f"Artifact: `{path.name}`\n\n"
@@ -1460,6 +1718,9 @@ def _preflight_for_artifact(root: Path, path: Path) -> dict[str, Any] | None:
             str(paths.get("findings_authoring_output") or ""),
             str(paths.get("findings_canonical_output") or ""),
             str(paths.get("findings_output") or ""),
+            str(paths.get("critique_authoring_output") or ""),
+            str(paths.get("critique_canonical_output") or ""),
+            str(paths.get("critique_output") or ""),
         }
         rel = _rel_to_root(path, root)
         if candidate == path.parent / "preflight.json" or rel in known:

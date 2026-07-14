@@ -5,7 +5,6 @@ class-kind symbols (`resource.aws_instance.web` etc); `module { source = "./x" }
 cross-file references are not resolved yet (see the query file's header
 comment) — reason_graph is expected to be near zero until that lands.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

@@ -17,13 +17,13 @@ Review the current PR or checked-out branch using the full AgentPack review work
 
 ## Steps
 
-1. Refresh AgentPack context for this exact review task before reading PR diff or code. Prefer MCP:
+1. Resolve the immutable PR context before reading the diff or code. Prefer MCP:
 
 ```text
-agentpack_pack_context(task="review current PR $ARGUMENTS")
+agentpack_get_pr_context(pr="$ARGUMENTS", focus="$ARGUMENTS", format="toon")
 ```
 
-If MCP is unavailable, run:
+Then refresh task context as needed. If MCP is unavailable, run:
 
 ```bash
 agentpack guard --agent auto --repair-stale --refresh-context
@@ -46,10 +46,11 @@ agentpack review --pr <number-or-url> "$ARGUMENTS"
 4. Treat any non-PR portion of `$ARGUMENTS` only as a reviewer lens. It must not replace the latest PR head, `gh pr view`, `git diff`, or direct code reads.
 5. By default, `agentpack review` starts a fresh run under `.agentpack/reviews/<branch-or-pr>/<run_id>/` and refreshes the stable alias files in `.agentpack/`.
 6. Do not perform the review inline from this command. If you cannot write the required files, stop and report blocked.
-7. Stage 1 starts from `.agentpack/review-understanding.template.toon` and writes the run-scoped understanding TOON declared by `agentpack review`.
-8. Run `agentpack review --check`; do not start Stage 2 unless Stage 1 validates.
-9. Stage 2 must read that understanding TOON from disk, start from `.agentpack/review-findings.template.toon`, and then write the run-scoped findings TOON declared by `agentpack review`.
-10. Run `agentpack review --check --dry-run-post` when you need a controlled inline payload check without calling GitHub. Run `agentpack review --check --post-inline-comments` for real PR-bound review posting. Use `agentpack review --check` only for local fallback reviews. Do not produce a final review summary unless the findings TOON exists, validates, and any intended PR-bound inline post succeeds.
-11. If an older model emits valid JSON or fenced output instead of TOON, rerun `agentpack review --check`; AgentPack canonicalizes schema-valid output to TOON and writes a repair guide for invalid output.
-12. Resume an interrupted run only with `agentpack review --resume <run_id>`.
-13. In the final response, report findings first with file evidence, then state inline-post status and validation exactly: dry-run passed, posted, failed, or not run.
+7. The Anchor role starts from `.agentpack/review-understanding.template.toon` and writes the compatible run-scoped understanding TOON declared by `agentpack review`.
+8. Run `agentpack review --check`; do not start Judge unless Anchor validates.
+9. Judge reads that understanding TOON from disk, starts from `.agentpack/review-findings.template.toon`, and writes candidate findings at the declared path.
+10. Run `agentpack review --check`; Critic reads both canonical handoffs, starts from `.agentpack/review-critique.template.toon`, and writes exactly one accept, reject, or downgrade decision for every Judge finding.
+11. Run `agentpack review --check` to generate `approved-findings.toon`. `--dry-run-post` and `--post-inline-comments` consume only that approved artifact. Actor is publish-only and never edits or pushes a PR branch. Do not produce a final review summary unless Critic validates and any intended PR-bound inline post succeeds.
+12. If an older model emits valid JSON or fenced output instead of TOON, rerun `agentpack review --check`; AgentPack canonicalizes schema-valid output to TOON and writes a repair guide for invalid output.
+13. Resume an interrupted run only with `agentpack review --resume <run_id>`.
+14. In the final response, report approved findings first with file evidence, then state inline-post status and validation exactly: dry-run passed, posted, failed, or not run.

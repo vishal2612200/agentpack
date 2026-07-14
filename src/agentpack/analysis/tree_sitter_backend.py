@@ -34,15 +34,16 @@ else:
     QueryMatches = list[tuple[int, dict[str, list[object]]]]
 
 # Languages this backend can extract symbols for.
-TS_SYMBOL_LANGS: set[str] = {"java", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"}
+TS_SYMBOL_LANGS: set[str] = {"java", "kotlin", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"}
 # Languages this backend can extract imports for.
-TS_IMPORT_LANGS: set[str] = {"ruby", "php", "protobuf"}
+TS_IMPORT_LANGS: set[str] = {"kotlin", "ruby", "php", "protobuf"}
 
 # Map AgentPack's language string to tree-sitter-language-pack's grammar name.
-_TreeSitterGrammarName = Literal["java", "ruby", "php", "terraform", "dockerfile", "proto", "graphql"]
+_TreeSitterGrammarName = Literal["java", "kotlin", "ruby", "php", "terraform", "dockerfile", "proto", "graphql"]
 _SymbolKind = Literal["class", "function", "method", "variable"]
 _TS_LANG_NAME: dict[str, _TreeSitterGrammarName] = {
     "java": "java",
+    "kotlin": "kotlin",
     "ruby": "ruby",
     "php": "php",
     "terraform": "terraform",
@@ -77,6 +78,18 @@ def is_available() -> bool:
     except ImportError:
         _available = False
     return _available
+
+
+def supports_language(language: str) -> bool:
+    """Return whether the installed optional parser can serve one language."""
+    if not is_available() or language not in TS_SYMBOL_LANGS:
+        return False
+    try:
+        _get_parser(language)
+        _get_query(language)
+    except Exception:
+        return False
+    return True
 
 
 def _ts_language_name(language: str) -> _TreeSitterGrammarName:

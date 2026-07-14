@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 try:
     import tomllib
@@ -185,6 +186,28 @@ class ScoringWeights(BaseModel):
     ignored_penalty: float = -100
 
 
+class ArchitectureSelectorConfig(BaseModel):
+    entity_types: list[str] = Field(default_factory=list)
+    path_globs: list[str] = Field(default_factory=list)
+    qualified_names: list[str] = Field(default_factory=list)
+    qualified_name_contains: list[str] = Field(default_factory=list)
+
+
+class ArchitectureInvariantConfig(BaseModel):
+    id: str
+    kind: Literal["forbid_edge", "require_test", "require_consumer_update"] = "forbid_edge"
+    enforcement: Literal["block", "warn"] = "warn"
+    edge_types: list[str] = Field(default_factory=lambda: ["imports"])
+    min_confidence: Literal["structured", "best_effort", "file_level", "unavailable"] = "best_effort"
+    source: ArchitectureSelectorConfig = Field(default_factory=ArchitectureSelectorConfig)
+    target: ArchitectureSelectorConfig = Field(default_factory=ArchitectureSelectorConfig)
+
+
+class ArchitectureConfig(BaseModel):
+    cache_dir: str = ".agentpack/architecture"
+    invariant: list[ArchitectureInvariantConfig] = Field(default_factory=list)
+
+
 class Config(BaseModel):
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
@@ -198,6 +221,7 @@ class Config(BaseModel):
     agentic: AgenticConfig = Field(default_factory=AgenticConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     scoring: ScoringWeights = Field(default_factory=ScoringWeights)
+    architecture: ArchitectureConfig = Field(default_factory=ArchitectureConfig)
 
 
 DEFAULT_CONFIG = Config()
@@ -339,6 +363,19 @@ recently_modified     = 20
 churn_high            = 15
 large_unrelated_penalty = -50
 ignored_penalty       = -100
+
+[architecture]
+cache_dir = ".agentpack/architecture"
+
+# Example:
+# [[architecture.invariant]]
+# id = "no-public-internal-imports"
+# kind = "forbid_edge"
+# enforcement = "block"
+# edge_types = ["imports"]
+# min_confidence = "best_effort"
+# source = { path_globs = ["src/public/**"] }
+# target = { path_globs = ["src/internal/**"] }
 """
 
 

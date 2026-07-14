@@ -5,7 +5,6 @@ exists as a **regression guard**: if any change to the ranker or scan pipeline
 lowers Python recall, the test fails. Also serves as the empirical ceiling
 reference — 75% here is what "the ranker's mechanism works well" looks like.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

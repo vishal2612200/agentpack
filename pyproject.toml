@@ -85,11 +85,10 @@ files = [
   "src/agentpack/analysis/",
 ]
 
-# tomllib is stdlib only on Python 3.11+; on 3.10 the code falls back to the
-# third-party ``tomli`` shim. Neither is resolvable at the configured
-# python_version, so treat the optional TOML backends as untyped imports.
+# Optional parsers and the Python 3.10 TOML fallback are intentionally absent
+# from the default development install used by the CI type-check step.
 [[tool.mypy.overrides]]
-module = ["tomllib", "tomli"]
+module = ["tomllib", "tomli", "tree_sitter", "tree_sitter_language_pack"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typer
 from agentpack.commands import (
+    architecture,
     benchmark,
     claude_cmd,
     ci_cmd,
@@ -70,6 +71,7 @@ def _main(
 
 
 for mod in [
+    architecture,
     quickstart,
     start_cmd,
     next_cmd,

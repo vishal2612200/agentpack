@@ -5,7 +5,6 @@ declarations map to method-kind symbols, qualified under the enclosing
 service. `import "x.proto"` targets are captured as raw-string import
 edges (no cross-file resolution yet -- see protobuf.scm's header comment).
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

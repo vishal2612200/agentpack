@@ -23,21 +23,35 @@ def symbol_signature_hash(symbol: Symbol | dict[str, Any]) -> str:
     return hash_text(signature or body or summary or name)[:16]
 
 
-def symbol_node_id(path: str | Path, symbol: Symbol | dict[str, Any], *, source_hash: str = "") -> str:
+def symbol_node_key(path: str | Path, symbol: Symbol | dict[str, Any]) -> str:
+    """Return a stable symbol identity that survives body-only revisions."""
     rel_path = normalize_repo_path(path)
     name = _field(symbol, "name")
     kind = _field(symbol, "kind")
     signature_hash = _field(symbol, "signature_hash") or symbol_signature_hash(symbol)
-    base = "|".join([rel_path, name, kind, signature_hash, source_hash or _field(symbol, "source_hash")])
+    base = "|".join([rel_path, name, kind, signature_hash])
     return "node:" + hash_text(base)[:20]
+
+
+def symbol_node_revision(node_key: str, *, source_hash: str = "") -> str:
+    """Return the append-only content revision for one stable node key."""
+    return "node-revision:" + hash_text("|".join([node_key, source_hash]))[:20]
+
+
+def symbol_node_id(path: str | Path, symbol: Symbol | dict[str, Any], *, source_hash: str = "") -> str:
+    """Backward-compatible name for the stable node key API."""
+    return symbol_node_key(path, symbol)
 
 
 def symbol_node_ref(path: str | Path, symbol: Symbol | dict[str, Any], *, source_hash: str = "") -> dict[str, Any]:
     rel_path = normalize_repo_path(path)
     signature_hash = _field(symbol, "signature_hash") or symbol_signature_hash(symbol)
     file_hash = source_hash or _field(symbol, "source_hash")
+    node_key = symbol_node_key(rel_path, symbol)
     return {
-        "node_id": symbol_node_id(rel_path, symbol, source_hash=file_hash),
+        "node_id": node_key,
+        "node_key": node_key,
+        "revision_id": symbol_node_revision(node_key, source_hash=file_hash),
         "path": rel_path,
         "symbol": _field(symbol, "name"),
         "kind": _field(symbol, "kind"),

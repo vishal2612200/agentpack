@@ -102,6 +102,9 @@ def test_episodic_memory_skips_missing_paths(tmp_path: Path) -> None:
 
 
 def test_episodic_memory_ignores_failed_tasks(tmp_path: Path) -> None:
+    source = tmp_path / "src" / "billing.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def retry():\n    return False\n", encoding="utf-8")
     record_episode(
         tmp_path,
         task="fix billing webhook retry",
@@ -110,7 +113,11 @@ def test_episodic_memory_ignores_failed_tasks(tmp_path: Path) -> None:
         passed=False,
     )
 
+    matches = episodic_memory_matches(tmp_path, "billing webhook retry")
+
     assert episodic_memory_boosts(tmp_path, "billing webhook retry") == {}
+    assert matches[0]["negative_guidance"] is True
+    assert matches[0]["boost"] == 0
 
 
 def test_failed_episode_can_be_promoted_to_eval_case(tmp_path: Path) -> None:

@@ -5,7 +5,6 @@ for PHP files. When you deepen the PHP query (PHPDoc, attributes, method
 signatures) or add PSR-4 resolution to turn raw-string imports into resolved
 graph edges, raise the corresponding thresholds in thresholds.toml.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

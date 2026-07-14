@@ -1,0 +1,15 @@
+{
+  "python.py": "python",
+  "javascript.js": "javascript",
+  "typescript.ts": "typescript",
+  "service.go": "go",
+  "service.rs": "rust",
+  "Service.java": "java",
+  "Service.kt": "kotlin",
+  "service.rb": "ruby",
+  "Service.php": "php",
+  "main.tf": "terraform",
+  "Dockerfile": "dockerfile",
+  "service.proto": "protobuf",
+  "schema.graphql": "graphql"
+}

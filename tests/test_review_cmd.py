@@ -4,6 +4,8 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from typer.testing import CliRunner
 
 from agentpack.cli import app
@@ -15,7 +17,9 @@ from agentpack.commands.review_cmd import (
     _parse_review_target,
     _parse_commentable_right_lines,
     _review_output_paths,
+    _validate_critique_against_findings,
     _validate_review_artifact,
+    _write_approved_findings,
 )
 
 
@@ -37,6 +41,16 @@ def _init_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "add", "src/foo.py"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "change foo"], cwd=tmp_path, check=True)
     return tmp_path
+
+
+def _write_critique(repo: Path, preflight: dict, decisions: list[dict]) -> Path:
+    critique = repo / preflight["paths"]["critique_authoring_output"]
+    critique.parent.mkdir(parents=True, exist_ok=True)
+    critique.write_text(
+        json.dumps({"head_sha": preflight["git"]["head_sha"], "decisions": decisions}),
+        encoding="utf-8",
+    )
+    return critique
 
 
 def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeypatch) -> None:
@@ -70,7 +84,7 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
         "requires_read_file_between_stages": True,
         "forbid_inline_review": True,
         "blocked_without_stage_artifact": True,
-        "stage_order": ["understanding", "judge"],
+        "stage_order": ["anchor", "judge", "critic", "actor"],
     }
     assert preflight["git"]["head_sha"] == "pr-head-sha"
     assert preflight["citation_source"]["mode"] == "git-head"
@@ -86,6 +100,9 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["paths"]["findings_authoring_output"].endswith("/findings.json")
     assert preflight["paths"]["findings_canonical_output"].endswith("/findings.toon")
     assert preflight["paths"]["findings_output"].startswith(".agentpack/reviews/pr-6/")
+    assert preflight["paths"]["critique_authoring_output"].endswith("/critique.json")
+    assert preflight["paths"]["critique_canonical_output"].endswith("/critique.toon")
+    assert preflight["paths"]["approved_findings_output"].endswith("/approved-findings.toon")
     assert preflight["changed_files"] == [
         {
             "path": "src/foo.py",
@@ -250,10 +267,12 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     runbook_path = repo / ".agentpack" / "review.prompt.md"
     understanding_prompt_path = repo / ".agentpack" / "review-understanding.prompt.md"
     judge_prompt_path = repo / ".agentpack" / "review-judge.prompt.md"
+    critic_prompt_path = repo / ".agentpack" / "review-critic.prompt.md"
     assert preflight_path.exists()
     assert runbook_path.exists()
     assert understanding_prompt_path.exists()
     assert judge_prompt_path.exists()
+    assert critic_prompt_path.exists()
 
     preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
     run_dir = repo / preflight["paths"]["run_dir"]
@@ -265,12 +284,15 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert (run_dir / "runbook.md").exists()
     assert (run_dir / "understanding.prompt.md").exists()
     assert (run_dir / "judge.prompt.md").exists()
+    assert (run_dir / "critic.prompt.md").exists()
     assert (run_dir / "understanding.template.toon").exists()
     assert (run_dir / "findings.template.toon").exists()
+    assert (run_dir / "critique.template.toon").exists()
     assert (run_dir / "context.md").exists()
     assert (run_dir / "citations.json").exists()
     assert (repo / ".agentpack" / "review-understanding.template.toon").exists()
     assert (repo / ".agentpack" / "review-findings.template.toon").exists()
+    assert (repo / ".agentpack" / "review-critique.template.toon").exists()
     assert preflight["context_pack"]["path"].startswith(".agentpack/reviews/feature-review/")
     assert not (repo / ".agentpack" / "context.md").exists()
     assert preflight["paths"]["understanding_output"].startswith(".agentpack/reviews/feature-review/")
@@ -279,8 +301,11 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert preflight["paths"]["understanding_canonical_output"] == preflight["paths"]["understanding_output"]
     assert preflight["paths"]["findings_authoring_output"].endswith("/findings.json")
     assert preflight["paths"]["findings_canonical_output"] == preflight["paths"]["findings_output"]
+    assert preflight["paths"]["critique_authoring_output"].endswith("/critique.json")
+    assert preflight["paths"]["critique_canonical_output"] == preflight["paths"]["critique_output"]
     assert preflight["paths"]["understanding_template"].startswith(".agentpack/reviews/feature-review/")
     assert preflight["paths"]["findings_template"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["critique_template"].startswith(".agentpack/reviews/feature-review/")
 
     runbook = runbook_path.read_text(encoding="utf-8")
     assert "reviewer is worried about prompt latency" in runbook
@@ -289,18 +314,20 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert preflight["paths"]["findings_output"] in runbook
     assert preflight["paths"]["understanding_template"] in runbook
     assert preflight["paths"]["findings_template"] in runbook
+    assert preflight["paths"]["critique_output"] in runbook
+    assert preflight["paths"]["approved_findings_output"] in runbook
     assert "## Hard Gates" in runbook
     assert "Review scaffold:" in runbook
     assert "Citation source:" in runbook
     assert "AgentPack Context Preflight" in runbook
     assert "agentpack_pack_context" in runbook
     assert "Do not perform the review inline" in runbook
-    assert "If you cannot write the Stage 1 output file" in runbook
-    assert "run `agentpack review --check`; do not start Stage 2" in runbook
+    assert "If you cannot write the Anchor output file" in runbook
+    assert "do not start Judge until it validates Anchor" in runbook
     assert "run `agentpack review --check --post-inline-comments` for PR-bound runs" in runbook
-    assert "Do not produce a final summary unless Stage 2 validates" in runbook
-    assert "Stage 1 JSON authoring output" in runbook
-    assert "Stage 1 canonical TOON handoff" in runbook
+    assert "Do not produce a final summary unless Critic validates" in runbook
+    assert "Anchor JSON authoring output" in runbook
+    assert "Anchor canonical TOON handoff" in runbook
 
     understanding_prompt = understanding_prompt_path.read_text(encoding="utf-8")
     template = _load_review_template("stage1-understanding.md")
@@ -334,6 +361,16 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert '"findings"' in judge_prompt
     assert "@root review_findings" in judge_prompt
 
+    critic_prompt = critic_prompt_path.read_text(encoding="utf-8")
+    template = _load_review_template("stage3-critic.md")
+    assert critic_prompt.startswith(template)
+    assert f"Copy-fill TOON template: {preflight['paths']['critique_template']}" in critic_prompt
+    assert f"Canonical TOON input path: {preflight['paths']['understanding_output']}" in critic_prompt
+    assert f"Canonical TOON input path: {preflight['paths']['findings_output']}" in critic_prompt
+    assert f"JSON authoring path: {preflight['paths']['critique_authoring_output']}" in critic_prompt
+    assert '"decisions"' in critic_prompt
+    assert '"head_sha"' in critic_prompt
+
 
 def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
@@ -347,9 +384,9 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
 
     missing = runner.invoke(app, ["review", "--check"])
     assert missing.exit_code == 1
-    assert "Stage 1 artifact missing" in missing.output
-    assert "What failed: Stage 1 understanding artifact is missing" in missing.output
-    assert "Safe to continue: no; create the Stage 1 artifact first" in missing.output
+    assert "Anchor artifact missing" in missing.output
+    assert "What failed: Anchor understanding artifact is missing" in missing.output
+    assert "Safe to continue: no; create the Anchor artifact first" in missing.output
 
     understanding = repo / preflight["paths"]["understanding_output"]
     understanding.parent.mkdir(parents=True, exist_ok=True)
@@ -367,9 +404,9 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
 
     ready = runner.invoke(app, ["review", "--check"])
     assert ready.exit_code == 0, ready.output
-    assert "Stage 1 valid" in ready.output
+    assert "Anchor valid" in ready.output
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "awaiting_findings"
+    assert state["status"] == "awaiting_judge"
 
     findings = repo / preflight["paths"]["findings_output"]
     findings.write_text(
@@ -382,11 +419,25 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
+    judge_ready = runner.invoke(app, ["review", "--check"])
+    assert judge_ready.exit_code == 0, judge_ready.output
+    assert "Judge valid" in judge_ready.output
+    state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "awaiting_critic"
+
+    actor_blocked = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+    assert actor_blocked.exit_code == 1
+    assert "Actor blocked" in actor_blocked.output
+    assert not (repo / preflight["paths"]["approved_findings_output"]).exists()
+
+    _write_critique(repo, preflight, [])
     complete = runner.invoke(app, ["review", "--check"])
     assert complete.exit_code == 0, complete.output
-    assert "Stage 2 valid" in complete.output
+    assert "Critic valid" in complete.output
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "complete"
+    assert state["status"] == "ready_to_publish"
+    approved = repo / preflight["paths"]["approved_findings_output"]
+    assert approved.exists()
 
 
 def test_review_check_blocks_stale_active_preflight(tmp_path, monkeypatch) -> None:
@@ -411,6 +462,52 @@ def test_review_check_blocks_stale_active_preflight(tmp_path, monkeypatch) -> No
     assert "Active review preflight is stale" in result.output
     assert "prepared for branch old-branch" in result.output
     assert "validating artifacts from another branch or PR" in result.output
+
+
+def test_critic_requires_one_known_decision_per_judge_finding_and_promotes_only_approved(tmp_path) -> None:
+    preflight = {
+        "git": {"head_sha": "abc123"},
+        "paths": {"approved_findings_output": ".agentpack/reviews/run/approved-findings.toon"},
+    }
+    findings = {
+        "findings": [
+            {"id": "f1", "severity": "blocker", "location": "src/foo.py:1", "unit": "cu1", "claim": "one", "evidence": "src/foo.py:1",},
+            {"id": "f2", "severity": "should-fix", "location": "src/foo.py:2", "unit": "cu1", "claim": "two", "evidence": "src/foo.py:2",},
+        ],
+        "coverage": "complete",
+    }
+    base = {"head_sha": "abc123", "decisions": [{"finding_id": "f1", "verdict": "accept", "rationale": "valid"}]}
+
+    with pytest.raises(ValueError, match="head_sha must exactly match"):
+        _validate_critique_against_findings({"head_sha": "old-head", "decisions": []}, findings, preflight)
+    with pytest.raises(ValueError, match="missing Judge finding IDs: f2"):
+        _validate_critique_against_findings(base, findings, preflight)
+    with pytest.raises(ValueError, match="unknown Judge finding IDs: extra"):
+        _validate_critique_against_findings(
+            {"head_sha": "abc123", "decisions": [*base["decisions"], {"finding_id": "extra", "verdict": "reject", "rationale": "unknown"}]},
+            findings,
+            preflight,
+        )
+    with pytest.raises(ValueError, match="exactly one decision"):
+        _validate_critique_against_findings(
+            {"head_sha": "abc123", "decisions": [*base["decisions"], {"finding_id": "f1", "verdict": "reject", "rationale": "duplicate"}, {"finding_id": "f2", "verdict": "reject", "rationale": "valid"}]},
+            findings,
+            preflight,
+        )
+
+    critique = {
+        "head_sha": "abc123",
+        "decisions": [
+            {"finding_id": "f1", "verdict": "downgrade", "rationale": "Impact is limited.", "severity": "nit"},
+            {"finding_id": "f2", "verdict": "reject", "rationale": "The evidence does not establish a defect."},
+        ],
+    }
+    _validate_critique_against_findings(critique, findings, preflight)
+    approved = _write_approved_findings(tmp_path, preflight, findings, critique)
+
+    assert approved["findings"] == [{**findings["findings"][0], "severity": "nit"}]
+    assert (tmp_path / preflight["paths"]["approved_findings_output"]).exists()
+    assert (tmp_path / ".agentpack" / "review-approved-findings.toon").exists()
 
 
 def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatch) -> None:
@@ -440,7 +537,7 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
     ready = runner.invoke(app, ["review", "--check"])
 
     assert ready.exit_code == 0, ready.output
-    assert "Stage 1 valid" in ready.output
+    assert "Anchor valid" in ready.output
     assert understanding.read_text(encoding="utf-8").lstrip().startswith("{")
     assert understanding_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_understanding\n")
 
@@ -458,12 +555,16 @@ def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatc
         encoding="utf-8",
     )
 
-    complete = runner.invoke(app, ["review", "--check"])
+    judge_ready = runner.invoke(app, ["review", "--check"])
 
-    assert complete.exit_code == 0, complete.output
-    assert "Stage 2 valid" in complete.output
+    assert judge_ready.exit_code == 0, judge_ready.output
+    assert "Judge valid" in judge_ready.output
     assert findings.read_text(encoding="utf-8").startswith("```json\n")
     assert findings_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
+    _write_critique(repo, preflight, [])
+    complete = runner.invoke(app, ["review", "--check"])
+    assert complete.exit_code == 0, complete.output
+    assert "Critic valid" in complete.output
 
 
 def test_review_validation_uses_pr_head_citation_source_when_worktree_drifts(tmp_path) -> None:
@@ -710,6 +811,15 @@ def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
+    _write_critique(
+        repo,
+        preflight,
+        [
+            {"finding_id": "f1", "verdict": "accept", "rationale": "The evidence is direct and the finding is actionable."},
+            {"finding_id": "f2", "verdict": "accept", "rationale": "This candidate remains valid and covers the non-inline body path."},
+        ],
+    )
+
     posted = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
 
     assert posted.exit_code == 0, posted.output
@@ -831,6 +941,8 @@ def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, mo
         encoding="utf-8",
     )
 
+    _write_critique(repo, preflight, [{"finding_id": "f1", "verdict": "accept", "rationale": "The evidence is direct and the finding is actionable."}])
+
     dry_run = runner.invoke(app, ["review", "--check", "--dry-run-check"])
 
     assert dry_run.exit_code == 0, dry_run.output
@@ -912,6 +1024,8 @@ def test_review_check_dry_run_keeps_non_commentable_finding_in_body(tmp_path, mo
         "  status: complete\n",
         encoding="utf-8",
     )
+
+    _write_critique(repo, preflight, [{"finding_id": "f1", "verdict": "accept", "rationale": "The evidence is direct and the finding is actionable."}])
 
     dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
 
