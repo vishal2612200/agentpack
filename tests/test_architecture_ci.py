@@ -47,8 +47,10 @@ def test_ci_init_architecture_writes_hardened_pull_request_workflow(tmp_path, mo
     assert payload["written"] is True
     assert "pull_request:" in content
     assert "pull_request_target" not in content
+    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in content
+    assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in content
     assert 'python -m pip install ".[tree-sitter]"' in content
     assert "architecture-diff.json" in content
-    assert "actions/upload-artifact@v4" in content
-    assert "actions/github-script@v7" in content
+    assert "actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a" in content
+    assert "actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b" in content
     assert "persist-credentials: false" in content

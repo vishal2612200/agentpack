@@ -119,6 +119,108 @@ def test_best_effort_relationships_can_warn_but_never_block(tmp_path) -> None:
     assert result.violations[0].enforcement == "warn"
 
 
+def test_require_test_accepts_related_test_for_changed_symbols(tmp_path) -> None:
+    _init_repo(tmp_path)
+    _write(
+        tmp_path / ".agentpack" / "config.toml",
+        "\n".join(
+            [
+                "[[architecture.invariant]]",
+                'id = "source-changes-have-tests"',
+                'kind = "require_test"',
+                'enforcement = "block"',
+                'source = { path_globs = ["src/**"] }',
+            ]
+        )
+        + "\n",
+    )
+    _write(tmp_path / "src" / "service.py", "def value():\n    return 1\n")
+    _write(tmp_path / "tests" / "test_service.py", "from src.service import value\n\n\ndef test_value():\n    assert value() == 1\n")
+    base_sha = _commit_all(tmp_path, "base")
+
+    _write(tmp_path / "src" / "service.py", "def value():\n    return 2\n")
+    head_sha = _commit_all(tmp_path, "change source")
+
+    result = run_check(tmp_path, base_sha, head_sha, load_config(tmp_path))
+
+    assert not result.violations
+
+
+def test_require_consumer_update_ignores_imports_below_minimum_confidence(tmp_path) -> None:
+    _init_repo(tmp_path)
+    _write(
+        tmp_path / ".agentpack" / "config.toml",
+        "\n".join(
+            [
+                "[[architecture.invariant]]",
+                'id = "consumers-update-with-core"',
+                'kind = "require_consumer_update"',
+                'enforcement = "block"',
+                'min_confidence = "structured"',
+                'source = { path_globs = ["src/core.js"] }',
+            ]
+        )
+        + "\n",
+    )
+    _write(tmp_path / "src" / "core.js", "export const value = 1;\n")
+    _write(tmp_path / "src" / "client.js", "import { value } from './core';\nconsole.log(value());\n")
+    base_sha = _commit_all(tmp_path, "base")
+
+    _write(tmp_path / "src" / "core.js", "export const value = 2;\n")
+    head_sha = _commit_all(tmp_path, "change core")
+
+    snapshot = build_snapshot_for_ref(tmp_path, head_sha)
+    result = run_check(tmp_path, base_sha, head_sha, load_config(tmp_path))
+
+    assert any(edge.edge_type == "imports" for edge in snapshot.edges)
+    assert not result.violations
+
+
+def test_require_consumer_update_requires_an_unchanged_eligible_consumer(tmp_path) -> None:
+    _init_repo(tmp_path)
+    _write(
+        tmp_path / ".agentpack" / "config.toml",
+        "\n".join(
+            [
+                "[[architecture.invariant]]",
+                'id = "consumers-update-with-core"',
+                'kind = "require_consumer_update"',
+                'enforcement = "block"',
+                'source = { path_globs = ["src/core.py"] }',
+            ]
+        )
+        + "\n",
+    )
+    _write(tmp_path / "src" / "__init__.py", "")
+    _write(tmp_path / "src" / "core.py", "def value():\n    return 1\n")
+    _write(tmp_path / "src" / "client.py", "from .core import value\n\n\ndef use_value():\n    return value()\n")
+    base_sha = _commit_all(tmp_path, "base")
+
+    _write(tmp_path / "src" / "core.py", "def value():\n    return 2\n")
+    head_sha = _commit_all(tmp_path, "change core")
+
+    result = run_check(tmp_path, base_sha, head_sha, load_config(tmp_path))
+
+    assert any(violation.blocking for violation in result.violations)
+
+
+def test_snapshot_ignores_failing_checkout_hook(tmp_path) -> None:
+    _init_repo(tmp_path)
+    _write(tmp_path / "src" / "service.py", "def value():\n    return 1\n")
+    base_sha = _commit_all(tmp_path, "base")
+    hooks_dir = tmp_path / ".githooks"
+    hook = hooks_dir / "post-checkout"
+    _write(hook, "#!/bin/sh\nexit 1\n")
+    hook.chmod(0o755)
+    subprocess.run(["git", "config", "core.hooksPath", str(hooks_dir)], cwd=tmp_path, check=True, capture_output=True, text=True)
+    _write(tmp_path / "src" / "service.py", "def value():\n    return 2\n")
+    _commit_all(tmp_path, "head")
+
+    snapshot = build_snapshot_for_ref(tmp_path, base_sha)
+
+    assert snapshot.commit_sha == base_sha
+
+
 def test_capability_registry_reports_all_planned_language_tiers() -> None:
     capabilities = capability_registry()
 

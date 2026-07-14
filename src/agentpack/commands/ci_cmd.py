@@ -113,11 +113,11 @@ jobs:
       checks: write
       pull-requests: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
           fetch-depth: 0
           persist-credentials: false
-      - uses: actions/setup-python@v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.11"
       - run: python -m pip install ".[tree-sitter]"
@@ -133,14 +133,14 @@ jobs:
           python -m agentpack.cli architecture artifacts --diff .agentpack/raw/architecture-diff.json --check .agentpack/raw/architecture-check.json --output-dir .agentpack/artifacts
           echo "status=$status" >> "$GITHUB_OUTPUT"
           exit 0
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: architecture-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: .agentpack/artifacts/
           if-no-files-found: error
       - name: Publish check run and sticky summary
         if: github.event.pull_request.head.repo.full_name == github.repository
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b
         with:
           script: |
             const fs = require('fs');

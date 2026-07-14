@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import shutil
 import subprocess
 import tempfile
 from contextlib import contextmanager
@@ -165,9 +166,11 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
     diff = build_diff(root, base_ref, head_ref)
     head = build_snapshot_for_ref(root, head_ref)
     head_entities = {entity.entity_key: entity for entity in head.entities}
+    file_owner_keys = _file_owner_keys(head, head_entities)
     changed_entity_keys = {
         entity.entity_key for entity in diff.added_entities
     } | {entity.entity_key for entity in diff.removed_entities} | {change.entity_key for change in diff.changed_entities}
+    changed_file_keys = {file_owner_keys.get(entity_key, entity_key) for entity_key in changed_entity_keys}
     violations: list[ArchitectureViolation] = []
     warnings: list[str] = []
 
@@ -206,7 +209,7 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                 entity = head_entities.get(entity_key)
                 if entity is None or entity.entity_type == "test" or not _matches_selector(entity, invariant.source):
                     continue
-                if entity.entity_key in tested_targets:
+                if file_owner_keys.get(entity.entity_key, entity.entity_key) in tested_targets:
                     continue
                 violations.append(
                     _violation(
@@ -223,17 +226,22 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                 entity = head_entities.get(entity_key)
                 if entity is None or not _matches_selector(entity, invariant.source):
                     continue
-                consumers = {
-                    edge.source_entity_key
+                file_key = file_owner_keys.get(entity.entity_key, entity.entity_key)
+                consumer_edges = [
+                    edge
                     for edge in head.edges
-                    if edge.edge_type == "imports" and edge.target_entity_key == entity.entity_key
-                }
-                if any(consumer in changed_entity_keys for consumer in consumers):
+                    if edge.edge_type == "imports"
+                    and edge.target_entity_key == file_key
+                    and _CONFIDENCE_ORDER[edge.confidence_tier] >= _CONFIDENCE_ORDER[invariant.min_confidence]
+                ]
+                if not consumer_edges:
+                    continue
+                consumers = {edge.source_entity_key for edge in consumer_edges}
+                if any(consumer in changed_file_keys for consumer in consumers):
                     continue
                 consumer_evidence = [
                     evidence
-                    for edge in head.edges
-                    if edge.edge_type == "imports" and edge.target_entity_key == entity.entity_key
+                    for edge in consumer_edges
                     for evidence in edge.evidence
                 ]
                 violations.append(
@@ -386,7 +394,7 @@ def _build_snapshot_from_root(root: Path, ref: str, commit_sha: str) -> Architec
             test_entity = file_entities.get(test_path)
             if test_entity is None:
                 continue
-            edges.append(_make_edge(source_entity, test_entity, "tested_by", "file_level", file_info.path, note="path-based related test"))
+            edges.append(_make_edge(source_entity, test_entity, "tested_by", "best_effort", file_info.path, note="path-based related test"))
 
     entities = sorted(
         [*domain_entities.values(), *file_entities.values(), *symbol_entities],
@@ -419,6 +427,26 @@ def _matches_selector(entity: ArchitectureEntity, selector) -> bool:
     if substrings and not any(part in entity.qualified_name for part in substrings):
         return False
     return True
+
+
+def _file_owner_keys(
+    snapshot: ArchitectureSnapshot,
+    entities: dict[str, ArchitectureEntity],
+) -> dict[str, str]:
+    """Map symbols to their file entity so file-level relationships cover source changes."""
+    file_entity_types = {"module", "config", "test"}
+    owners = {
+        entity.entity_key: entity.entity_key
+        for entity in snapshot.entities
+        if entity.entity_type in file_entity_types
+    }
+    for edge in snapshot.edges:
+        if edge.edge_type != "contains":
+            continue
+        source = entities.get(edge.source_entity_key)
+        if source is not None and source.entity_type in file_entity_types:
+            owners.setdefault(edge.target_entity_key, source.entity_key)
+    return owners
 
 
 def _violation(
@@ -624,11 +652,20 @@ def _resolve_ref(root: Path, ref: str) -> str:
 @contextmanager
 def _detached_worktree(root: Path, ref: str) -> Iterator[Path]:
     temp_dir = Path(tempfile.mkdtemp(prefix="agentpack-architecture-"))
+    hooks_dir = Path(tempfile.mkdtemp(prefix="agentpack-architecture-hooks-"))
     try:
-        subprocess.run(["git", "worktree", "add", "--detach", str(temp_dir), ref], cwd=root, capture_output=True, text=True, check=True)
+        # Snapshot extraction must not execute arbitrary repository checkout hooks.
+        subprocess.run(
+            ["git", "-c", f"core.hooksPath={hooks_dir}", "worktree", "add", "--detach", str(temp_dir), ref],
+            cwd=root,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
         yield temp_dir
     finally:
         subprocess.run(["git", "worktree", "remove", "--force", str(temp_dir)], cwd=root, capture_output=True, text=True, check=False)
+        shutil.rmtree(hooks_dir, ignore_errors=True)
 
 
 def _detect_aliases(
