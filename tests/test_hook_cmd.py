@@ -294,14 +294,14 @@ class TestRunUserPromptSubmit:
 
     def test_review_stage_gate_note_blocks_incomplete_active_review(self, repo: Path) -> None:
         (repo / ".agentpack" / "review-state.json").write_text(
-            json.dumps({"status": "awaiting_findings"}),
+            json.dumps({"status": "awaiting_judge"}),
             encoding="utf-8",
         )
 
         note = _review_stage_gate_note(repo, review_intent=True)
 
         assert "REVIEW STAGE BLOCK" in note
-        assert "Stage 2 findings artifact missing" in note
+        assert "Judge findings artifact missing" in note
         assert "agentpack review --check" in note
 
     def test_review_stage_gate_ignores_stale_branch_preflight(self, repo: Path) -> None:

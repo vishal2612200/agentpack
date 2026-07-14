@@ -355,12 +355,14 @@ def _review_stage_gate_note(root: Path, *, review_intent: bool) -> str:
     except Exception:
         return "REVIEW STAGE BLOCK: active review state is unreadable. Run `agentpack review --check`.\n"
     status = str(state.get("status") or "")
-    if status == "complete":
+    if status in {"ready_to_publish", "complete"}:
         return ""
-    if status == "awaiting_understanding":
-        return "REVIEW STAGE BLOCK: Stage 1 understanding artifact missing. Write it, then run `agentpack review --check`.\n"
-    if status == "awaiting_findings":
-        return "REVIEW STAGE BLOCK: Stage 2 findings artifact missing. Write it, then run `agentpack review --check` before final summary.\n"
+    if status in {"awaiting_anchor", "awaiting_understanding"}:
+        return "REVIEW STAGE BLOCK: Anchor understanding artifact missing. Write it, then run `agentpack review --check`.\n"
+    if status in {"awaiting_judge", "awaiting_findings"}:
+        return "REVIEW STAGE BLOCK: Judge findings artifact missing. Write it, then run `agentpack review --check` before final summary.\n"
+    if status == "awaiting_critic":
+        return "REVIEW STAGE BLOCK: Critic decisions artifact missing. Write one decision per Judge finding, then run `agentpack review --check` before final summary.\n"
     if status == "blocked_invalid_artifact":
         return "REVIEW STAGE BLOCK: active review artifact invalid. Run `agentpack review --check` for exact error.\n"
     return f"REVIEW STAGE BLOCK: active review status `{status}`. Run `agentpack review --check`.\n"

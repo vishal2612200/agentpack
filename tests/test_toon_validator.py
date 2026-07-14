@@ -146,6 +146,46 @@ def test_review_understanding_schema_rejects_bad_nested_shapes() -> None:
     assert "open_questions[1].status must be one of: unresolved" in result.error
 
 
+def test_review_critique_schema_requires_rationale_and_downgrade_severity() -> None:
+    invalid = validate_toon_text(
+        json.dumps(
+            {
+                "head_sha": "abc123",
+                "decisions": [
+                    {"finding_id": "f1", "verdict": "accept", "rationale": ""},
+                    {"finding_id": "f2", "verdict": "downgrade", "rationale": "Too severe."},
+                ],
+            }
+        ),
+        schema="review-critique",
+        allow_json=True,
+    )
+
+    assert invalid.ok is False
+    assert "decisions[1].rationale must not be empty" in invalid.error
+    assert "decisions[2] missing required key: severity" in invalid.error
+
+    valid = canonicalize_to_toon_text(
+        json.dumps(
+            {
+                "head_sha": "abc123",
+                "decisions": [
+                    {"finding_id": "f1", "verdict": "accept", "rationale": "Evidence is direct."},
+                    {
+                        "finding_id": "f2",
+                        "verdict": "downgrade",
+                        "rationale": "Impact is limited.",
+                        "severity": "nit",
+                    },
+                ],
+            }
+        ),
+        schema="review-critique",
+    )
+
+    assert valid.text.startswith("@format toon\n@root review_critique\n")
+
+
 def test_toon_validate_cli_emits_json(tmp_path) -> None:
     path = tmp_path / "sample.toon"
     path.write_text("@format toon\nname: demo\n", encoding="utf-8")
