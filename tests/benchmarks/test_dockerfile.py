@@ -9,7 +9,6 @@ identical per-variant Dockerfiles (alpine/bookworm/slim/trixie/windows) that
 differ only in a version string, so correctly ranking one variant highly
 while still missing its siblings is expected, not a regression signal.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

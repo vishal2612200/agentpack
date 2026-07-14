@@ -14,10 +14,14 @@ from __future__ import annotations
 
 import os
 import sys
-import tomllib
 from pathlib import Path
 
 import pytest
+
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - Python 3.10 fallback
+    import tomli as tomllib
 
 
 def pytest_addoption(parser):

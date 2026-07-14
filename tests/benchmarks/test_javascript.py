@@ -4,7 +4,6 @@ Currently routes through the same regex extractor as TypeScript. If TS gets
 swapped to tree-sitter, JS will follow (same code branch). Baseline recall
 of ~55% is the number to lift.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

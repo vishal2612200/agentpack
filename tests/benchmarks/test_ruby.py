@@ -7,7 +7,6 @@ single-file low-context task subject is a hard case for keyword ranking
 regardless of language. See the note in thresholds.toml for the miss
 analysis that confirmed this isn't a config bug.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

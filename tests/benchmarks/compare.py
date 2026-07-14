@@ -49,9 +49,9 @@ def main(argv: list[str]) -> int:
         print(f"## {lang}\n")
 
         if b is None:
-            print(f"_new language, not present in before snapshot_\n")
+            print("_new language, not present in before snapshot_\n")
         if a is None:
-            print(f"_missing from after snapshot — check the run_\n")
+            print("_missing from after snapshot — check the run_\n")
             continue
         if not a.get("ok", True):
             print(f"_after run failed: {a.get('error')}_\n")
@@ -92,7 +92,7 @@ def main(argv: list[str]) -> int:
         )
         regressed = [
             lang for lang, d in zip(
-                (l for l in langs if before.get(l) and after.get(l, {}).get("ok", True)),
+                (language for language in langs if before.get(language) and after.get(language, {}).get("ok", True)),
                 recall_deltas,
             )
             if d < -0.01

@@ -5,7 +5,6 @@ strings (no classpath/package resolution yet — that's Phase 2 of the
 language-coverage plan). `reason_graph_precision` here reflects the
 existing java_imports.py regex extractor, not tree-sitter.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

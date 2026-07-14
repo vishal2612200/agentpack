@@ -4,7 +4,6 @@ Go routes through the regex extractor; imports are captured as raw strings.
 Baseline established from the existing suite. Regression guard for the same
 reason as Python — proves changes to shared code don't drift Go quality.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

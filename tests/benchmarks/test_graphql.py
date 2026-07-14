@@ -12,7 +12,6 @@ qualified method). This is not a bug in the new query -- see
 benchmarks/results/infra-schema-baseline.md and the threshold comment in
 thresholds.toml for the isolation that confirmed it.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 

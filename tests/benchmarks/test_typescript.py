@@ -5,7 +5,6 @@ tree-sitter (Tier 5 in the roadmap), the expected lift lands here first.
 Bumps to `min_recall` and `min_reason_content_precision` are the two rows
 to watch when tree-sitter for TS ships.
 """
-import pytest
 
 from tests.benchmarks._harness import run_public_repo_benchmark
 
