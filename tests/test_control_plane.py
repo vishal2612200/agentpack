@@ -21,6 +21,17 @@ def test_control_plane_recommends_start_for_missing_thread_task(tmp_path: Path) 
     assert "--thread codex-local" in actions[0].command
 
 
+def test_control_plane_does_not_duplicate_refresh_thread_flag(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("[context]\n", encoding="utf-8")
+
+    snapshot = build_control_plane_snapshot(tmp_path, thread_id="codex-local")
+    stale = next(item for item in plan_next_actions(snapshot) if item.kind == "stale_context")
+
+    assert stale.command.count("--thread") == 1
+    assert stale.command.endswith("--thread codex-local")
+
+
 def test_control_plane_uses_token_contract_without_repo_scan(tmp_path: Path) -> None:
     (tmp_path / ".agentpack").mkdir()
     (tmp_path / ".agentpack" / "config.toml").write_text("[context]\n", encoding="utf-8")

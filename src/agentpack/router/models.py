@@ -25,6 +25,7 @@ class SkillArtifact(BaseModel):
     priority: int = 50
     confidence_threshold: float = 0.45
     raw_text: str = ""
+    aliases: list[str] = Field(default_factory=list)
 
 
 class RuleArtifact(BaseModel):

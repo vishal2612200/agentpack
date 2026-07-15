@@ -195,7 +195,7 @@ pre {
   position: relative;
   z-index: 40;
   display: grid;
-  grid-template-columns: minmax(240px, 0.9fr) minmax(280px, 1.35fr) max-content;
+  grid-template-columns: minmax(0, 1fr) max-content;
   align-items: center;
   gap: 16px;
   padding: 11px 20px;
@@ -391,6 +391,40 @@ pre {
 .search-box input::placeholder {
   color: color-mix(in srgb, var(--text-muted) 86%, var(--text));
   opacity: 1;
+}
+
+.map-search {
+  margin: 12px 0 0;
+}
+
+.evidence-receipt {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px 16px;
+  margin: 0;
+}
+
+.evidence-receipt div {
+  min-width: 0;
+}
+
+.evidence-receipt .full {
+  grid-column: 1 / -1;
+}
+
+.evidence-receipt dt {
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 760;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.evidence-receipt dd {
+  display: grid;
+  gap: 4px;
+  margin: 2px 0 0;
+  overflow-wrap: anywhere;
 }
 
 .main-panel {
@@ -1558,7 +1592,7 @@ code {
 }
 
 .district-label {
-  max-width: 220px;
+  max-width: min(180px, 28vw);
   border: 1px solid rgba(128, 169, 255, 0.28);
   border-radius: 999px;
   background: rgba(9, 17, 31, 0.78);
@@ -1567,9 +1601,9 @@ code {
   font-size: 11px;
   font-weight: 720;
   line-height: 1.15;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
   pointer-events: none;
   box-shadow: 0 6px 16px rgba(0, 0, 0, 0.22);
 }
@@ -2121,6 +2155,15 @@ tbody tr {
   cursor: pointer;
 }
 
+.map-table tbody tr {
+  cursor: pointer;
+}
+
+.map-table tbody tr:focus-visible {
+  outline: 3px solid var(--primary);
+  outline-offset: -3px;
+}
+
 tbody tr:hover {
   background: var(--surface-soft);
 }
@@ -2491,8 +2534,8 @@ pre {
 
 @media (max-width: 1080px) {
   .app-shell {
-    grid-template-columns: 76px minmax(0, 1fr);
-    grid-template-rows: minmax(0, 1fr) minmax(160px, 40dvh);
+    grid-template-columns: 176px minmax(0, 1fr);
+    grid-template-rows: minmax(0, 1fr) minmax(180px, 38dvh);
   }
 
   .sidebar {
@@ -2501,9 +2544,8 @@ pre {
     padding: 12px 10px;
   }
 
-  .brand-block div:not(.brand-mark),
-  .nav-item span {
-    display: none;
+  .workspace {
+    height: 100%;
   }
 
   .inspector {
@@ -2511,12 +2553,19 @@ pre {
     height: auto;
     border-left: 0;
     border-top: 1px solid var(--border);
-    max-height: none;
+    max-height: 38dvh;
   }
 
   .terminal-panel {
-    left: 76px;
+    left: 176px;
     right: 0;
+  }
+
+  .city-canvas-wrap,
+  .city-loading,
+  .map-table {
+    height: min(620px, calc(100dvh - 260px));
+    min-height: 420px;
   }
 }
 
@@ -2535,6 +2584,16 @@ pre {
     overflow: visible;
   }
 
+  .hero-row,
+  .hero-content,
+  .hero-actions,
+  .topbar,
+  .topbar-status,
+  .nav-list,
+  .nav-item {
+    min-width: 0;
+  }
+
   .sidebar {
     height: auto;
     overflow: visible;
@@ -2547,11 +2606,16 @@ pre {
   }
 
   .nav-list {
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
   .nav-item {
-    justify-content: center;
+    justify-content: flex-start;
+  }
+
+  .nav-item span {
+    min-width: 0;
+    overflow-wrap: anywhere;
   }
 
   .workspace {
@@ -2590,7 +2654,20 @@ pre {
   .project-meta strong,
   .project-meta span {
     overflow-wrap: anywhere;
-    word-break: normal;
+    word-break: break-word;
+  }
+
+  .hero-content h1 {
+    max-width: 100%;
+  }
+
+  .hero-actions {
+    width: 100%;
+  }
+
+  .topbar-status {
+    justify-content: flex-start;
+    flex-wrap: wrap;
   }
 
   .hero-row .muted {
@@ -2641,8 +2718,16 @@ pre {
 
   .city-canvas-wrap,
   .map-table {
-    height: 520px;
-    min-height: 420px;
+    height: min(480px, 58dvh);
+    min-height: 320px;
+  }
+
+  .evidence-receipt {
+    grid-template-columns: 1fr;
+  }
+
+  .evidence-receipt .full {
+    grid-column: auto;
   }
 
   .project-menu {

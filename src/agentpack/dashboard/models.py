@@ -52,6 +52,7 @@ class ContextHealth(BaseModel):
     saving_pct: float = 0.0
     selected_files_count: int = 0
     stale_reason: str = ""
+    source_command: str = ""
 
 
 class SelectedFileRow(BaseModel):

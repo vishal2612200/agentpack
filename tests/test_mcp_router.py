@@ -45,10 +45,14 @@ def test_mcp_route_task_returns_json_and_does_not_write_context(tmp_path, monkey
     assert data["current_agent"] == "claude"
     assert data["reviewer_agent"] == "codex"
     assert data["mode_reason"]
-    assert data["selected_skills"][0]["skill"]["name"] == "django-pytest"
-    assert data["selected_skills"][0]["skill"]["raw_text"] == ""
-    assert data["applied_rules"][0]["rule"]["path"] == "AGENTS.md"
-    assert "agent_prompt" in data
+    assert data["selected_skills"][0]["name"] == "django-pytest"
+    assert data["selected_skills"][0]["path"].endswith("SKILL.md")
+    assert data["applied_rules"][0]["path"] == "AGENTS.md"
+    assert "agent_prompt" not in data
+    assert len(json.dumps(data)) < 8_000
+
+    full = json.loads(_route_task_impl(tmp_path, "fix flaky payment webhook test", "json", "full"))
+    assert "agent_prompt" in full
     assert not (tmp_path / ".agentpack" / "task.md").exists()
     assert not (tmp_path / ".agentpack" / "context.md").exists()
 

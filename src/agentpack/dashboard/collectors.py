@@ -381,6 +381,7 @@ def _context_health(meta: dict[str, Any] | None, freshness: Any) -> ContextHealt
     if saving_pct == 0.0 and raw_tokens > 0 and packed_tokens > 0:
         saving_pct = round((1 - packed_tokens / raw_tokens) * 100, 1)
 
+    freshness_data = meta.get("freshness") if isinstance(meta.get("freshness"), dict) else {}
     return ContextHealth(
         status=status,
         generated_at=str(meta.get("generated_at") or ""),
@@ -390,6 +391,11 @@ def _context_health(meta: dict[str, Any] | None, freshness: Any) -> ContextHealt
         saving_pct=saving_pct,
         selected_files_count=len(selected) if isinstance(selected, list) else 0,
         stale_reason=stale_reason,
+        source_command=str(
+            meta.get("source_command")
+            or freshness_data.get("source_command")
+            or ""
+        ),
     )
 
 

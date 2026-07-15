@@ -133,6 +133,7 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch
                 "token_estimate": 1450,
                 "raw_tokens": 40000,
                 "saving_pct": 96.3,
+                "source_command": "agentpack pack --task auto",
                 "selected_files_meta": [
                     {
                         "path": "src/auth/token.py",
@@ -171,6 +172,7 @@ def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch
     assert snapshot.context.status == "fresh"
     assert snapshot.context.packed_tokens == 1450
     assert snapshot.context.raw_tokens == 40000
+    assert snapshot.context.source_command == "agentpack pack --task auto"
     assert snapshot.selected_files[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].path == "src/auth/token.py"
     assert snapshot.task_map[0].risk_level == "high"
