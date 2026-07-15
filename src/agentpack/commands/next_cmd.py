@@ -11,7 +11,7 @@ from agentpack.commands.guard import _context_is_fresh as _guard_context_is_fres
 from agentpack.control_plane import build_control_plane_snapshot, plan_next_actions
 from agentpack.control_plane.planner import fixed_recommendation, recommendation_dicts
 from agentpack.control_plane.renderer import print_recommendations, token_hint
-from agentpack.core.command_surface import refresh_commands
+from agentpack.core.command_surface import refresh_command
 from agentpack.core.config import load_config
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.loop_protocol import load_loop_state
@@ -40,7 +40,7 @@ def register(app: typer.Typer) -> None:
             stats = run_refresh(root, "auto", "balanced", 0, thread_id=thread_id)
             if stats:
                 recommendations = recommendation_dicts([fixed_recommendation("refreshed stale context")])
-                fixes.append({"kind": "stale_context", "command": refresh_commands("auto").repair, "returncode": 0})
+                fixes.append({"kind": "stale_context", "command": refresh_command("auto", thread_id or "global"), "returncode": 0})
         snapshot = build_control_plane_snapshot(root, thread_id=thread_id, check_files=False)
         payload = {
             "recommendations": recommendations,
@@ -167,7 +167,7 @@ def _fix_all_safe(root, recommendations: list[dict[str, str]], thread_id: str | 
         stats = run_refresh(root, "auto", "balanced", 0, thread_id=thread_id)
         fixes.append({
             "kind": "stale_context",
-            "command": refresh_commands("auto").repair,
+            "command": refresh_command("auto", thread_id or "global"),
             "returncode": 0 if stats else 1,
         })
         recommendations = _recommendations(root, thread_id=thread_id)

@@ -113,7 +113,7 @@ def test_route_task_impl_can_emit_toon(tmp_path):
 
     with patch("agentpack.router.service.RouteService") as MockService:
         MockService.return_value.route_task.return_value = mocked
-        result = _route_task_impl(tmp_path, "fix auth", "toon")
+        result = _route_task_impl(tmp_path, "fix auth", "toon", "full")
 
     assert "@format toon" in result
     assert "task: fix auth" in result
@@ -126,7 +126,7 @@ def test_route_task_impl_defaults_to_toon(tmp_path):
 
     with patch("agentpack.router.service.RouteService") as MockService:
         MockService.return_value.route_task.return_value = mocked
-        result = _route_task_impl(tmp_path, "fix auth")
+        result = _route_task_impl(tmp_path, "fix auth", detail="full")
 
     assert result.startswith("@format toon\n@root agentpack_route\n")
     assert "task: fix auth" in result
@@ -138,7 +138,7 @@ def test_route_task_impl_can_emit_json(tmp_path):
 
     with patch("agentpack.router.service.RouteService") as MockService:
         MockService.return_value.route_task.return_value = mocked
-        result = _route_task_impl(tmp_path, "fix auth", "json")
+        result = _route_task_impl(tmp_path, "fix auth", "json", "full")
 
     payload = json.loads(result)
     assert payload["task"] == "fix auth"

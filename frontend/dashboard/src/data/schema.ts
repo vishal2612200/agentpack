@@ -201,6 +201,7 @@ export interface DashboardSnapshot {
     saving_pct?: number;
     selected_files_count?: number;
     stale_reason?: string;
+    source_command?: string;
   };
   selected_files: Array<{
     path: string;

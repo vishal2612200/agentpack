@@ -767,12 +767,61 @@ def _validate_toon_impl(
     return to_llm(root, payload, requested=output_format, root_name="agentpack_toon_validation")
 
 
-def _route_task_impl(root: Path, task: str, output_format: StructuredFormat = "toon") -> str:
-    """Return read-only task route payload; does not write task/context files."""
+def _route_task_impl(
+    root: Path,
+    task: str,
+    output_format: StructuredFormat = "toon",
+    detail: str = "compact",
+) -> str:
+    """Return a compact read-only route payload; full details remain opt-in."""
     from agentpack.router.service import RouteService
 
     result = RouteService().route_task(root, task)
-    return to_llm(root, result.model_dump(mode="json"), requested=output_format, root_name="agentpack_route")
+    if detail == "full":
+        payload = result.model_dump(mode="json")
+    elif detail == "compact":
+        payload = _compact_route_payload(result)
+    else:
+        raise ValueError("detail must be 'compact' or 'full'")
+    return to_llm(root, payload, requested=output_format, root_name="agentpack_route")
+
+
+def _compact_route_payload(result) -> dict:
+    """Keep routing useful to an agent without duplicating the generated prompt."""
+    return {
+        "task": result.task,
+        "recommended_interaction_mode": result.recommended_interaction_mode,
+        "mode_reason": result.mode_reason,
+        "current_agent": result.current_agent,
+        "reviewer_agent": result.reviewer_agent,
+        "task_mode": result.task_mode,
+        "task_mode_confidence": result.task_mode_confidence,
+        "task_mode_signals": result.task_mode_signals,
+        "selected_files": result.selected_files[:12],
+        "selected_skills": [
+            {
+                "name": item.skill.name,
+                "path": item.skill.path,
+                "score": item.score,
+                "confidence": item.confidence,
+                "reasons": item.reasons[:3],
+            }
+            for item in result.selected_skills[:8]
+        ],
+        "baseline_skills": [
+            {"name": item.skill.name, "path": item.skill.path}
+            for item in result.baseline_skills[:8]
+        ],
+        "applied_rules": [
+            {"name": item.rule.name, "path": item.rule.path, "reasons": item.reasons[:3]}
+            for item in result.applied_rules[:8]
+        ],
+        "suggested_commands": [item.model_dump(mode="json") for item in result.suggested_commands[:8]],
+        "evidence_checklist": result.evidence_checklist[:8],
+        "routing_notes": result.routing_notes[:8],
+        "prompt_quality_warnings": result.prompt_quality_warnings[:8],
+        "safety_warnings": result.safety_warnings[:12],
+    }
 
 
 def _get_skills_impl(root: Path, output_format: StructuredFormat = "toon") -> str:
@@ -863,13 +912,14 @@ def serve() -> None:
         )
 
     @mcp.tool()
-    def route_task(task: str, format: str = "toon") -> str:
+    def route_task(task: str, format: str = "toon", detail: str = "compact") -> str:
         """Route a task to files, rules, skills, command suggestions, and safety warnings.
 
-        Read-only: does not write task.md or context files. Use pack_context when full
-        context content is needed.
+        Read-only: does not write task.md or context files. The default compact response
+        contains top files, reasons, actions, and warnings. Use detail='full' or
+        explain_route when full routing evidence is needed.
         """
-        return _route_task_impl(_repo_root(), task, format)
+        return _route_task_impl(_repo_root(), task, format, detail)
 
     @mcp.tool()
     def get_skills(format: str = "toon") -> str:

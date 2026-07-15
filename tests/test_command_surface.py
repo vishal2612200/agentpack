@@ -52,6 +52,16 @@ def test_root_help_puts_first_run_commands_first() -> None:
     assert commands.index("quickstart") < commands.index("benchmark")
 
 
+def test_root_help_groups_advanced_commands_without_hiding_them() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "Core loop" in result.output
+    assert "Advanced, diagnostics, and release" in result.output
+    assert "release-check" in result.output
+    assert "Usage: root release-check" in CliRunner().invoke(app, ["release-check", "--help"]).output
+
+
 def test_commands_from_help_handles_rich_table_rows() -> None:
     help_text = """
 │ global-install       Install global shell/git automation                    │
