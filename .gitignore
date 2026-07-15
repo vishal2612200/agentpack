@@ -19,6 +19,7 @@ env/
 .agentpack/context*
 .agentpack/metrics.jsonl
 .agentpack/session-events.jsonl
+.agentpack/learning-sessions.jsonl
 .agentpack/pack_metadata.json
 .agentpack/pack-registry.json
 .agentpack/learning.md
@@ -31,6 +32,7 @@ env/
 .agentpack/team-lessons.md
 .agentpack/learning-feedback.jsonl
 .agentpack/ranking-feedback.jsonl
+.agentpack/episodic-cases.jsonl
 .agentpack/learning-inputs.json
 .agentpack/activity.log
 .agentpack/.gitignore
