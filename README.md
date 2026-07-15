@@ -176,13 +176,13 @@ but it is not task-success proof.
 
 ## Current Release Snapshot
 
-Current package line: `0.3.39`.
+Current package line: `0.4.0`.
 
-- Public release gate: 107 historical commit cases, 67.2% average recall, and 50.6% token precision.
-- Ranking/runtime: ranked carrier compaction now keeps lower-action support files tighter without dropping the release benchmark below target.
-- Language context: Rust symbol extraction covers free functions, `impl`/`trait` methods, and `struct`/`enum`/`trait` declarations, with the regex-based limits documented in [`docs/limitations.md`](docs/limitations.md).
-- Automation confidence: scoped `mypy` coverage now spans `src/agentpack/analysis/`, and JSON-output smoke tests cover scriptable `route`, `next`, and release-check flows.
-- Guard behavior: generated fallback and repair guidance use global task context unless thread mode is explicit, avoiding stale ambient Codex task state.
+- PR context: architecture snapshots and deterministic diff checks surface dependency and ownership context for reviews and CI.
+- Review workflow: Anchor, Judge, and Critic artifacts now gate Actor publishing so only approved findings can become inline GitHub comments.
+- Language context: an optional tree-sitter backend improves Java, Ruby, and PHP symbol and import extraction while preserving the existing fallback path.
+- Selection evidence: typed ownership signals, comparative owner features, and calibration reports improve context ranking diagnostics.
+- Dashboard: graph observability and the context cockpit make current selection state easier to inspect.
 - Plugin distribution: the Codex plugin now uses the README symbol as its `composerIcon`/`logo`, and the packaged plugin scanner path reports `100/A` with zero local findings.
 
 ## New Contributors
@@ -390,7 +390,7 @@ pipx ensurepath
 
 ## Status
 
-Alpha: `0.3.39`.
+Alpha: `0.4.0`.
 
 Works, tested, and used in real sessions. Python and JavaScript/TypeScript have strongest support. APIs may change before 1.0.
 

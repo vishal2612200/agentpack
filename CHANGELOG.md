@@ -11,6 +11,25 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ### Added
 - No changes yet.
 
+## [0.4.0] — 2026-07-15
+
+### Added
+- Added deterministic architecture snapshots, PR context, and CI checks so changed ownership and dependency context can be inspected and validated with stable artifacts.
+- Added an optional tree-sitter backend for Java, Ruby, and PHP symbol and import extraction while retaining the established fallback behavior.
+- Added typed ownership evidence, comparative owner features, and calibration reporting to strengthen context-selection diagnostics.
+- Added the Anchor -> Judge -> Critic -> Actor review pipeline: candidate findings require a per-finding critic verdict before the Actor can publish approved inline comments.
+- Added graph observability and a context cockpit for inspecting selection state.
+
+### Changed
+- Improved review output so non-inline findings remain visible in the review body and inline comments can include AgentPack badges.
+- Improved task maps with risk-aware context selection and strengthened dashboard graph observability.
+
+### Fixed
+- Stabilized benchmark release-gate execution and allowed confirmed dirty task targets during guard refreshes.
+
+### Documentation
+- Refreshed distribution, trust, and contributor guidance for the packaged plugin and project listings.
+
 ## [0.3.39] — 2026-07-06
 
 ### Added
