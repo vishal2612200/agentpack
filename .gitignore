@@ -17,6 +17,11 @@ env/
 .agentpack/cache/
 .agentpack/snapshots/
 .agentpack/context*
+.agentpack/reviews/
+.agentpack/review-*.prompt.md
+.agentpack/review-*.template.toon
+.agentpack/review-preflight.json
+.agentpack/review.prompt.md
 .agentpack/metrics.jsonl
 .agentpack/session-events.jsonl
 .agentpack/learning-sessions.jsonl
