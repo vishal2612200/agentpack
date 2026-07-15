@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field
 
 ContextStatus = Literal["fresh", "stale", "missing", "unknown"]
 TaskState = Literal["planned", "in_progress", "blocked", "done", "unknown"]
+DashboardTaskStatus = Literal["todo", "in_progress", "needs_attention", "done"]
 SkillFeedbackStatus = Literal[
     "none",
     "recommended_only",
@@ -35,6 +36,89 @@ class ProjectInfo(BaseModel):
     path: str
     branch: str = ""
     git_sha: str = ""
+
+
+class DashboardProjectRecord(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    name: str
+    repository_path: str
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class DashboardWorkspaceRecord(BaseModel):
+    schema_version: int = 1
+    workspace_id: str
+    project_id: str
+    path: str
+    branch: str = ""
+    git_sha: str = ""
+    is_current: bool = False
+    updated_at: str = ""
+
+
+class DashboardTaskRecord(BaseModel):
+    schema_version: int = 1
+    task_id: str
+    project_id: str
+    workspace_id: str
+    title: str
+    description: str = ""
+    status: DashboardTaskStatus = "todo"
+    created_at: str = ""
+    updated_at: str = ""
+    thread_ids: list[str] = Field(default_factory=list)
+    source_paths: list[str] = Field(default_factory=list)
+    active: bool = False
+    imported: bool = False
+    last_run_id: str = ""
+
+
+class DashboardTaskRun(BaseModel):
+    schema_version: int = 1
+    run_id: str
+    task_id: str
+    started_at: str = ""
+    ended_at: str = ""
+    status: str = ""
+    selected_files: list[str] = Field(default_factory=list)
+    omitted_files: list[str] = Field(default_factory=list)
+    checks: list[str] = Field(default_factory=list)
+    packed_tokens: int = 0
+    raw_tokens: int = 0
+    saving_pct: float = 0.0
+    unresolved_edges: int = 0
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class DashboardFeedback(BaseModel):
+    schema_version: int = 1
+    feedback_id: str
+    task_id: str
+    run_id: str = ""
+    value: Literal["helped", "partly_helped", "missed_context", "not_sure"]
+    note: str = ""
+    created_at: str = ""
+
+
+class DashboardAnalytics(BaseModel):
+    range: Literal["7d", "30d"] = "7d"
+    available: bool = False
+    tasks_total: int = 0
+    tasks_completed: int = 0
+    runs_total: int = 0
+    context_packs: int = 0
+    files_selected: int = 0
+    files_omitted: int = 0
+    packed_tokens: int = 0
+    raw_tokens: int = 0
+    average_saving_pct: float = 0.0
+    checks_total: int = 0
+    unresolved_edges: int = 0
+    feedback_counts: dict[str, int] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    unavailable_reason: str = ""
 
 
 class TaskInfo(BaseModel):
@@ -542,6 +626,14 @@ class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""
     project: ProjectInfo
+    project_record: DashboardProjectRecord | None = None
+    workspace: DashboardWorkspaceRecord | None = None
+    project_tasks: list[DashboardTaskRecord] = Field(default_factory=list)
+    active_task: DashboardTaskRecord | None = None
+    task_runs: list[DashboardTaskRun] = Field(default_factory=list)
+    dashboard_feedback: list[DashboardFeedback] = Field(default_factory=list)
+    analytics: DashboardAnalytics = Field(default_factory=DashboardAnalytics)
+    unassigned_history_count: int = 0
     task: TaskInfo = Field(default_factory=TaskInfo)
     context: ContextHealth = Field(default_factory=ContextHealth)
     selected_files: list[SelectedFileRow] = Field(default_factory=list)

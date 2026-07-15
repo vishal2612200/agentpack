@@ -60,6 +60,7 @@ from agentpack.dashboard.models import (
     ThreadSummary,
     SemanticGraphSummary,
 )
+from agentpack.dashboard.project_state import sync_dashboard_state
 from agentpack.learning.sessions import summarize_weak_spots
 from agentpack.learning.task_memory import recent_task_memories, recent_task_start_snapshots
 from agentpack.mcp_server import MCP_TOOL_NAMES
@@ -280,7 +281,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     projects = _project_candidates(root, thread_rows, task_history)
     semantic_graph = _semantic_graph_summary(root)
 
-    return DashboardSnapshot(
+    snapshot = DashboardSnapshot(
         generated_at=datetime.now(timezone.utc).isoformat(),
         project=_project_info(root, meta),
         task=TaskInfo(
@@ -313,6 +314,16 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         task_history=task_history,
         semantic_graph=semantic_graph,
     )
+    state = sync_dashboard_state(root, snapshot)
+    snapshot.project_record = state["project"]
+    snapshot.workspace = state["workspace"]
+    snapshot.project_tasks = state["tasks"]
+    snapshot.active_task = state["active_task"]
+    snapshot.task_runs = state["runs"]
+    snapshot.dashboard_feedback = state["feedback"]
+    snapshot.analytics = state["analytics"]
+    snapshot.unassigned_history_count = int(state["unassigned_history_count"])
+    return snapshot
 
 
 def semantic_graph_summary(

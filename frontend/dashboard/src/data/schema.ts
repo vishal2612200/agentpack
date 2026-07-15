@@ -191,6 +191,86 @@ export interface ActionHistoryRow {
   follow_up_actions?: string[];
 }
 
+export type DashboardTaskStatus = "todo" | "in_progress" | "needs_attention" | "done";
+
+export interface DashboardProjectRecord {
+  project_id: string;
+  name: string;
+  repository_path: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DashboardWorkspaceRecord {
+  workspace_id: string;
+  project_id: string;
+  path: string;
+  branch?: string;
+  git_sha?: string;
+  is_current?: boolean;
+  updated_at?: string;
+}
+
+export interface DashboardTaskRecord {
+  task_id: string;
+  project_id: string;
+  workspace_id: string;
+  title: string;
+  description?: string;
+  status: DashboardTaskStatus;
+  created_at?: string;
+  updated_at?: string;
+  thread_ids?: string[];
+  source_paths?: string[];
+  active?: boolean;
+  imported?: boolean;
+  last_run_id?: string;
+}
+
+export interface DashboardTaskRun {
+  run_id: string;
+  task_id: string;
+  started_at?: string;
+  ended_at?: string;
+  status?: string;
+  selected_files?: string[];
+  omitted_files?: string[];
+  checks?: string[];
+  packed_tokens?: number;
+  raw_tokens?: number;
+  saving_pct?: number;
+  unresolved_edges?: number;
+  evidence_refs?: string[];
+}
+
+export interface DashboardFeedback {
+  feedback_id: string;
+  task_id: string;
+  run_id?: string;
+  value: "helped" | "partly_helped" | "missed_context" | "not_sure";
+  note?: string;
+  created_at?: string;
+}
+
+export interface DashboardAnalytics {
+  range: "7d" | "30d";
+  available: boolean;
+  tasks_total: number;
+  tasks_completed: number;
+  runs_total: number;
+  context_packs: number;
+  files_selected: number;
+  files_omitted: number;
+  packed_tokens: number;
+  raw_tokens: number;
+  average_saving_pct: number;
+  checks_total: number;
+  unresolved_edges: number;
+  feedback_counts: Record<string, number>;
+  evidence: string[];
+  unavailable_reason?: string;
+}
+
 export interface DashboardSnapshot {
   schema_version: number;
   generated_at?: string;
@@ -200,6 +280,14 @@ export interface DashboardSnapshot {
     branch?: string;
     git_sha?: string;
   };
+  project_record?: DashboardProjectRecord | null;
+  workspace?: DashboardWorkspaceRecord | null;
+  project_tasks?: DashboardTaskRecord[];
+  active_task?: DashboardTaskRecord | null;
+  task_runs?: DashboardTaskRun[];
+  dashboard_feedback?: DashboardFeedback[];
+  analytics?: DashboardAnalytics;
+  unassigned_history_count?: number;
   task: {
     text?: string;
     state?: string;

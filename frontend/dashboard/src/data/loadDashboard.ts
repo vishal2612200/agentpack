@@ -14,7 +14,7 @@ export interface DashboardPayload {
   action_history: ActionHistoryRow[];
 }
 
-export async function loadDashboardPayload(): Promise<DashboardPayload> {
+export async function loadDashboardPayload(detail: "home" | "full" = "home"): Promise<DashboardPayload> {
   if (window.location.protocol === "file:") {
     throw new Error("Static dashboard files are no longer supported. Run `agentpack dashboard` and open the served URL.");
   }
@@ -22,7 +22,7 @@ export async function loadDashboardPayload(): Promise<DashboardPayload> {
   if (apiBase === null) {
     throw new Error("Dashboard server API is unavailable. Run `agentpack dashboard` and open the served URL.");
   }
-  const response = await fetch(`${apiBase}/api/dashboard`, {
+  const response = await fetch(`${apiBase}/api/dashboard?detail=${detail}`, {
     headers: authHeaders()
   });
   if (!response.ok) {
