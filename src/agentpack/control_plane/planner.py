@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agentpack.core.command_surface import refresh_commands
+from agentpack.core.command_surface import refresh_command, refresh_commands
 
 from agentpack.control_plane.models import ControlPlaneSnapshot, Recommendation
 
@@ -29,9 +29,7 @@ def plan_next_actions(snapshot: ControlPlaneSnapshot) -> list[Recommendation]:
         )
 
     if snapshot.context.status != "fresh":
-        command = refresh_commands("auto").repair
-        if snapshot.task.thread_id:
-            command += f" --thread {snapshot.task.thread_id}"
+        command = refresh_command("auto", snapshot.task.thread_id or "global")
         items.append(_recommendation("stale_context", command, snapshot.context.reason))
 
     if snapshot.threads.conflict_count:

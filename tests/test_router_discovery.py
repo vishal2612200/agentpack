@@ -39,6 +39,21 @@ def test_discovery_ignores_missing_directories(tmp_path):
     assert inventory.rules == []
 
 
+def test_discovery_deduplicates_identical_skills_across_roots(tmp_path):
+    first = tmp_path / "first" / "same" / "SKILL.md"
+    second = tmp_path / "second" / "same" / "SKILL.md"
+    first.parent.mkdir(parents=True)
+    second.parent.mkdir(parents=True)
+    content = "# Shared Skill\n\nUse this skill for the same task.\n"
+    first.write_text(content, encoding="utf-8")
+    second.write_text(content, encoding="utf-8")
+
+    inventory = discover_inventory(tmp_path, paths=["first", "second"])
+
+    assert [skill.name for skill in inventory.skills] == ["Shared Skill"]
+    assert set(inventory.skills[0].aliases) >= {"first/same/SKILL.md", "second/same/SKILL.md"}
+
+
 def test_discovery_finds_claude_plugin_manifest_skills(tmp_path):
     plugin_dir = tmp_path / ".claude-plugin"
     plugin_dir.mkdir()

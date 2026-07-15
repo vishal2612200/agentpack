@@ -62,6 +62,16 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(help="AgentPack — token-aware context packing for AI coding agents.")
 
+_CORE_HELP_CALLBACKS = {
+    "quickstart",
+    "start",
+    "next_action",
+    "doctor",
+    "init",
+    "route_task",
+    "pack",
+}
+
 
 @app.callback()
 def _main(
@@ -121,6 +131,22 @@ for mod in [
     workflow_cmd,
 ]:
     mod.register(app)
+
+
+def _configure_help_panels() -> None:
+    """Keep the default help focused while retaining every command path."""
+    for command in app.registered_commands:
+        callback_name = getattr(command.callback, "__name__", "")
+        command.rich_help_panel = (
+            "Core loop"
+            if callback_name in _CORE_HELP_CALLBACKS
+            else "Advanced, diagnostics, and release"
+        )
+    for group in app.registered_groups:
+        group.rich_help_panel = "Advanced, diagnostics, and release"
+
+
+_configure_help_panels()
 
 
 def main() -> None:

@@ -90,7 +90,7 @@ const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
 export function App() {
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
   const [error, setError] = useState<string>("");
-  const [view, setView] = useState<View>("graph");
+  const [view, setView] = useState<View>("cockpit");
   const [selectedId, setSelectedId] = useState<string>("task:active");
   const [query, setQuery] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -119,7 +119,15 @@ export function App() {
   }, []);
 
   if (error) {
-    return <ErrorState message={error} />;
+    return (
+      <ErrorState
+        message={error}
+        onRetry={() => {
+          setError("");
+          refreshDashboard().catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
+        }}
+      />
+    );
   }
   if (!payload) {
     return <LoadingState />;
@@ -329,6 +337,8 @@ export function App() {
                 type="button"
                 className={view === item.id ? "nav-item active" : "nav-item"}
                 onClick={() => setView(item.id)}
+                aria-label={item.label}
+                title={item.label}
               >
                 <Icon size={17} aria-hidden="true" />
                 <span>{item.label}</span>
@@ -339,7 +349,7 @@ export function App() {
       </aside>
 
       <main className="workspace">
-        <TopBar snapshot={payload.snapshot} query={query} onQueryChange={setQuery} onSwitchProject={handleSwitchProject} />
+        <TopBar snapshot={payload.snapshot} onSwitchProject={handleSwitchProject} />
         <section className="main-panel" aria-label={`${view} view`}>
           {view === "cockpit" && (
             <CockpitView payload={payload} onSelect={setSelectedId} onOpenGraph={() => setView("graph")} onRunCommand={handleRunCommand} onRunAction={handleRunAction} />
@@ -354,6 +364,7 @@ export function App() {
               snapshot={payload.snapshot}
               actionHistory={payload.action_history || []}
               query={query}
+              onQueryChange={setQuery}
               selectedId={selectedId}
               onSelect={setSelectedId}
               onRunAction={handleRunAction}
@@ -409,23 +420,14 @@ async function inspectCommand(command: string): Promise<CommandInspection> {
 
 function TopBar({
   snapshot,
-  query,
-  onQueryChange,
   onSwitchProject
 }: {
   snapshot: DashboardSnapshot;
-  query: string;
-  onQueryChange: (value: string) => void;
   onSwitchProject: (path: string) => void;
 }) {
   return (
     <header className="topbar">
       <ProjectDropdown snapshot={snapshot} onSwitchProject={onSwitchProject} />
-      <label className="search-box">
-        <Search size={16} aria-hidden="true" />
-        <span className="sr-only">Search map</span>
-        <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search paths, memory, tests" />
-      </label>
       <div className="topbar-status" aria-label="Dashboard health">
         <StatusPill label="Context" status={snapshot.context.status} />
         <StatusPill label="MCP" status={snapshot.mcp_health?.status || "unknown"} />
@@ -570,7 +572,6 @@ function CockpitView({
         <Metric label="Threads" value={activeThreads} tone={activeThreads ? "warn" : "good"} />
         <Metric label="Integrations" value={missingIntegrations ? `${missingIntegrations} check` : "ready"} tone={missingIntegrations ? "warn" : "good"} />
       </div>
-
       <div className="content-grid">
         <Panel title="Selected Context" icon={FileText}>
           <ItemList
@@ -809,6 +810,7 @@ function ContextView({
         <Metric label="Selected" value={snapshot.context.selected_files_count || 0} tone="good" />
         <Metric label="Saved" value={`${snapshot.context.saving_pct || 0}%`} tone="memory" />
       </div>
+      <EvidenceReceipt snapshot={snapshot} />
       <div className="content-grid">
         <Panel title="Context Actions" icon={Database}>
           <div className="action-grid">
@@ -832,6 +834,39 @@ function ContextView({
   );
 }
 
+function EvidenceReceipt({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const checkedAt = snapshot.context.generated_at || snapshot.generated_at;
+  const verificationCommands = unique(snapshot.task_map.flatMap((item) => item.tests_to_run || [])).slice(0, 5);
+  return (
+    <Panel title="Evidence Receipt" icon={ShieldAlert}>
+      <dl className="evidence-receipt">
+        <div>
+          <dt>Checked</dt>
+          <dd>{checkedAt ? `${formatAge(checkedAt)} · ${formatTimestamp(checkedAt)}` : "No check timestamp"}</dd>
+        </div>
+        <div>
+          <dt>Source</dt>
+          <dd>{snapshot.context.source_command || snapshot.project.path}</dd>
+        </div>
+        <div>
+          <dt>Owning task</dt>
+          <dd>{snapshot.task.thread_id || "global"}</dd>
+        </div>
+        <div>
+          <dt>Freshness</dt>
+          <dd>{snapshot.context.stale_reason || snapshot.context.status}</dd>
+        </div>
+        <div className="full">
+          <dt>Verification</dt>
+          <dd>
+            {verificationCommands.length ? verificationCommands.map((command) => <code key={command}>{command}</code>) : "No verification command recorded"}
+          </dd>
+        </div>
+      </dl>
+    </Panel>
+  );
+}
+
 type MapMode = "city" | "network" | "table";
 
 function MapView({
@@ -840,6 +875,7 @@ function MapView({
   snapshot,
   actionHistory,
   query,
+  onQueryChange,
   selectedId,
   onSelect,
   onRunAction,
@@ -850,6 +886,7 @@ function MapView({
   snapshot: DashboardSnapshot;
   actionHistory: ActionHistoryRow[];
   query: string;
+  onQueryChange: (value: string) => void;
   selectedId: string;
   onSelect: (id: string) => void;
   onRunAction: (action: string, body?: Record<string, unknown>) => void;
@@ -858,7 +895,7 @@ function MapView({
   const [mode, setMode] = useState<MapMode>(() => (hasWebGLSupport() ? "city" : "table"));
   const [demoMode, setDemoMode] = useState(false);
   const [fullscreen, setFullscreen] = useState(false);
-  const [sideCollapsed, setSideCollapsed] = useState(false);
+  const [sideCollapsed, setSideCollapsed] = useState(() => typeof window !== "undefined" && window.innerWidth <= 760);
   const [cameraSignal, setCameraSignal] = useState(0);
   const [hoverInfo, setHoverInfo] = useState<MapHoverInfo | null>(null);
   const mapRootRef = useRef<HTMLDivElement | null>(null);
@@ -943,6 +980,13 @@ function MapView({
         <Metric label="High risk" value={dashboardMap.summary.high_risk_buildings} tone={dashboardMap.summary.high_risk_buildings ? "risk" : "good"} />
         <Metric label="Max score" value={formatNumber(Math.round(dashboardMap.summary.max_score || 0))} tone="memory" />
       </div>
+      {mode === "network" ? (
+        <label className="search-box map-search">
+          <Search size={16} aria-hidden="true" />
+          <span className="sr-only">Search context network</span>
+          <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search files, tests, or memory" />
+        </label>
+      ) : null}
 
       <div className="map-layout">
         <section className="map-stage" aria-label="AgentPack context map">
@@ -1122,6 +1166,7 @@ function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSe
   return (
     <div className="table-wrap map-table">
       <table>
+        <caption className="sr-only">Context map files</caption>
         <thead>
           <tr>
             <th>File</th>
@@ -1137,7 +1182,18 @@ function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSe
         </thead>
         <tbody>
           {dashboardMap.buildings.map((building) => (
-            <tr key={building.id} onClick={() => onSelect(building.node_id)}>
+            <tr
+              key={building.id}
+              tabIndex={0}
+              aria-label={`Inspect ${building.path}`}
+              onClick={() => onSelect(building.node_id)}
+              onKeyDown={(event) => {
+                if (event.key === "Enter" || event.key === " ") {
+                  event.preventDefault();
+                  onSelect(building.node_id);
+                }
+              }}
+            >
               <td><code>{building.path}</code></td>
               <td>{building.district_id}</td>
               <td>{labelize(building.building_type || "unknown")}</td>
@@ -2162,15 +2218,19 @@ function ItemList({
 }
 
 function StatusPill({ status, label }: { status: string; label?: string }) {
-  return <span className={`status-pill ${status}`}>{label ? `${label}: ${status || "unknown"}` : status || "unknown"}</span>;
+  return <span role="status" className={`status-pill ${status}`}>{label ? `${label}: ${status || "unknown"}` : status || "unknown"}</span>;
 }
 
-function ErrorState({ message }: { message: string }) {
+function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
   return (
     <div className="center-state">
       <AlertTriangle size={28} aria-hidden="true" />
       <h1>Dashboard failed to load</h1>
       <p>{message}</p>
+      <button type="button" className="primary-action" onClick={onRetry}>
+        <RefreshCcw size={16} aria-hidden="true" />
+        Retry
+      </button>
     </div>
   );
 }
@@ -2344,6 +2404,16 @@ function formatTimestamp(value?: string) {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return date.toLocaleString();
+}
+
+function formatAge(value: string) {
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return "unknown age";
+  const seconds = Math.max(0, Math.round((Date.now() - timestamp) / 1000));
+  if (seconds < 60) return `${seconds}s ago`;
+  if (seconds < 3600) return `${Math.floor(seconds / 60)}m ago`;
+  if (seconds < 86400) return `${Math.floor(seconds / 3600)}h ago`;
+  return `${Math.floor(seconds / 86400)}d ago`;
 }
 
 function formatDuration(ms: number) {
