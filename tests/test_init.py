@@ -55,6 +55,15 @@ def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     assert "GEMINI.md" not in lines
 
 
+def test_checked_in_gitignore_matches_default_agentpack_block() -> None:
+    root = Path(__file__).resolve().parents[1]
+    content = (root / ".gitignore").read_text(encoding="utf-8")
+    block = content[content.index("# agentpack:start") : content.index("# agentpack:end")]
+    lines = [line for line in block.splitlines() if line and not line.startswith("#")]
+
+    assert lines == _repo_gitignore_block().splitlines()[2:-1]
+
+
 def test_repo_gitignore_block_adds_agent_specific_entries() -> None:
     antigravity = _repo_gitignore_block(agent="antigravity").splitlines()
     cursor = _repo_gitignore_block(agent="cursor").splitlines()
