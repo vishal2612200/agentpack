@@ -31,6 +31,13 @@ class BenchmarkAggregate:
     reason_graph_precision: float
     reason_content_precision: float
     reason_symbol_precision: float
+    relationship_precision: float | None
+    relationship_recall: float | None
+    source_line_grounding: float | None
+    path_correctness: float | None
+    first_correct_file_rate: float
+    routing_recall: float
+    incremental_rebuild_seconds: float | None
     median_wall_seconds: float
 
     def as_dict(self) -> dict[str, float | int]:
@@ -41,6 +48,13 @@ class BenchmarkAggregate:
             "reason_graph_precision": round(self.reason_graph_precision, 4),
             "reason_content_precision": round(self.reason_content_precision, 4),
             "reason_symbol_precision": round(self.reason_symbol_precision, 4),
+            "relationship_precision": round(self.relationship_precision, 4) if self.relationship_precision is not None else None,
+            "relationship_recall": round(self.relationship_recall, 4) if self.relationship_recall is not None else None,
+            "source_line_grounding": round(self.source_line_grounding, 4) if self.source_line_grounding is not None else None,
+            "path_correctness": round(self.path_correctness, 4) if self.path_correctness is not None else None,
+            "first_correct_file_rate": round(self.first_correct_file_rate, 4),
+            "routing_recall": round(self.routing_recall, 4),
+            "incremental_rebuild_seconds": round(self.incremental_rebuild_seconds, 4) if self.incremental_rebuild_seconds is not None else None,
             "median_wall_seconds": round(self.median_wall_seconds, 3),
         }
 
@@ -113,6 +127,13 @@ def _aggregate(cases: list[dict]) -> BenchmarkAggregate:
         reason_graph_precision=_mean_over_fired(graph_precs),
         reason_content_precision=_mean_over_fired(content_precs),
         reason_symbol_precision=_mean_over_fired(symbol_precs),
+        relationship_precision=_optional_mean(cases, "relationship_precision"),
+        relationship_recall=_optional_mean(cases, "relationship_recall"),
+        source_line_grounding=_optional_mean(cases, "source_line_grounding"),
+        path_correctness=_optional_mean(cases, "path_correctness"),
+        first_correct_file_rate=statistics.fmean(_first_correct_file(c) for c in cases),
+        routing_recall=_optional_mean(cases, "routing_recall", fallback_key="candidate_recall_at_20"),
+        incremental_rebuild_seconds=_optional_mean(cases, "incremental_rebuild_seconds"),
         median_wall_seconds=statistics.median(walls) if walls else 0.0,
     )
 
@@ -150,3 +171,18 @@ def _mean_over_fired(values: list[float | None]) -> float:
     if not fired:
         return 0.0
     return statistics.fmean(fired)
+
+
+def _optional_mean(cases: list[dict], key: str, *, fallback_key: str | None = None) -> float | None:
+    values = [
+        float(case.get(key) if case.get(key) is not None else case.get(fallback_key))
+        for case in cases
+        if (case.get(key) is not None or (fallback_key and case.get(fallback_key) is not None))
+    ]
+    return statistics.fmean(values) if values else None
+
+
+def _first_correct_file(case: dict) -> float:
+    expected = set(case.get("expected_files") or [])
+    selected = set(case.get("selected_paths") or [])
+    return 1.0 if expected & selected else 0.0

@@ -1021,12 +1021,30 @@ evaluate declared invariants without any model call.
 
 ```bash
 agentpack architecture snapshot --ref HEAD --json
+agentpack architecture snapshot --cold --json
+agentpack architecture snapshot --verify-incremental --json
 agentpack architecture diff --base origin/main --head HEAD --json
 agentpack architecture check --base origin/main --head HEAD --json
+agentpack architecture query "token validation" --type symbol --json
+agentpack architecture path AuthService TokenStore --json
+agentpack architecture explain AuthService.validate_token --json
 agentpack architecture artifacts --diff .agentpack/raw/architecture-diff.json --check .agentpack/raw/architecture-check.json
 ```
 
-Snapshots are cache-addressed by commit, schema version, and extractor profile.
+The snapshot is the canonical semantic graph under `.agentpack/architecture/`.
+It contains stable entities and evidence-backed relationships for definitions,
+imports, calls, references, inheritance, implementation, tests, comments,
+documents, configuration, and external effects. Snapshots are cache-addressed
+by commit, schema version, and extractor profile. Incremental worktree builds
+reuse file records under `.agentpack/architecture/records/`, persist materialized
+state under `.agentpack/architecture/state/`, and verify incremental output
+against a cold graph when requested. `--verify-incremental` performs that
+equivalence check; normal builds do not pay for a second rebuild. `--cold` bypasses the materialized graph and
+includes build diagnostics in JSON output.
+Graph MCP operations return bounded compact evidence by default. Pass
+`detail="full"` to `query_graph`, `get_graph_node`, `get_graph_neighbors`,
+`shortest_path`, or `explain_graph_edge` when complete entity metadata and all
+evidence are required.
 Only citation-backed structured or declared evidence may block a check;
 best-effort and file-level signals remain advisory. `artifacts` removes source
 hashes and absolute paths before writing the CI diff, summary, and receipt.

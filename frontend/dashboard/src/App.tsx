@@ -42,7 +42,7 @@ import {
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding, MapRoad } from "./data/schema";
+import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 
 const ContextCityMap = lazy(() => import("./MapCity").then((module) => ({ default: module.ContextCityMap })));
@@ -867,7 +867,7 @@ function EvidenceReceipt({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
-type MapMode = "city" | "network" | "table";
+type MapMode = "city" | "network" | "semantic" | "table";
 
 function MapView({
   dashboardMap,
@@ -964,6 +964,9 @@ function MapView({
           <button type="button" className={mode === "network" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("network")}>
             <Network size={14} aria-hidden="true" /> Network
           </button>
+          <button type="button" data-testid="semantic-mode-button" className={mode === "semantic" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("semantic")}>
+            <GitBranch size={14} aria-hidden="true" /> Semantic graph
+          </button>
           <button type="button" className={mode === "table" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("table")}>
             <Table2 size={14} aria-hidden="true" /> Table
           </button>
@@ -1002,6 +1005,8 @@ function MapView({
             )
           ) : mode === "network" ? (
             <TaskGraph graph={graph} query={query} selectedId={selectedId} onSelect={onSelect} />
+          ) : mode === "semantic" ? (
+            <SemanticGraphNetwork graph={snapshot.semantic_graph} />
           ) : (
             <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
           )}
@@ -1160,6 +1165,111 @@ function roadMidpoint(road: MapRoad, points: Map<string, { x: number; z: number 
   const target = points.get(road.target);
   if (!source || !target) return [0, 2, 0];
   return [(source.x + target.x) / 2, 2, (source.z + target.z) / 2];
+}
+
+function SemanticGraphTable({ graph }: { graph: SemanticGraphSummary }) {
+  const [relationship, setRelationship] = useState("");
+  const [confidence, setConfidence] = useState("");
+  const entities = useMemo(() => new Map(graph.entities.map((entity) => [entity.entity_key, entity])), [graph.entities]);
+  const edges = graph.edges.filter((edge) => (!relationship || edge.relationship === relationship) && (!confidence || edge.confidence_tier === confidence));
+  return (
+    <div className="semantic-graph-table" data-testid="semantic-evidence-table">
+      <div className="semantic-graph-toolbar" data-testid="semantic-evidence-toolbar">
+        <label>Relationship <select data-testid="semantic-table-relationship-filter" value={relationship} onChange={(event) => setRelationship(event.target.value)}><option value="">All</option>{Object.keys(graph.relationship_counts).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Confidence <select data-testid="semantic-table-confidence-filter" value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="">All</option><option value="structured">Structured</option><option value="best_effort">Best effort</option><option value="file_level">File level</option></select></label>
+        <span className="muted">{graph.entity_count} entities · {graph.edge_count} edges · {graph.unresolved_count} unresolved · parsed {graph.cache_stats?.parsed_files ?? 0} · reused {graph.cache_stats?.reused_files ?? 0}</span>
+      </div>
+      <div className="semantic-graph-receipts">
+        {edges.slice(0, 200).map((edge) => {
+          const source = entities.get(edge.source);
+          const target = entities.get(edge.target);
+          const evidence = edge.evidence?.[0];
+          return <div className="semantic-edge-row" key={edge.edge_key}><strong>{source?.name || edge.source_name || edge.source}</strong><span className="semantic-edge-type">{edge.relationship}</span><strong>{target?.name || edge.target_name || edge.target}</strong><small>{evidence?.path || "unknown source"}{evidence?.start_line ? `:${evidence.start_line}` : ""}{evidence?.note ? ` · ${evidence.note}` : ""}</small></div>;
+        })}
+        {!edges.length ? <p className="empty">No semantic relationships match these filters.</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function SemanticGraphNetwork({ graph }: { graph: SemanticGraphSummary }) {
+  const [relationship, setRelationship] = useState("");
+  const [confidence, setConfidence] = useState("");
+  const [language, setLanguage] = useState("");
+  const [evidenceSource, setEvidenceSource] = useState("");
+  const [showTable, setShowTable] = useState(false);
+  const [selectedEdge, setSelectedEdge] = useState<string>("");
+  const [remoteGraph, setRemoteGraph] = useState<SemanticGraphSummary | null>(null);
+  const activeGraph = remoteGraph || graph;
+  useEffect(() => {
+    if (window.location.protocol === "file:") return;
+    const params = new URLSearchParams({ limit: "200" });
+    if (relationship) params.set("relationship", relationship);
+    if (confidence) params.set("confidence", confidence);
+    if (language) params.set("language", language);
+    if (evidenceSource) params.set("evidence_source", evidenceSource);
+    fetch(apiUrl(`/api/graph?${params.toString()}`), { headers: authHeaders() })
+      .then((response) => response.ok ? response.json() as Promise<{ semantic_graph?: SemanticGraphSummary }> : Promise.reject(new Error("graph request failed")))
+      .then((payload) => setRemoteGraph(payload.semantic_graph || null))
+      .catch(() => setRemoteGraph(null));
+  }, [confidence, evidenceSource, language, relationship]);
+  const entities = useMemo(() => new Map(activeGraph.entities.map((entity) => [entity.entity_key, entity])), [activeGraph.entities]);
+  const languages = useMemo(() => Array.from(new Set(graph.entities.map((entity) => entity.language).filter(Boolean))).sort(), [graph.entities]);
+  const evidenceSources = useMemo(() => Array.from(new Set(graph.edges.flatMap((edge) => (edge.evidence || []).map((item) => item.source).filter(Boolean)))).sort(), [graph.edges]);
+  const edges = useMemo(
+    () => activeGraph.edges.filter((edge) => (!relationship || edge.relationship === relationship) && (!confidence || edge.confidence_tier === confidence) && (!language || entities.get(edge.source)?.language === language || entities.get(edge.target)?.language === language) && (!evidenceSource || (edge.evidence || []).some((item) => item.source === evidenceSource))).slice(0, 160),
+    [activeGraph.edges, confidence, entities, evidenceSource, language, relationship]
+  );
+  const visibleKeys = useMemo(() => new Set(edges.flatMap((edge) => [edge.source, edge.target])), [edges]);
+  const nodes = useMemo<Node[]>(() => Array.from(visibleKeys).map((key, index) => {
+    const entity = entities.get(key);
+    const unresolved = entity?.type === "unresolved" || entity?.type === "external";
+    return {
+      id: key,
+      position: { x: (index % 4) * 240, y: Math.floor(index / 4) * 120 },
+      data: { label: entity ? `${entity.name}\n${entity.path}${entity.line ? `:${entity.line}` : ""}` : key },
+      className: `semantic-node ${unresolved ? "unresolved" : ""}`
+    };
+  }), [entities, visibleKeys]);
+  const flowEdges = useMemo<Edge[]>(() => edges.map((edge) => ({
+    id: edge.edge_key,
+    source: edge.source,
+    target: edge.target,
+    label: edge.relationship,
+    animated: edge.confidence_tier === "structured",
+    className: `semantic-flow-edge ${edge.confidence_tier || "best_effort"}`,
+    style: { stroke: edge.edge_key === selectedEdge ? "#f6c453" : edge.confidence_tier === "structured" ? "#7dd3fc" : "#74839a" }
+  })), [edges, selectedEdge]);
+  const selected = activeGraph.edges.find((edge) => edge.edge_key === selectedEdge);
+  return (
+    <div className="semantic-graph-network">
+      <div className="semantic-network-toolbar" data-testid="semantic-network-toolbar">
+        <label>Relationship <select data-testid="semantic-relationship-filter" value={relationship} onChange={(event) => setRelationship(event.target.value)}><option value="">All</option>{Object.keys(graph.relationship_counts).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Confidence <select data-testid="semantic-confidence-filter" value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="">All</option><option value="structured">Structured</option><option value="best_effort">Best effort</option><option value="file_level">File level</option></select></label>
+        <label>Language <select data-testid="semantic-language-filter" value={language} onChange={(event) => setLanguage(event.target.value)}><option value="">All</option>{languages.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Evidence <select data-testid="semantic-evidence-filter" value={evidenceSource} onChange={(event) => setEvidenceSource(event.target.value)}><option value="">All</option>{evidenceSources.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <span className="muted">{nodes.length} nodes · {edges.length} edges of {activeGraph.edge_count} · unresolved {activeGraph.unresolved_count}</span>
+        <button type="button" data-testid="semantic-evidence-toggle" className={showTable ? "toolbar-button active" : "toolbar-button"} onClick={() => setShowTable((value) => !value)}><Table2 size={14} aria-hidden="true" /> {showTable ? "Hide evidence" : "Evidence table"}</button>
+      </div>
+      {showTable ? <SemanticGraphTable graph={activeGraph} /> : (
+        <div className="semantic-network-canvas" data-testid="semantic-network-canvas">
+          <ReactFlow nodes={nodes} edges={flowEdges} fitView nodesDraggable nodesConnectable={false} panOnScroll minZoom={0.2} zoomOnDoubleClick={false} onEdgeClick={(_event, edge) => setSelectedEdge(edge.id)} onlyRenderVisibleElements>
+            <Background />
+            <MiniMap pannable zoomable className="graph-minimap" />
+            <Controls />
+          </ReactFlow>
+        </div>
+      )}
+      <div className="semantic-network-receipt" data-testid="semantic-edge-receipt">
+        {selected ? (() => {
+          const source = entities.get(selected.source);
+          const target = entities.get(selected.target);
+          const evidence = selected.evidence?.[0];
+          return <><strong>{source?.name || selected.source} <span className="semantic-edge-type">{selected.relationship}</span> {target?.name || selected.target}</strong><small>{evidence?.path || "unknown source"}{evidence?.start_line ? `:${evidence.start_line}` : ""}{evidence?.end_line && evidence.end_line !== evidence.start_line ? `-${evidence.end_line}` : ""} · {evidence?.source || "unknown extractor"} · {selected.confidence_tier || "unknown confidence"}{evidence?.source_hash ? ` · ${evidence.source_hash}` : ""}</small><p>{evidence?.note || "No evidence note recorded."}</p></>;
+        })() : <span className="muted">Select an edge to inspect its source receipt.</span>}
+      </div>
+    </div>
+  );
 }
 
 function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSelect: (id: string) => void }) {

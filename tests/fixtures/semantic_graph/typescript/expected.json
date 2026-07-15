@@ -1,0 +1,13 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "typescript",
+  "entities": ["Token", "validate"],
+  "relationships": [
+    {"source": "validate", "relationship": "references", "target": "Token", "path": "source.ts", "start_line": 2, "end_line": 2},
+    {"source": "validate", "relationship": "references", "target": "token", "path": "source.ts", "start_line": 2, "end_line": 2}
+  ],
+  "paths": [{"source": "validate", "target": "Token", "relationships": ["references"]}],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.ts", "expected_absent": ["source.ts"]}
+}

@@ -4,6 +4,7 @@ import re
 from pathlib import PurePosixPath
 from typing import Any, Iterable
 
+from agentpack.architecture.index import SemanticGraphIndex
 from agentpack.core.models import DependencyGraph
 from agentpack.core.selection_models import (
     CandidateEvidence,
@@ -44,11 +45,16 @@ def build_candidate_evidence(
     summary: Any,
     owner_context: OwnerCaseContext,
     owner_features: OwnerFeatureVector,
-    dependency_graph: DependencyGraph,
+    dependency_graph: DependencyGraph | None = None,
+    semantic_graph: SemanticGraphIndex | None = None,
     changed_paths: set[str],
     memory_confirmed_paths: set[str] | None = None,
 ) -> CandidateEvidence:
-    """Infer label-free ownership evidence while keeping safety protections orthogonal."""
+    """Infer ownership evidence from the semantic graph.
+
+    ``dependency_graph`` is retained only as a deprecated compatibility
+    boundary for callers that have not migrated to ``semantic_graph``.
+    """
 
     path = candidate.path
     reasons = tuple(reason.lower() for reason in candidate.legacy_reasons)
@@ -62,11 +68,13 @@ def build_candidate_evidence(
     owner_strength, owner_codes = _classify_owner_features(owner_context, owner_features)
     codes.extend(owner_codes)
 
-    node = dependency_graph.nodes.get(path)
+    relations = semantic_graph.file_relations(path) if semantic_graph is not None else None
+    node = dependency_graph.nodes.get(path) if semantic_graph is None and dependency_graph is not None else None
     direct_dependency = _has_reason(reasons, "direct dependency")
     cross_layer = _has_reason(reasons, "cross-layer related")
     recall_neighbor = _has_reason(reasons, "recall neighbor of")
-    if direct_dependency and node is not None and (node.imports or node.imported_by):
+    has_dependencies = bool(relations and (relations["imports"] or relations["imported_by"]))
+    if direct_dependency and ((node is not None and (node.imports or node.imported_by)) or has_dependencies):
         support_strength = max(support_strength, 3)
         _append(codes, "dependency_support")
     elif direct_dependency or cross_layer:

@@ -45,12 +45,12 @@ def test_contributing_documents_route_json_alias() -> None:
     assert 'agentpack route --task "<task>" --json' in text
 
 
-def test_license_file_is_mit() -> None:
+def test_license_file_is_agpl() -> None:
     text = (ROOT / "LICENSE").read_text(encoding="utf-8")
 
-    assert text.startswith("MIT License")
-    assert "Permission is hereby granted, free of charge" in text
-    assert "THE SOFTWARE IS PROVIDED \"AS IS\"" in text
+    assert text.startswith("                    GNU AFFERO GENERAL PUBLIC LICENSE")
+    assert "The GNU Affero General Public License" in text
+    assert "For more information on this, and how to apply and follow the GNU AGPL" in text
 
 
 def test_contributor_label_manifest_matches_docs() -> None:

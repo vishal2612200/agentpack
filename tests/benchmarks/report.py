@@ -23,7 +23,11 @@ from pathlib import Path
 from tests.benchmarks._harness import run_public_repo_benchmark
 
 
-ROW = "{lang:10} {cases:>5} {recall:>8} {tp:>8} {graph:>8} {content:>8} {symbol:>8} {wall:>8}"
+ROW = "{lang:10} {cases:>5} {recall:>8} {tp:>8} {graph:>8} {content:>8} {symbol:>8} {relp:>8} {relr:>8} {first:>8} {route:>8} {wall:>8}"
+
+
+def _metric(value: float | None) -> str:
+    return "n/a" if value is None else f"{value:.3f}"
 
 
 def main(argv: list[str]) -> int:
@@ -63,7 +67,8 @@ def _run_json(targets: list[str], thresholds: dict) -> int:
 def _run_table(targets: list[str], thresholds: dict) -> int:
     print(ROW.format(
         lang="lang", cases="cases", recall="recall", tp="tokprec",
-        graph="graph", content="content", symbol="symbol", wall="wall(s)",
+        graph="graph", content="content", symbol="symbol", first="first", route="route", wall="wall(s)",
+        relp="rel-p", relr="rel-r",
     ))
     print("-" * 76)
 
@@ -93,6 +98,10 @@ def _run_table(targets: list[str], thresholds: dict) -> int:
             graph=flag(m.reason_graph_precision, cfg["min_reason_graph_precision"]),
             content=flag(m.reason_content_precision, cfg["min_reason_content_precision"]),
             symbol=f" {m.reason_symbol_precision:.3f} ",
+            relp=f" {_metric(m.relationship_precision)} ",
+            relr=f" {_metric(m.relationship_recall)} ",
+            first=f" {m.first_correct_file_rate:.3f} ",
+            route=f" {m.routing_recall:.3f} ",
             wall=wall_flag,
         ))
     print()

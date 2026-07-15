@@ -52,7 +52,7 @@ Current live status checked on 2026-07-06:
 - open issues with `help wanted`: `5`
 - open issues with `first-timers-only`: `2`
 - contributor count from GitHub contributors API: `11`
-- license detected by GitHub license endpoint: `MIT`
+- license detected by GitHub license endpoint: `AGPL-3.0`
 - repository permission with the personal `gh` token: `ADMIN`
 - target topics present: `good-first-issue`, `help-wanted`, `first-timers-only`, `developer-tools`, `cli`, `python`
 - specialized labels present: `first-timers-only`, `docs`, `benchmark`,

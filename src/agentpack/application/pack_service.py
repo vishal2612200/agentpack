@@ -86,7 +86,8 @@ from agentpack.analysis.monorepo import (
 )
 from agentpack.analysis.task_classifier import classify_task
 from agentpack.analysis.tests import find_related_tests
-from agentpack.analysis import dependency_graph as dep_graph_mod
+from agentpack.architecture.index import SemanticGraphIndex
+from agentpack.architecture.compat import to_dependency_graph
 from agentpack.summaries.base import build_all_summaries
 from agentpack.session.events import record_event
 from agentpack.session.references import collect_repo_issue_references
@@ -106,6 +107,7 @@ class PackRequest:
     thread_id: str | None = None
     output_path: Path | None = None
     write_canonical: bool = True
+    verify_incremental: bool = False
 
 
 @dataclass
@@ -153,6 +155,7 @@ class PackPlan:
     scan_result: ScanResult
     summaries: dict[str, Any]
     dep_graph: DependencyGraph
+    semantic_graph: SemanticGraphIndex
     all_changed: set[str]
     git_staged: set[str]
     recently_modified: list[str]
@@ -233,11 +236,12 @@ class FileRanker:
         self,
         packable: list[FileInfo],
         changes: ChangeSet,
-        dep_graph: DependencyGraph,
+        dep_graph: DependencyGraph | None,
         task: str,
         cfg: Any,
         summaries: dict | None = None,
         root: Path | None = None,
+        semantic_graph: SemanticGraphIndex | None = None,
         workspace_roots: list[str] | None = None,
         workspace_dependency_edges: dict[str, set[str]] | None = None,
     ) -> RankResult:
@@ -265,7 +269,8 @@ class FileRanker:
 
         for fi in packable:
             tests = find_related_tests(fi.path, all_paths)
-            dep_graph.nodes[fi.path].tests = tests
+            if dep_graph is not None:
+                dep_graph.nodes[fi.path].tests = tests
 
         churn_counts: dict[str, int] = {}
         co_changed_paths: dict[str, int] = {}
@@ -281,7 +286,7 @@ class FileRanker:
             changed_paths=changes.all_changed,
             staged_paths=changes.git_staged,
             recently_modified=changes.recently_modified,
-            dep_graph=dep_graph,
+            dep_graph=None,
             keywords=keyword_plan,
             include_tests=cfg.context.include_tests,
             include_configs=cfg.context.include_configs,
@@ -289,7 +294,10 @@ class FileRanker:
             summaries=summaries,
             churn_counts=churn_counts,
             co_changed_paths=co_changed_paths,
+            semantic_graph=semantic_graph,
         )
+        if semantic_graph is not None:
+            scored = _boost_semantic_graph_neighbors(scored, semantic_graph, changes.all_changed)
         scored = boost_monorepo_workspaces(
             scored,
             workspace_roots=workspace_roots or [],
@@ -298,8 +306,20 @@ class FileRanker:
             task=task,
             weights=cfg.scoring,
         )
-        scored = boost_recall_neighbors(scored, dep_graph, changes.all_changed, weights=cfg.scoring)
-        scored = boost_second_pass_expansion(scored, dep_graph, keyword_plan, weights=cfg.scoring)
+        scored = boost_recall_neighbors(
+            scored,
+            None,
+            changes.all_changed,
+            weights=cfg.scoring,
+            semantic_graph=semantic_graph,
+        )
+        scored = boost_second_pass_expansion(
+            scored,
+            None,
+            keyword_plan,
+            weights=cfg.scoring,
+            semantic_graph=semantic_graph,
+        )
         scored = boost_frontend_api_consumers(scored, summaries, keyword_plan, weights=cfg.scoring)
         scored = boost_api_endpoint_pairs(scored, keyword_plan, weights=cfg.scoring)
         scored = boost_cross_layer_related(scored, keyword_plan, weights=cfg.scoring)
@@ -321,6 +341,38 @@ class FileRanker:
             task_class_signals=task_classification.signals,
             scored=scored,
         )
+
+
+def _boost_semantic_graph_neighbors(
+    scored: list[tuple[FileInfo, float, list[str]]],
+    graph: SemanticGraphIndex,
+    changed_paths: set[str],
+) -> list[tuple[FileInfo, float, list[str]]]:
+    """Use canonical relationship evidence as a small ranking signal."""
+    related: dict[str, list[tuple[str, str, str]]] = {}
+    for path in sorted(changed_paths):
+        for row in graph.neighbors(path, limit=200):
+            target = row["node"].get("path")
+            if target and target != path:
+                evidence = (row.get("evidence") or [{}])[0]
+                location = str(evidence.get("path") or path)
+                if evidence.get("start_line"):
+                    location += f":{evidence['start_line']}"
+                related.setdefault(target, []).append((row["relationship"], row["edge_key"], location))
+    if not related:
+        return scored
+    boosted: list[tuple[FileInfo, float, list[str]]] = []
+    for file_info, score, reasons in scored:
+        relationships = related.get(file_info.path, [])
+        if not relationships:
+            boosted.append((file_info, score, reasons))
+            continue
+        unique_relationships = sorted({relationship for relationship, _edge_key, _location in relationships})
+        edge_keys = sorted({edge_key for _relationship, edge_key, _location in relationships})[:3]
+        evidence_locations = sorted({location for _relationship, _edge_key, location in relationships})[:2]
+        bonus = min(24.0, 8.0 + 4.0 * len(unique_relationships))
+        boosted.append((file_info, score + bonus, [*reasons, f"semantic graph: {', '.join(unique_relationships)} from changed file (edges: {', '.join(edge_keys)}; evidence: {', '.join(evidence_locations)})"]))
+    return sorted(boosted, key=lambda item: (-item[1], item[0].path))
 
 
 def _scan_metadata(
@@ -444,6 +496,7 @@ class PackPlanner:
         if selection_engine is not SelectionEngine.V1:
             raise NotImplementedError(f"selection engine {selection_engine.value} is not implemented")
         root = request.root
+        from agentpack.architecture.service import build_snapshot_for_ref
         cfg = load_config(root)
         requested_mode = request.mode or cfg.context.default_mode
         normalized_mode = normalize_mode(requested_mode)
@@ -513,7 +566,11 @@ class PackPlanner:
         phase_times["summarize"] = time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        dep_graph = dep_graph_mod.build(packable, root, summaries=summaries)
+        semantic_snapshot = build_snapshot_for_ref(
+            root,
+            verify_incremental=request.verify_incremental or request.task_source == "benchmark",
+        )
+        semantic_graph = SemanticGraphIndex(semantic_snapshot)
         phase_times["deps"] = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -533,11 +590,12 @@ class PackPlanner:
         rank_result = FileRanker().rank(
             packable,
             changes,
-            dep_graph,
+            None,
             request.task,
             cfg,
             summaries=summaries,
             root=root,
+            semantic_graph=semantic_graph,
             workspace_roots=workspace_roots,
             workspace_dependency_edges=workspace_dependency_edges,
         )
@@ -577,7 +635,8 @@ class PackPlanner:
             files=packable,
             scored=rank_result.scored,
             summaries=summaries,
-            dep_graph=dep_graph,
+            dep_graph=None,
+            semantic_graph=semantic_graph,
             changed_paths=changes.all_changed,
             budget_tokens=repo_map_budget,
         )
@@ -703,7 +762,10 @@ class PackPlanner:
             budget=effective_budget,
             scan_result=scan_result,
             summaries=summaries,
-            dep_graph=dep_graph,
+            # Compatibility projection is materialized only for legacy output
+            # consumers; internal planning uses semantic_graph.
+            dep_graph=to_dependency_graph(semantic_graph),
+            semantic_graph=semantic_graph,
             all_changed=changes.all_changed,
             git_staged=changes.git_staged,
             recently_modified=changes.recently_modified,
@@ -872,7 +934,7 @@ class PackService:
             packable,
             max_records=cfg.runtime.max_registry_records,
         )
-        pack_obj.task_map = build_task_map(pack_obj, plan.dep_graph, registry).model_dump(mode="json")
+        pack_obj.task_map = build_task_map(pack_obj, plan.semantic_graph, registry).model_dump(mode="json")
 
         adapter = AdapterRegistry.get(request.agent, cfg)
         packed_tokens = _fit_rendered_budget(pack_obj, adapter)
@@ -883,7 +945,7 @@ class PackService:
             packable,
             max_records=cfg.runtime.max_registry_records,
         )
-        pack_obj.task_map = build_task_map(pack_obj, plan.dep_graph, registry).model_dump(mode="json")
+        pack_obj.task_map = build_task_map(pack_obj, plan.semantic_graph, registry).model_dump(mode="json")
         packed_tokens = _settle_rendered_token_estimate(pack_obj, adapter)
         pack_obj.estimated_savings_percent = max(0.0, (1 - packed_tokens / all_tokens) * 100) if all_tokens > 0 else 0.0
         saving_pct = pack_obj.estimated_savings_percent
@@ -1080,6 +1142,20 @@ def _selected_file_metadata(selected: list[SelectedFile], task_map: dict[str, An
             "why": sf.reasons[0] if sf.reasons else "",
             "reasons": sf.reasons,
             "tokens": _sf_tokens(sf),
+            "symbols": [
+                {
+                    "name": symbol.name,
+                    "kind": symbol.kind,
+                    "start_line": symbol.start_line,
+                    "end_line": symbol.end_line,
+                    "signature": symbol.signature,
+                    "summary": symbol.summary,
+                    "node_id": symbol.node_id,
+                    "signature_hash": symbol.signature_hash,
+                    "source_hash": symbol.source_hash,
+                }
+                for symbol in sf.symbols[:20]
+            ],
             **_selected_task_map_metadata(task_map or {}, sf.path),
         }
         for sf in selected

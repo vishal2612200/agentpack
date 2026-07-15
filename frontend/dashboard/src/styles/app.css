@@ -2776,3 +2776,24 @@ pre {
     transition-duration: 0.01ms !important;
   }
 }
+/* Semantic graph evidence table */
+.semantic-graph-table { display: grid; gap: 12px; min-height: 420px; padding: 16px; background: var(--surface, #111827); border: 1px solid var(--border, #2a3444); }
+.semantic-graph-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.semantic-graph-toolbar label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: var(--muted, #9aa5b5); }
+.semantic-graph-toolbar select { min-height: 30px; padding: 4px 8px; border: 1px solid var(--border, #2a3444); background: var(--surface-raised, #182131); color: inherit; }
+.semantic-graph-receipts { display: grid; gap: 1px; overflow: auto; }
+.semantic-edge-row { display: grid; grid-template-columns: minmax(120px, 1fr) auto minmax(120px, 1fr); gap: 8px; align-items: center; padding: 10px; background: color-mix(in srgb, var(--surface-raised, #182131) 82%, transparent); }
+.semantic-edge-row small { grid-column: 1 / -1; color: var(--muted, #9aa5b5); overflow-wrap: anywhere; }
+.semantic-edge-type { color: var(--accent, #8bd3dd); font-size: 11px; text-transform: uppercase; }
+@media (max-width: 640px) { .semantic-edge-row { grid-template-columns: 1fr; } .semantic-edge-type { order: 3; } }
+.semantic-graph-network { display: grid; gap: 10px; min-height: 520px; }
+.semantic-network-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; padding: 10px 12px; border: 1px solid var(--border, #2a3444); background: var(--surface, #111827); }
+.semantic-network-toolbar label { display: inline-flex; align-items: center; gap: 6px; color: var(--muted, #9aa5b5); font-size: 12px; }
+.semantic-network-toolbar select { min-height: 30px; padding: 4px 8px; border: 1px solid var(--border, #2a3444); background: var(--surface-raised, #182131); color: inherit; }
+.semantic-network-canvas { min-height: 500px; border: 1px solid var(--border, #2a3444); background: var(--surface, #111827); }
+.semantic-network-canvas .react-flow__node { width: 190px; padding: 10px; border: 1px solid #46708c; border-radius: 6px; background: #172334; color: var(--text, #edf2f7); white-space: pre-line; font-size: 11px; line-height: 1.35; }
+.semantic-network-canvas .react-flow__node.unresolved { border-color: #b8784c; background: #2a211d; border-style: dashed; }
+.semantic-network-canvas .react-flow__edge-text { font-size: 10px; fill: var(--muted, #9aa5b5); }
+.semantic-network-receipt { display: grid; gap: 5px; padding: 12px; border-left: 3px solid #f6c453; background: var(--surface-raised, #182131); }
+.semantic-network-receipt small { color: var(--muted, #9aa5b5); overflow-wrap: anywhere; }
+.semantic-network-receipt p { margin: 0; color: var(--muted, #9aa5b5); }

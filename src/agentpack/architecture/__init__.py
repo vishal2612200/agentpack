@@ -6,6 +6,8 @@ from agentpack.architecture.models import (
     ArchitectureSnapshot,
     ArchitectureViolation,
 )
+from agentpack.architecture.index import SemanticGraphIndex
+from agentpack.architecture.store import GraphBuildResult, GraphBuildStats, SemanticGraphStore
 
 __all__ = [
     "ArchitectureCheckResult",
@@ -14,4 +16,8 @@ __all__ = [
     "ArchitectureEntity",
     "ArchitectureSnapshot",
     "ArchitectureViolation",
+    "SemanticGraphIndex",
+    "GraphBuildResult",
+    "GraphBuildStats",
+    "SemanticGraphStore",
 ]

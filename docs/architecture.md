@@ -43,8 +43,8 @@ provider prefix caches.
 ```
 1. Scan repo  →  apply .agentignore  →  skip generated AgentPack outputs  →  hash files
 2. Build offline summaries  →  role, imports, symbols, side effects, public API, errors, test hints
-3. Build import dependency graph  →  Python/JS/TS full, Go/Rust/Java/Kotlin best-effort
-4. Extract summary symbols       →  Python/JS/TS strongest, Go lightweight, others file-summary fallback
+3. Build canonical semantic graph  →  cached Tree-sitter records, dependency-aware materialization, two-pass resolution, source-line evidence
+4. Query the canonical graph  →  ranking, repo-map, task-map, ownership, and review impact
 5. Detect changed files  →  snapshot diff + git working tree + staged + optional --since ref
 6. Classify task  →  bugfix / feature / docs / release / infra / audit / test / ui / refactor
 7. Extract weighted task terms  →  literals, variants, concept synonyms, changed-file identifiers
@@ -90,16 +90,15 @@ provider prefix caches.
           │                   public API, naming     │
           │                   signals, errors        │
           │                                         │
-          │  Import graph  ──  Python AST           │
-          │  (6 languages)  ─  JS/TS regex          │
-          │                 ─  Go regex              │
-          │                 ─  Rust regex            │
-          │                 ─  Java/Kotlin regex     │
+          │  Semantic graph  ── Tree-sitter core    │
+          │  (two-pass)       ── definitions/scopes │
+          │                 ─  imports/calls/refs    │
+          │                 ─  inheritance/tests     │
+          │                 ─  comments/docs/config  │
           │                                         │
-          │  Symbol extract  ── Python AST (full)   │
-          │    (body via       ── JS/TS (functions, │
-          │  ast.get_source_segment)   classes,     │
-          │                    ── arrow fns w/ =>)  │
+          │  Evidence index ── stable IDs/hashes    │
+          │                 ─  source lines         │
+          │                 ─  confidence/provenance│
           │                                         │
           │  Naming signals ── public files/symbols │
           │                  ── env/config/test ids │

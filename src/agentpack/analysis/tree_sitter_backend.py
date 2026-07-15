@@ -1,9 +1,8 @@
-"""Optional tree-sitter backend for symbol and import extraction.
+"""Tree-sitter extraction backend for symbols, relationships, and evidence.
 
-Activated when `tree-sitter` and `tree-sitter-language-pack` are installed
-(via the `[tree-sitter]` extra). Callers should route through the guards in
-`symbols.extract_symbols` and `dependency_graph.build` — this module never
-imports itself as required.
+The standard AgentPack installation provides `tree-sitter` and
+`tree-sitter-language-pack`. The import guards remain so source checkouts can
+still report an honest unavailable capability instead of failing during scans.
 
 Design:
 - Grammars, parsers, and compiled queries are cached lazily per language.
@@ -13,7 +12,9 @@ Design:
 """
 from __future__ import annotations
 
+from dataclasses import dataclass, field
 from pathlib import Path
+import re
 from typing import TYPE_CHECKING
 from typing import Any
 from typing import Literal
@@ -34,12 +35,18 @@ else:
     QueryMatches = list[tuple[int, dict[str, list[object]]]]
 
 # Languages this backend can extract symbols for.
-TS_SYMBOL_LANGS: set[str] = {"java", "kotlin", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"}
+TS_SYMBOL_LANGS: set[str] = {
+    "python", "javascript", "typescript", "go", "rust",
+    "java", "kotlin", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql",
+}
 # Languages this backend can extract imports for.
 TS_IMPORT_LANGS: set[str] = {"kotlin", "ruby", "php", "protobuf"}
 
 # Map AgentPack's language string to tree-sitter-language-pack's grammar name.
-_TreeSitterGrammarName = Literal["java", "kotlin", "ruby", "php", "terraform", "dockerfile", "proto", "graphql"]
+_TreeSitterGrammarName = Literal[
+    "python", "javascript", "typescript", "go", "rust", "java", "kotlin", "ruby", "php",
+    "terraform", "dockerfile", "proto", "graphql",
+]
 _SymbolKind = Literal["class", "function", "method", "variable"]
 _TS_LANG_NAME: dict[str, _TreeSitterGrammarName] = {
     "java": "java",
@@ -50,6 +57,11 @@ _TS_LANG_NAME: dict[str, _TreeSitterGrammarName] = {
     "dockerfile": "dockerfile",
     "protobuf": "proto",  # the language pack calls this grammar "proto", not "protobuf"
     "graphql": "graphql",
+    "python": "python",
+    "javascript": "javascript",
+    "typescript": "typescript",
+    "go": "go",
+    "rust": "rust",
 }
 
 
@@ -86,7 +98,6 @@ def supports_language(language: str) -> bool:
         return False
     try:
         _get_parser(language)
-        _get_query(language)
     except Exception:
         return False
     return True
@@ -271,10 +282,13 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
 
     for node, name in method_matches:
         qualified = _qualify(name, node, class_node_ids, class_name_by_id)
+        kind: _SymbolKind = "method"
+        if language == "ruby" and not _enclosing_scope_chain(node, class_node_ids):
+            kind = "function"
         symbols.append(
             Symbol(
                 name=qualified,
-                kind="method",
+                kind=kind,
                 start_line=node.start_point[0] + 1,
                 end_line=node.end_point[0] + 1,
                 signature=_node_signature(node, src_bytes),
@@ -342,3 +356,417 @@ def extract_imports_ts(path: Path, cached_text: str | None, language: str) -> li
                 imports.append(raw)
                 seen.add(raw)
     return imports
+
+
+@dataclass(frozen=True)
+class SemanticSymbolFact:
+    name: str
+    kind: str
+    start_line: int
+    end_line: int
+    signature: str
+    body: str
+    node_id: int
+
+
+@dataclass(frozen=True)
+class SemanticRelationFact:
+    relation: str
+    source_symbol: str | None
+    target_name: str
+    start_line: int
+    end_line: int
+    note: str = ""
+    confidence_tier: str = "structured"
+
+
+@dataclass(frozen=True)
+class SemanticLocalEntityFact:
+    entity_type: str
+    name: str
+    start_line: int
+    end_line: int
+    source_symbol: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
+    note: str = ""
+    confidence_tier: str = "best_effort"
+
+
+@dataclass
+class SemanticFacts:
+    symbols: list[SemanticSymbolFact] = field(default_factory=list)
+    relations: list[SemanticRelationFact] = field(default_factory=list)
+    comments: list[tuple[str, int, int, str | None]] = field(default_factory=list)
+    exports: list[str] = field(default_factory=list)
+    reexports: list[str] = field(default_factory=list)
+    aliases: dict[str, str] = field(default_factory=dict)
+    local_entities: list[SemanticLocalEntityFact] = field(default_factory=list)
+
+
+_DEFINITION_TYPES = {
+    "function_definition", "function_declaration", "method_definition", "method_declaration",
+    "class_definition", "class_declaration", "interface_declaration", "struct_item", "enum_item",
+    "trait_item", "impl_item", "module", "module_definition", "singleton_method",
+}
+_CALL_TYPES = {
+    "call", "call_expression", "function_call", "method_invocation", "command_invocation",
+}
+_IMPORT_TYPES = {
+    "import_statement", "import_from_statement", "import_declaration", "import_spec", "use_declaration", "using_directive",
+    "package_clause", "preproc_include", "require_statement",
+}
+_INHERIT_TYPES = {"class_definition", "class_declaration", "interface_declaration", "struct_item", "impl_item"}
+_IDENTIFIER_TYPES = {"identifier", "type_identifier", "field_identifier", "shorthand_field_identifier", "constant"}
+
+
+def extract_semantic_facts(
+    path: Path,
+    language: str,
+    cached_text: str | None = None,
+    *,
+    extract_references: bool = True,
+    max_references_per_symbol: int = 24,
+) -> SemanticFacts:
+    """Extract deterministic semantic facts using the grammar's concrete tree.
+
+    This intentionally returns raw relationship candidates. Resolution is a
+    repository concern and belongs in the architecture service's second pass.
+    Unknown grammar constructs are retained as file-level facts by callers.
+    """
+    if language not in TS_SYMBOL_LANGS or not is_available():
+        return SemanticFacts()
+    try:
+        source = cached_text.encode("utf-8", errors="replace") if cached_text is not None else path.read_bytes()
+        tree = _get_parser(language).parse(source)
+    except (OSError, Exception):
+        return SemanticFacts()
+
+    facts = SemanticFacts()
+    definition_nodes: dict[int, SemanticSymbolFact] = {}
+    definition_tree_nodes: dict[int, Node] = {}
+    definition_name_nodes: set[int] = set()
+    import_nodes: set[int] = set()
+    call_name_nodes: set[int] = set()
+
+    def text(node: Node) -> str:
+        return _node_text(node).strip()
+
+    def line_range(node: Node) -> tuple[int, int]:
+        return node.start_point[0] + 1, node.end_point[0] + 1
+
+    def name_for(node: Node) -> str:
+        name_node = node.child_by_field_name("name")
+        if name_node is not None:
+            return text(name_node)
+        for child in node.named_children:
+            if child.type in {"identifier", "type_identifier", "field_identifier", "constant"}:
+                return text(child)
+        return ""
+
+    def containing_symbol(node: Node) -> str | None:
+        parent = node.parent
+        while parent is not None:
+            candidate = definition_nodes.get(parent.id)
+            if candidate is not None:
+                return candidate.name
+            parent = parent.parent
+        return None
+
+    def descendants(node: Node):
+        yield node
+        for child in node.named_children:
+            yield from descendants(child)
+
+    nodes = list(descendants(tree.root_node))
+
+    for node in nodes:
+        if node.type not in _DEFINITION_TYPES:
+            continue
+        name = name_for(node)
+        if not name:
+            continue
+        parent = node.parent
+        scope_parts: list[str] = []
+        while parent is not None:
+            enclosing = definition_nodes.get(parent.id)
+            if enclosing is not None:
+                scope_parts.append(enclosing.name)
+            parent = parent.parent
+        qualified = ".".join([*reversed(scope_parts), name])
+        start, end = line_range(node)
+        kind = "class" if "class" in node.type or "interface" in node.type or node.type in {"struct_item", "trait_item", "impl_item"} else "function"
+        if scope_parts and kind == "function":
+            kind = "method"
+        if name.lower().startswith(("test", "it", "describe")):
+            kind = "test"
+        fact = SemanticSymbolFact(qualified, kind, start, end, text(node).split("\n", 1)[0][:160], text(node), node.id)
+        definition_nodes[node.id] = fact
+        definition_tree_nodes[node.id] = node
+        definition_name = node.child_by_field_name("name")
+        if definition_name is not None:
+            definition_name_nodes.add(definition_name.id)
+        facts.symbols.append(fact)
+
+    for node in nodes:
+        start, end = line_range(node)
+        owner = containing_symbol(node)
+        if node.type == "comment":
+            facts.comments.append((text(node), start, end, owner))
+            continue
+        if node.type in _IMPORT_TYPES or node.type in {"import", "use_clause", "import_clause"}:
+            raw = text(node)
+            target = _import_target(raw, language)
+            if target:
+                facts.relations.append(SemanticRelationFact("imports", owner, target, start, end, raw))
+            import_nodes.add(node.id)
+            continue
+        if node.type in _CALL_TYPES:
+            target_node = node.child_by_field_name("function") or node.child_by_field_name("method")
+            target = text(target_node) if target_node is not None else _call_target(text(node))
+            if target:
+                facts.relations.append(SemanticRelationFact("calls", owner, target, start, end, text(node).split("(", 1)[0]))
+                if target_node is not None:
+                    call_name_nodes.add(target_node.id)
+            continue
+        if node.type in _INHERIT_TYPES:
+            for field_name, relation in (("superclass", "inherits"), ("interfaces", "implements"), ("type", "implements"), ("trait", "implements")):
+                field_node = node.child_by_field_name(field_name)
+                if field_node is not None and text(field_node):
+                    facts.relations.append(SemanticRelationFact(relation, name_for(node) or owner, text(field_node), start, end, field_name))
+            if node.type == "impl_item":
+                raw = text(node)
+                match = re.search(r"^impl(?:<[^>]+>)?\s+([^\s{]+)\s+for\s+([^\s{]+)", raw)
+                if match:
+                    facts.relations.append(SemanticRelationFact("implements", owner, match.group(1), start, end, "rust impl trait"))
+
+    # Generic identifier references are deliberately conservative: capture
+    # names inside a definition body, but exclude declarations, imports, and
+    # call heads. The resolver decides whether a name is local, ambiguous, or
+    # external and preserves that outcome in the graph.
+    seen_refs: set[tuple[str, str]] = set()
+    reference_counts: dict[str, int] = {}
+    for node in nodes if extract_references else []:
+        if node.type not in _IDENTIFIER_TYPES or node.id in definition_name_nodes or node.id in call_name_nodes:
+            continue
+        if any(ancestor.id in import_nodes for ancestor in _ancestors(node)):
+            continue
+        owner = containing_symbol(node)
+        if not owner:
+            continue
+        target = text(node)
+        if not target or target in {"self", "this", "true", "false", "None", "null"}:
+            continue
+        key = (owner, target)
+        if key in seen_refs:
+            continue
+        if reference_counts.get(owner, 0) >= max_references_per_symbol:
+            continue
+        seen_refs.add(key)
+        reference_counts[owner] = reference_counts.get(owner, 0) + 1
+        start, end = line_range(node)
+        facts.relations.append(SemanticRelationFact("references", owner, target, start, end, "identifier reference", "best_effort"))
+
+    source_text = source.decode("utf-8", errors="replace")
+    _supplement_language_facts(facts, source_text, language)
+    facts.exports, facts.reexports = _export_metadata(source_text, language)
+    facts.aliases = _alias_metadata(source_text, language)
+
+    # A string literal immediately inside a definition is a docstring in
+    # Python and a common documentation form in several DSL grammars.
+    for symbol in facts.symbols:
+        node = definition_tree_nodes.get(symbol.node_id)
+        if node is None or not node.named_children:
+            continue
+        first = node.named_children[0]
+        if first.type in {"string", "string_literal", "interpreted_string_literal"}:
+            value = text(first)
+            if value:
+                start, end = line_range(first)
+                facts.comments.append((value, start, end, symbol.name))
+    return facts
+
+
+def _supplement_language_facts(facts: SemanticFacts, source: str, language: str) -> None:
+    """Cover stable declaration forms missing from older grammar node names."""
+    patterns: list[tuple[str, str]] = []
+    if language == "rust":
+        patterns = [(r"\b(?:pub\s+)?fn\s+([A-Za-z_]\w*)\s*\(", "function")]
+    elif language == "kotlin":
+        patterns = [(r"\b(?:public\s+|private\s+|protected\s+|internal\s+|override\s+)*fun\s+([A-Za-z_]\w*)\s*\(", "function")]
+    elif language == "ruby":
+        patterns = [
+            (r"\bmodule\s+([A-Za-z_:][\w:]*)", "class"),
+            (r"\bclass\s+([A-Za-z_:][\w:]*)", "class"),
+            (r"\bdef\s+([A-Za-z_]\w*[!?=]?)", "function"),
+        ]
+    for pattern, kind in patterns:
+        for match in re.finditer(pattern, source):
+            name = match.group(1)
+            if any(symbol.name == name or symbol.name.endswith("." + name) for symbol in facts.symbols):
+                continue
+            line = source.count("\n", 0, match.start()) + 1
+            facts.symbols.append(
+                SemanticSymbolFact(
+                    name=name,
+                    kind=kind,
+                    start_line=line,
+                    end_line=line,
+                    signature=match.group(0).strip(),
+                    body=match.group(0).strip(),
+                    node_id=-match.start() - 1,
+                )
+            )
+    if language in {"java", "kotlin"}:
+        for match in re.finditer(r"\bclass\s+([A-Za-z_]\w*)\s*:\s*([A-Za-z_][\w.]*)", source):
+            line = source.count("\n", 0, match.start()) + 1
+            candidate = SemanticRelationFact("implements", match.group(1), match.group(2), line, line, "kotlin interface implementation")
+            if not any(
+                item.relation == candidate.relation
+                and item.source_symbol == candidate.source_symbol
+                and item.target_name == candidate.target_name
+                for item in facts.relations
+            ):
+                facts.relations.append(candidate)
+    if language == "php":
+        for match in re.finditer(
+            r"\bclass\s+([A-Za-z_]\w*)\s*(?:extends\s+([A-Za-z_]\w*))?\s*(?:implements\s+([A-Za-z_][\w]*(?:\s*,\s*[A-Za-z_][\w]*)*))?",
+            source,
+        ):
+            source_symbol = match.group(1)
+            line = source.count("\n", 0, match.start()) + 1
+            candidates: list[tuple[str, str]] = []
+            if match.group(2):
+                candidates.append(("inherits", match.group(2)))
+            if match.group(3):
+                candidates.extend(("implements", value.strip()) for value in match.group(3).split(","))
+            for relation, target in candidates:
+                candidate = SemanticRelationFact(relation, source_symbol, target, line, line, "php declaration relationship")
+                if not any(
+                    item.relation == candidate.relation
+                    and item.source_symbol == candidate.source_symbol
+                    and item.target_name == candidate.target_name
+                    for item in facts.relations
+                ):
+                    facts.relations.append(candidate)
+    if language == "rust":
+        # Some Rust grammars expose a one-line function body without attaching
+        # the call node to its function declaration. Re-anchor those calls to
+        # the lexical function while preserving the raw qualified target.
+        facts.relations[:] = [
+            relation
+            for relation in facts.relations
+            if not (relation.relation == "calls" and relation.source_symbol is None and "::" in relation.target_name)
+        ]
+        for match in re.finditer(r"\bfn\s+([A-Za-z_]\w*)[^{}]*\{([^{}]*)\}", source, re.DOTALL):
+            source_symbol = match.group(1)
+            body_start = match.start(2)
+            for call in re.finditer(r"([A-Za-z_]\w*::[A-Za-z_]\w*)\s*\(", match.group(2)):
+                line = source.count("\n", 0, body_start + call.start()) + 1
+                candidate = SemanticRelationFact(
+                    "calls",
+                    source_symbol,
+                    call.group(1),
+                    line,
+                    line,
+                    "rust qualified call",
+                )
+                if not any(
+                    item.relation == candidate.relation
+                    and item.source_symbol == candidate.source_symbol
+                    and item.target_name == candidate.target_name
+                    for item in facts.relations
+                ):
+                    facts.relations.append(candidate)
+
+
+def _export_metadata(source: str, language: str) -> tuple[list[str], list[str]]:
+    """Collect export metadata without inventing export edges."""
+    exports: set[str] = set()
+    reexports: set[str] = set()
+    if language in {"javascript", "typescript"}:
+        exports.update(re.findall(r"\bexport\s+(?:default\s+)?(?:async\s+)?(?:function|class|const|let|var|interface|type|enum)\s+([A-Za-z_$][\w$]*)", source))
+        for match in re.finditer(r"\bexport\s*\{([^}]+)\}(?:\s*from\s*[\"']([^\"']+))?", source):
+            exports.update(part.strip().split(" as ")[-1] for part in match.group(1).split(",") if part.strip())
+            if match.group(2):
+                reexports.add(match.group(2))
+    elif language == "python":
+        for match in re.finditer(r"__all__\s*=\s*\[([^]]*)\]", source, re.DOTALL):
+            exports.update(re.findall(r"[\"']([A-Za-z_]\w*)[\"']", match.group(1)))
+    elif language == "go":
+        exports.update(name for name in re.findall(r"\b(?:func|type|var|const)\s+([A-Za-z_]\w*)", source) if name[:1].isupper())
+    elif language == "rust":
+        exports.update(re.findall(r"\bpub\s+(?:async\s+)?(?:fn|struct|enum|trait|mod|const|static)\s+([A-Za-z_]\w*)", source))
+    elif language in {"java", "kotlin"}:
+        exports.update(re.findall(r"\bpublic\s+(?:static\s+)?(?:class|interface|enum|fun|void|[A-Za-z_]\w*\s+)?([A-Za-z_]\w*)\s*[(<{]", source))
+    elif language == "ruby":
+        exports.update(re.findall(r"\b(?:class|module|def)\s+([A-Za-z_:][\w:]*)", source))
+    elif language == "php":
+        exports.update(re.findall(r"\b(?:class|interface|trait|function)\s+([A-Za-z_]\w*)", source))
+    return sorted(exports), sorted(reexports)
+
+
+def _alias_metadata(source: str, language: str) -> dict[str, str]:
+    aliases: dict[str, str] = {}
+    if language == "python":
+        for match in re.finditer(r"^\s*from\s+([\w.]+)\s+import\s+([\w]+)(?:\s+as\s+([\w]+))?", source, re.MULTILINE):
+            aliases[match.group(3) or match.group(2)] = f"{match.group(1)}.{match.group(2)}"
+        for match in re.finditer(r"^\s*import\s+([\w.]+)(?:\s+as\s+([\w]+))?", source, re.MULTILINE):
+            aliases[match.group(2) or match.group(1).split(".")[-1]] = match.group(1)
+    elif language in {"javascript", "typescript"}:
+        for match in re.finditer(r"\bimport\s+(?:type\s+)?([A-Za-z_$][\w$]*)\s+from\s+[\"']([^\"']+)", source):
+            aliases[match.group(1)] = match.group(1)
+        for match in re.finditer(r"\bimport\s*\{([^}]+)\}\s*from", source):
+            for item in match.group(1).split(","):
+                parts = re.split(r"\s+as\s+", item.strip())
+                if parts and parts[0]:
+                    aliases[parts[-1].strip()] = parts[0].strip()
+    elif language == "go":
+        for match in re.finditer(r"^\s*(?:(\w+)\s+)?[\"']([^\"']+)[\"']", source, re.MULTILINE):
+            aliases[match.group(1) or Path(match.group(2)).stem] = Path(match.group(2)).stem
+    elif language == "rust":
+        for match in re.finditer(r"\buse\s+([^;]+?)\s+as\s+([A-Za-z_][\w]*)", source):
+            aliases[match.group(2)] = match.group(1).split("::")[-1]
+    elif language in {"java", "kotlin"}:
+        for match in re.finditer(r"^\s*import\s+([\w.]+)", source, re.MULTILINE):
+            aliases[match.group(1).split(".")[-1]] = match.group(1)
+    elif language == "php":
+        for match in re.finditer(r"\buse\s+([^;]+?)(?:\s+as\s+([A-Za-z_][\w]*))?\s*;", source):
+            qualified = match.group(1).strip().replace("\\", ".")
+            aliases[match.group(2) or qualified.rsplit(".", 1)[-1]] = qualified
+    elif language == "ruby":
+        for match in re.finditer(r"\brequire\s+[\"']([^\"']+)[\"']", source):
+            aliases[Path(match.group(1)).stem] = Path(match.group(1)).stem
+    return aliases
+
+
+def _ancestors(node: Node):
+    parent = node.parent
+    while parent is not None:
+        yield parent
+        parent = parent.parent
+
+
+def _import_target(raw: str, language: str) -> str:
+    value = raw.strip().rstrip(";")
+    if language in {"javascript", "typescript"}:
+        match = re.search(r"(?:from|require\s*\()\s*[\"']([^\"']+)", value)
+        return match.group(1) if match else ""
+    if language == "python":
+        match = re.match(r"from\s+([\w.]+)\s+import", value)
+        if match:
+            return match.group(1)
+        match = re.match(r"import\s+([\w.]+)", value)
+        return match.group(1) if match else ""
+    if language == "go":
+        match = re.search(r"[\"']([^\"']+)[\"']", value)
+        return match.group(1) if match else ""
+    if language == "rust":
+        match = re.match(r"use\s+([^;]+)", value)
+        return match.group(1).strip() if match else ""
+    match = re.search(r"[\"']([^\"']+)[\"']", value)
+    return match.group(1) if match else value.split()[1] if len(value.split()) > 1 else ""
+
+
+def _call_target(raw: str) -> str:
+    match = re.search(r"(?:call|invoke)?\s*([A-Za-z_$][\w$.:]*)\s*\(", raw)
+    return match.group(1) if match else ""

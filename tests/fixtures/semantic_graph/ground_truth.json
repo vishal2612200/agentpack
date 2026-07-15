@@ -1,0 +1,82 @@
+{
+  "fixture_version": "semantic-core-v1",
+  "description": "Deterministic semantic graph expectations used by local and benchmark tests.",
+  "languages": {
+    "python": {
+      "source": "class TokenStore:\n    def lookup(self, value):\n        return value\n\ndef validate(value):\n    return TokenStore().lookup(value)\n",
+      "entities": ["TokenStore", "lookup", "validate"],
+      "relationships": [
+        {"source": "validate", "relationship": "calls", "target": "TokenStore"},
+        {"source": "validate", "relationship": "references", "target": "TokenStore"}
+      ]
+    },
+    "javascript": {
+      "source": "export function lookup(value) { return value; }\nexport function validate(value) { return lookup(value); }\n",
+      "entities": ["lookup", "validate"],
+      "relationships": [
+        {"source": "validate", "relationship": "calls", "target": "lookup"}
+      ]
+    },
+    "typescript": {
+      "source": "export interface Token { value: string }\nexport function validate(token: Token) { return token.value; }\n",
+      "entities": ["Token", "validate"],
+      "relationships": [
+        {"source": "validate", "relationship": "references", "target": "Token"}
+      ]
+    },
+    "go": {
+      "source": "package auth\n\ntype TokenStore struct{}\nfunc (TokenStore) Lookup(value string) string { return value }\nfunc Validate(value string) string { return TokenStore{}.Lookup(value) }\n",
+      "entities": ["TokenStore", "Lookup", "Validate"],
+      "relationships": [
+        {"source": "Validate", "relationship": "calls", "target": "Lookup"}
+      ]
+    },
+    "rust": {
+      "source": "pub struct TokenStore;\nimpl TokenStore { pub fn lookup(value: &str) -> &str { value } }\npub fn validate(value: &str) -> &str { TokenStore::lookup(value) }\n",
+      "entities": ["TokenStore", "lookup", "validate"],
+      "relationships": [
+        {"source": "validate", "relationship": "calls", "target": "lookup"}
+      ]
+    },
+    "java": {
+      "source": "package auth;\npublic class TokenStore { public String lookup(String value) { return value; } }\npublic class AuthService { public String validate(String value) { return value; } }\n",
+      "entities": ["TokenStore", "lookup", "AuthService", "validate"],
+      "relationships": []
+    },
+    "kotlin": {
+      "source": "package auth\ninterface TokenStore { fun lookup(value: String): String }\nclass AuthService : TokenStore { override fun lookup(value: String) = value }\n",
+      "entities": ["TokenStore", "lookup", "AuthService"],
+      "relationships": [
+        {"source": "AuthService", "relationship": "implements", "target": "TokenStore"}
+      ]
+    },
+    "ruby": {
+      "source": "module Auth\n  class TokenStore\n    def lookup(value)\n      value\n    end\n  end\nend\n",
+      "entities": ["Auth", "TokenStore", "lookup"],
+      "relationships": []
+    },
+    "php": {
+      "source": "<?php\nnamespace Auth;\ninterface TokenStore { public function lookup(string $value): string; }\nclass AuthService implements TokenStore { public function lookup(string $value): string { return $value; } }\n",
+      "entities": ["TokenStore", "lookup", "AuthService"],
+      "relationships": [
+        {"source": "AuthService", "relationship": "implements", "target": "TokenStore"}
+      ]
+    }
+  },
+  "ambiguity_cases": [
+    {"source": "use.py", "target": "render", "resolution": "ambiguous"},
+    {"source": "missing.py", "target": "external_package", "resolution": "unresolved"}
+  ],
+  "path_cases": [
+    {
+      "source": "validate",
+      "target": "lookup",
+      "relationships": ["calls"]
+    }
+  ],
+  "incremental": {
+    "scenario": "change one provider file",
+    "max_parsed_files": 1,
+    "expected_affected_files": ["provider.py", "consumer.py"]
+  }
+}

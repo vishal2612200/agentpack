@@ -16,7 +16,7 @@ from agentpack.core.project_index import register_project
 from agentpack.dashboard.action_history import read_action_history, record_dashboard_action
 from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
 from agentpack.dashboard.app_shell import DASHBOARD_APP_DIR, render_dashboard_shell
-from agentpack.dashboard.collectors import build_project_dashboard_snapshot
+from agentpack.dashboard.collectors import build_project_dashboard_snapshot, semantic_graph_summary
 from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
@@ -125,17 +125,17 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             self._send_json(self.server.state.payload())
             return
-        if parsed.path in {"/api/map", "/api/actions/history"}:
+        if parsed.path in {"/api/map", "/api/graph", "/api/actions/history"}:
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
-            self._send_json(self._section_payload(parsed.path))
+            self._send_json(self._section_payload(parsed.path, parsed.query))
             return
         if parsed.path in {"/api/config", "/api/tasks", "/api/threads"}:
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
-            self._send_json(self._section_payload(parsed.path))
+            self._send_json(self._section_payload(parsed.path, parsed.query))
             return
         if parsed.path == "/api/projects":
             if not self._authorized(parsed):
@@ -253,8 +253,24 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return {}
         return payload if isinstance(payload, dict) else {}
 
-    def _section_payload(self, path: str) -> dict[str, Any]:
+    def _section_payload(self, path: str, query_string: str = "") -> dict[str, Any]:
         snapshot = build_project_dashboard_snapshot(self.server.state.root)
+        if path == "/api/graph":
+            query = urllib.parse.parse_qs(query_string)
+            try:
+                limit = int(query.get("limit", ["200"])[0] or "200")
+            except (TypeError, ValueError):
+                limit = 200
+            graph = semantic_graph_summary(
+                self.server.state.root,
+                relationship=query.get("relationship", [""])[0],
+                confidence=query.get("confidence", [""])[0],
+                language=query.get("language", [""])[0],
+                evidence_source=query.get("evidence_source", [""])[0],
+                query=query.get("query", [""])[0],
+                limit=limit,
+            )
+            return {"semantic_graph": graph.model_dump(mode="json")}
         if path == "/api/map":
             graph = build_dashboard_graph(snapshot, self.server.state.root)
             return {"map": build_dashboard_map(snapshot, graph).model_dump(mode="json")}

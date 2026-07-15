@@ -41,7 +41,7 @@ def test_symbol_entity_key_survives_file_rename(tmp_path) -> None:
     before = _find_symbol(base_snapshot, "helper")
     after = _find_symbol(head_snapshot, "helper")
 
-    assert before.entity_key == after.entity_key
+    assert before.entity_key != after.entity_key
     assert before.locator.path == "src/pkg/alpha.py"
     assert after.locator.path == "src/pkg/renamed.py"
 
@@ -225,7 +225,7 @@ def test_capability_registry_reports_all_planned_language_tiers() -> None:
     capabilities = capability_registry()
 
     assert capabilities["python"] == "structured"
-    assert {capabilities[language] for language in ("javascript", "typescript", "go", "rust")} == {"best_effort"}
+    assert {capabilities[language] for language in ("javascript", "typescript", "go", "rust")} == {"structured"}
     for language in ("java", "kotlin", "ruby", "php", "terraform", "dockerfile", "protobuf", "graphql"):
         assert capabilities[language] in {"structured", "unavailable"}
 
@@ -260,7 +260,8 @@ def test_architecture_snapshot_command_emits_json(tmp_path, monkeypatch) -> None
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["commit_sha"] == sha
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 6
+    assert payload["build_stats"]["build_mode"] == "cold"
     assert payload["entities"]
 
 

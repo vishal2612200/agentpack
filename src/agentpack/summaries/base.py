@@ -5,7 +5,7 @@ import multiprocessing
 import os
 from pathlib import Path
 
-from agentpack.core.models import FileInfo, FileSummary
+from agentpack.core.models import FileInfo, FileSummary, SUMMARY_EXTRACTOR_PROFILE
 from agentpack.core import cache as summary_cache
 from agentpack.summaries import offline
 
@@ -30,7 +30,9 @@ def get_or_build_summary(fi: FileInfo, root: Path) -> FileSummary:
     if key and key in _SUMMARY_MEMORY_CACHE:
         return _SUMMARY_MEMORY_CACHE[key]
 
-    cached = summary_cache.load_summary(root, fi.path, fi.hash, "offline")
+    cached = summary_cache.load_summary(
+        root, fi.path, fi.hash, "offline", extractor_profile_hash=SUMMARY_EXTRACTOR_PROFILE
+    )
     if cached:
         if key:
             _SUMMARY_MEMORY_CACHE[key] = cached
@@ -59,7 +61,9 @@ def build_all_summaries(
             return _SUMMARY_MEMORY_CACHE[key]
         if fi.hash is None:
             return None
-        cached = summary_cache.load_summary(root, fi.path, fi.hash, "offline")
+        cached = summary_cache.load_summary(
+            root, fi.path, fi.hash, "offline", extractor_profile_hash=SUMMARY_EXTRACTOR_PROFILE
+        )
         if cached and key:
             _SUMMARY_MEMORY_CACHE[key] = cached
         return cached

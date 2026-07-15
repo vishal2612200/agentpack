@@ -525,6 +525,19 @@ class ActionHistoryRow(BaseModel):
     follow_up_actions: list[str] = Field(default_factory=list)
 
 
+class SemanticGraphSummary(BaseModel):
+    schema_version: int = 0
+    commit_sha: str = ""
+    entity_count: int = 0
+    edge_count: int = 0
+    unresolved_count: int = 0
+    capabilities: dict[str, str] = Field(default_factory=dict)
+    cache_stats: dict[str, Any] = Field(default_factory=dict)
+    relationship_counts: dict[str, int] = Field(default_factory=dict)
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""
@@ -553,3 +566,4 @@ class DashboardSnapshot(BaseModel):
     artifacts: list[ArtifactRow] = Field(default_factory=list)
     projects: list[ProjectCandidate] = Field(default_factory=list)
     task_history: list[TaskHistoryRow] = Field(default_factory=list)
+    semantic_graph: SemanticGraphSummary = Field(default_factory=SemanticGraphSummary)

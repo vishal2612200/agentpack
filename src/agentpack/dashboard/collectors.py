@@ -22,6 +22,7 @@ from agentpack.core.mcp_runtime import check_mcp_runtime
 from agentpack.core.project_index import load_project_index
 from agentpack.core.task_freshness import task_freshness
 from agentpack.core.thread_context import list_thread_rows
+from agentpack.architecture.service import build_snapshot_for_ref
 from agentpack.dashboard.models import (
     ArtifactRow,
     BenchmarkSummary,
@@ -57,6 +58,7 @@ from agentpack.dashboard.models import (
     TaskMapFileRow,
     ThreadRow,
     ThreadSummary,
+    SemanticGraphSummary,
 )
 from agentpack.learning.sessions import summarize_weak_spots
 from agentpack.learning.task_memory import recent_task_memories, recent_task_start_snapshots
@@ -276,6 +278,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     task_control = _task_control_rows(root, meta)
     task_history = _task_history_rows(root, task_control, thread_rows)
     projects = _project_candidates(root, thread_rows, task_history)
+    semantic_graph = _semantic_graph_summary(root)
 
     return DashboardSnapshot(
         generated_at=datetime.now(timezone.utc).isoformat(),
@@ -308,7 +311,98 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
         artifacts=_artifact_rows(root),
         projects=projects,
         task_history=task_history,
+        semantic_graph=semantic_graph,
     )
+
+
+def semantic_graph_summary(
+    root: Path,
+    *,
+    relationship: str = "",
+    confidence: str = "",
+    language: str = "",
+    evidence_source: str = "",
+    query: str = "",
+    limit: int = 200,
+) -> SemanticGraphSummary:
+    try:
+        snapshot = build_snapshot_for_ref(root)
+    except Exception as exc:
+        return SemanticGraphSummary(capabilities={"error": str(exc)})
+    relationship_counts: Counter[str] = Counter(edge.edge_type for edge in snapshot.edges)
+    entity_by_key = {entity.entity_key: entity for entity in snapshot.entities}
+    safe_limit = max(1, min(int(limit), 500))
+    query_terms = [term.lower() for term in query.split() if term.strip()]
+
+    def matches_entity(entity) -> bool:
+        if entity is None:
+            return False
+        if language and entity.language != language:
+            return False
+        if not query_terms:
+            return True
+        haystack = " ".join((entity.qualified_name, entity.display_name, entity.locator.path)).lower()
+        return all(term in haystack for term in query_terms)
+
+    filtered_edges = [
+        edge
+        for edge in snapshot.edges
+        if (not relationship or edge.edge_type == relationship)
+        and (not confidence or edge.confidence_tier == confidence)
+        and (not evidence_source or any(evidence.source == evidence_source for evidence in edge.evidence))
+        and (
+            not query_terms
+            or matches_entity(entity_by_key.get(edge.source_entity_key))
+            or matches_entity(entity_by_key.get(edge.target_entity_key))
+        )
+        and (
+            not language
+            or matches_entity(entity_by_key.get(edge.source_entity_key))
+            or matches_entity(entity_by_key.get(edge.target_entity_key))
+        )
+    ][:safe_limit]
+    visible_keys = {key for edge in filtered_edges for key in (edge.source_entity_key, edge.target_entity_key)}
+    visible_entities = [entity for entity in snapshot.entities if entity.entity_key in visible_keys]
+    entities = [
+        {
+            "entity_key": entity.entity_key,
+            "type": entity.entity_type,
+            "name": entity.qualified_name,
+            "path": entity.locator.path,
+            "line": entity.locator.start_line,
+            "language": entity.language,
+            "confidence_tier": entity.confidence_tier,
+        }
+        for entity in visible_entities[: safe_limit * 2]
+    ]
+    edges = [
+        {
+            "edge_key": edge.edge_key,
+            "relationship": edge.edge_type,
+            "source": edge.source_entity_key,
+            "target": edge.target_entity_key,
+            "source_name": entity_by_key.get(edge.source_entity_key).qualified_name if entity_by_key.get(edge.source_entity_key) else edge.source_entity_key,
+            "target_name": entity_by_key.get(edge.target_entity_key).qualified_name if entity_by_key.get(edge.target_entity_key) else edge.target_entity_key,
+            "confidence_tier": edge.confidence_tier,
+            "evidence": [evidence.model_dump(mode="json") for evidence in edge.evidence],
+        }
+        for edge in filtered_edges
+    ]
+    return SemanticGraphSummary(
+        schema_version=snapshot.schema_version,
+        commit_sha=snapshot.commit_sha,
+        entity_count=len(snapshot.entities),
+        edge_count=len(snapshot.edges),
+        unresolved_count=sum(1 for entity in snapshot.entities if entity.entity_type in {"external", "unresolved"}),
+        capabilities=snapshot.capabilities,
+        cache_stats=snapshot.cache_stats,
+        relationship_counts=dict(sorted(relationship_counts.items())),
+        entities=entities,
+        edges=edges,
+    )
+
+
+_semantic_graph_summary = semantic_graph_summary
 
 
 def _project_info(root: Path, meta: dict[str, Any] | None) -> ProjectInfo:

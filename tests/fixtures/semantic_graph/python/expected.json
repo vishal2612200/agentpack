@@ -1,0 +1,14 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "python",
+  "entities": ["TokenStore", "lookup", "validate"],
+  "relationships": [
+    {"source": "validate", "relationship": "calls", "target": "TokenStore", "path": "source.py", "start_line": 6, "end_line": 6},
+    {"source": "validate", "relationship": "calls", "target": "lookup", "path": "source.py", "start_line": 6, "end_line": 6}
+  ],
+  "paths": [{"source": "validate", "target": "lookup", "relationships": ["calls"]}],
+  "invalidation": {"changed": "source.py", "max_parsed_files": 1},
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.py", "expected_absent": ["source.py"]}
+}

@@ -23,6 +23,8 @@ dependencies = [
     { name = "tiktoken" },
     { name = "tomli", marker = "python_full_version < '3.11'" },
     { name = "tomli-w" },
+    { name = "tree-sitter" },
+    { name = "tree-sitter-language-pack" },
     { name = "typer" },
     { name = "watchdog" },
 ]
@@ -45,10 +47,6 @@ dev = [
 mcp = [
     { name = "mcp" },
 ]
-tree-sitter = [
-    { name = "tree-sitter" },
-    { name = "tree-sitter-language-pack" },
-]
 watch = [
     { name = "watchdog" },
 ]
@@ -69,10 +67,10 @@ requires-dist = [
     { name = "tomli", marker = "python_full_version < '3.11'", specifier = ">=2.0.0" },
     { name = "tomli", marker = "python_full_version < '3.11' and extra == 'dev'", specifier = ">=2.0.0" },
     { name = "tomli-w", specifier = ">=1.0.0" },
+    { name = "tree-sitter", specifier = ">=0.23.2" },
     { name = "tree-sitter", marker = "extra == 'all'", specifier = ">=0.23.2" },
-    { name = "tree-sitter", marker = "extra == 'tree-sitter'", specifier = ">=0.23.2" },
+    { name = "tree-sitter-language-pack", specifier = ">=0.7.4" },
     { name = "tree-sitter-language-pack", marker = "extra == 'all'", specifier = ">=0.7.4" },
-    { name = "tree-sitter-language-pack", marker = "extra == 'tree-sitter'", specifier = ">=0.7.4" },
     { name = "typer", specifier = ">=0.12.0" },
     { name = "watchdog", specifier = ">=4.0.0" },
     { name = "watchdog", marker = "extra == 'all'", specifier = ">=4.0.0" },

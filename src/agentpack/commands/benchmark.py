@@ -24,6 +24,8 @@ from rich import box
 from agentpack.commands._shared import console, _root
 from agentpack.commands.pack import _resolve_task
 from agentpack.application.pack_service import PackRequest, PackService
+from agentpack.architecture.index import SemanticGraphIndex
+from agentpack.architecture.service import build_snapshot_for_ref
 from agentpack.core import git
 from agentpack.core.config import load_config
 from agentpack.core.modes import MODE_HELP, invalid_mode_message, is_requested_mode, normalize_mode
@@ -50,6 +52,7 @@ class BenchmarkCase:
     incidental_changed_files: list[str] = field(default_factory=list)
     optional_context_files: list[str] = field(default_factory=list)
     repository: str = ""
+    semantic_graph_expected: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.mode = normalize_mode(self.mode)
@@ -411,6 +414,7 @@ def _load_cases(path: Path) -> list[BenchmarkCase]:
             required_support_files=raw.get("required_support_files", []),
             incidental_changed_files=raw.get("incidental_changed_files", []),
             optional_context_files=raw.get("optional_context_files", []),
+            semantic_graph_expected=raw.get("semantic_graph_expected"),
         ))
     return cases
 
@@ -3452,7 +3456,7 @@ def _run_case(root: Path, case: BenchmarkCase) -> CaseResult:
             task=case.task,
             summaries=plan.summaries,
             keyword_plan=plan.keyword_plan,
-            dependency_graph=plan.dep_graph,
+            semantic_graph=plan.semantic_graph,
             changed_paths=plan.all_changed,
             action_owner_files=set(case.action_owner_files),
             required_support_files=set(case.required_support_files),
@@ -3814,6 +3818,16 @@ def _run_case(root: Path, case: BenchmarkCase) -> CaseResult:
     else:
         missed_expected = []
 
+    semantic_graph_metrics = _semantic_graph_metrics(
+        plan.semantic_graph,
+        case.semantic_graph_expected,
+        plan.phase_times,
+    )
+    if semantic_graph_metrics is not None:
+        selection_diagnostics["semantic_graph_metrics"] = semantic_graph_metrics
+        selection_diagnostics["semantic_graph_stats"] = dict(plan.semantic_graph.snapshot.cache_stats)
+        selection_diagnostics["semantic_graph_profile"] = plan.semantic_graph.snapshot.extractor_profile_hash
+
     selected_skills, skill_token_cost = _route_skills_for_case(root, case)
     skill_recall, skill_precision, skill_mrr, skill_noise = _skill_metrics(
         selected_skills,
@@ -3882,7 +3896,8 @@ def _selection_v2_evidence_diagnostics(
     task: str,
     summaries: dict[str, Any],
     keyword_plan: Any,
-    dependency_graph: Any,
+    dependency_graph: Any = None,
+    semantic_graph: Any = None,
     changed_paths: set[str],
     action_owner_files: set[str],
     required_support_files: set[str],
@@ -3914,7 +3929,7 @@ def _selection_v2_evidence_diagnostics(
             summary=summaries.get(candidate.path),
             owner_context=owner_context,
             owner_features=owner_features,
-            dependency_graph=dependency_graph,
+            semantic_graph=semantic_graph,
             changed_paths=changed_paths,
         )
         evidence_by_path[candidate.path] = evidence
@@ -8656,6 +8671,8 @@ def _miss_status(
 
 def _result_record(result: CaseResult) -> dict[str, Any]:
     p, r, f1 = _precision_recall(result) if result.case.expected_files else (None, None, None)
+    semantic_expected = result.case.semantic_graph_expected
+    semantic_stats = result.selection_diagnostics.get("semantic_graph_stats") or {}
     return {
         "ts": datetime.now(timezone.utc).isoformat(),
         "task": result.case.task,
@@ -8700,6 +8717,23 @@ def _result_record(result: CaseResult) -> dict[str, Any]:
         if result.candidate_precision_at_3 is not None else None,
         "candidate_precision_at_5": round(result.candidate_precision_at_5, 3)
         if result.candidate_precision_at_5 is not None else None,
+        "routing_recall": round(result.candidate_recall_at_20, 3)
+        if result.candidate_recall_at_20 is not None else None,
+        "first_correct_file_rate": 1.0
+        if set(result.case.expected_files) & set(result.selected_paths) else 0.0,
+        "relationship_precision": _semantic_metric(result, "relationship_precision"),
+        "relationship_recall": _semantic_metric(result, "relationship_recall"),
+        "source_line_grounding": _semantic_metric(result, "source_line_grounding"),
+        "path_correctness": _semantic_metric(result, "path_correctness"),
+        "incremental_rebuild_seconds": _semantic_metric(result, "incremental_rebuild_seconds"),
+        "ground_truth_status": (
+            "available" if isinstance(semantic_expected, dict) else "unavailable"
+        ),
+        "fixture_version": semantic_expected.get("fixture_version") if isinstance(semantic_expected, dict) else None,
+        "extractor_profile_hash": result.selection_diagnostics.get("semantic_graph_profile"),
+        "parsed_files": semantic_stats.get("parsed_files"),
+        "affected_files": semantic_stats.get("affected_files"),
+        "incremental_rebuild_cost": _semantic_metric(result, "incremental_rebuild_seconds"),
         "low_budget_extra_file_waste": result.low_budget_extra_file_waste,
         "precision_delta_if_drop_last_summary": round(result.precision_delta_if_drop_last_summary, 3)
         if result.precision_delta_if_drop_last_summary is not None else None,
@@ -8721,6 +8755,112 @@ def _result_record(result: CaseResult) -> dict[str, Any]:
         "misses": result.missed_expected,
         "top_candidates": result.top_candidates,
         "selection_diagnostics": result.selection_diagnostics,
+    }
+
+
+def _semantic_metric(result: CaseResult, name: str) -> float | None:
+    metrics = result.selection_diagnostics.get("semantic_graph_metrics")
+    if not isinstance(metrics, dict):
+        return None
+    value = metrics.get(name)
+    return round(float(value), 3) if isinstance(value, (int, float)) else None
+
+
+def _semantic_graph_metrics(graph, expected: dict[str, Any] | None, phase_times: dict[str, float]) -> dict[str, float | None] | None:
+    """Score graph fixtures against authoritative relationship/path manifests."""
+    if not isinstance(expected, dict):
+        return None
+    entities = list(graph.snapshot.entities)
+    by_name: dict[str, list[Any]] = {}
+    for entity in entities:
+        for value in {entity.entity_key, entity.qualified_name, entity.display_name, entity.locator.path}:
+            by_name.setdefault(value, []).append(entity)
+
+    def resolve(value: str):
+        matches = by_name.get(str(value), [])
+        concrete = [entity for entity in matches if entity.entity_type not in {"unresolved", "external"}]
+        if len(concrete) == 1:
+            return concrete[0]
+        return matches[0] if len(matches) == 1 else None
+
+    relation_rows = [item for item in expected.get("relationships", []) if isinstance(item, dict)]
+    relation_types = {str(item.get("relationship") or item.get("type")) for item in relation_rows}
+    relation_types.discard("None")
+    relation_types.update(str(item) for item in expected.get("relationship_types", []) if item)
+    predicted_edges = [
+        edge for edge in graph.snapshot.edges
+        if edge.edge_type in relation_types
+        or ("relationships" not in expected and not relation_types)
+    ]
+    predicted: set[tuple[str, str, str]] = set()
+    for edge in predicted_edges:
+        source = graph.entities.get(edge.source_entity_key)
+        target = graph.entities.get(edge.target_entity_key)
+        if source is not None and target is not None:
+            predicted.add((source.qualified_name, edge.edge_type, target.qualified_name))
+
+    expected_tuples: set[tuple[str, str, str]] = set()
+    for item in relation_rows:
+        source = resolve(str(item.get("source") or item.get("source_name") or ""))
+        target = resolve(str(item.get("target") or item.get("target_name") or ""))
+        relationship = str(item.get("relationship") or item.get("type") or "")
+        if source is not None and target is not None and relationship:
+            expected_tuples.add((source.qualified_name, relationship, target.qualified_name))
+    true_positive = predicted & expected_tuples
+    relationship_precision = len(true_positive) / len(predicted) if predicted else None
+    relationship_recall = len(true_positive) / len(expected_tuples) if expected_tuples else None
+
+    grounded = 0
+    for item in relation_rows:
+        source = resolve(str(item.get("source") or item.get("source_name") or ""))
+        target = resolve(str(item.get("target") or item.get("target_name") or ""))
+        relationship = str(item.get("relationship") or item.get("type") or "")
+        if source is None or target is None or not relationship:
+            continue
+        for edge in predicted_edges:
+            if (edge.source_entity_key, edge.edge_type, edge.target_entity_key) != (source.entity_key, relationship, target.entity_key):
+                continue
+            for evidence in edge.evidence:
+                expected_path = str(item.get("path") or item.get("source_path") or "")
+                expected_start = item.get("start_line")
+                expected_end = item.get("end_line") or expected_start
+                actual_start = evidence.start_line
+                actual_end = evidence.end_line or actual_start
+                if expected_path and evidence.path != expected_path:
+                    continue
+                if expected_start is not None and (actual_start is None or actual_end is None or actual_end < int(expected_start) or (expected_end is not None and actual_start > int(expected_end))):
+                    continue
+                grounded += 1
+                break
+            break
+    source_line_grounding = grounded / len(true_positive) if true_positive else None
+
+    path_cases = [item for item in expected.get("paths", []) if isinstance(item, dict)]
+    correct_paths = 0
+    for item in path_cases:
+        source = str(item.get("source") or "")
+        target = str(item.get("target") or "")
+        actual = graph.shortest_path(source, target, max_hops=int(item.get("max_hops") or 32))
+        expected_relationships = [str(value) for value in item.get("relationships", [])]
+        actual_relationships = [str(row.get("relationship") or "") for row in actual]
+        if actual_relationships == expected_relationships:
+            correct_paths += 1
+    path_correctness = correct_paths / len(path_cases) if path_cases else None
+
+    cache_stats = graph.snapshot.cache_stats
+    incremental_rebuild_seconds = float(phase_times.get("deps") or 0.0) if isinstance(expected.get("incremental"), dict) else None
+    if isinstance(expected.get("incremental"), dict):
+        expected_max_parsed = expected["incremental"].get("max_parsed_files")
+        if expected_max_parsed is not None and int(cache_stats.get("parsed_files", 0)) > int(expected_max_parsed):
+            incremental_rebuild_seconds = float("inf")
+    return {
+        "relationship_precision": relationship_precision,
+        "relationship_recall": relationship_recall,
+        "source_line_grounding": source_line_grounding,
+        "path_correctness": path_correctness,
+        "incremental_rebuild_seconds": incremental_rebuild_seconds,
+        "first_correct_file_rate": expected.get("first_correct_file_rate") if isinstance(expected.get("first_correct_file_rate"), (int, float)) else None,
+        "routing_recall": expected.get("routing_recall") if isinstance(expected.get("routing_recall"), (int, float)) else None,
     }
 
 
@@ -10439,6 +10579,120 @@ def _init_synthetic_git(root: Path) -> None:
     subprocess.run(["git", "commit", "--quiet", "-m", "initial"], cwd=root, check=True)
 
 
+def _run_semantic_fixture_suite(root: Path) -> list[dict[str, Any]]:
+    """Run deterministic local semantic fixtures without public-repo setup."""
+    fixture_root = root / "tests" / "fixtures" / "semantic_graph"
+    records: list[dict[str, Any]] = []
+    fixture_dirs = sorted(path for path in fixture_root.iterdir() if path.is_dir()) if fixture_root.exists() else []
+    with tempfile.TemporaryDirectory(prefix="agentpack-semantic-fixtures-") as temp_dir:
+        temp_root = Path(temp_dir)
+        for fixture_dir in fixture_dirs:
+            expected_path = fixture_dir / "expected.json"
+            source_files = sorted(fixture_dir.glob("source.*"))
+            record: dict[str, Any] = {
+                "fixture": fixture_dir.name,
+                "ground_truth_status": "unavailable",
+                "fixture_version": None,
+                "extractor_profile_hash": None,
+                "relationship_precision": None,
+                "relationship_recall": None,
+                "source_line_grounding": None,
+                "path_correctness": None,
+                "first_correct_file_rate": None,
+                "routing_recall": None,
+                "incremental_rebuild_cost": None,
+                "deletion_status": "unavailable",
+                "parsed_files": None,
+                "affected_files": None,
+            }
+            try:
+                expected = json.loads(expected_path.read_text(encoding="utf-8"))
+                if not isinstance(expected, dict) or not source_files:
+                    records.append(record)
+                    continue
+                record["ground_truth_status"] = "available"
+                record["fixture_version"] = expected.get("fixture_version")
+                case_root = temp_root / fixture_dir.name
+                shutil.copytree(fixture_dir, case_root)
+                source = case_root / source_files[0].name
+                started = time.perf_counter()
+                SemanticGraphIndex(build_snapshot_for_ref(case_root))
+                first_elapsed = time.perf_counter() - started
+                source.write_text(source.read_text(encoding="utf-8") + "\n", encoding="utf-8")
+                started = time.perf_counter()
+                incremental_graph = SemanticGraphIndex(build_snapshot_for_ref(case_root))
+                elapsed = time.perf_counter() - started
+                metrics = _semantic_graph_metrics(incremental_graph, expected, {"deps": elapsed}) or {}
+                record.update({
+                    key: metrics.get(key)
+                    for key in (
+                        "relationship_precision",
+                        "relationship_recall",
+                        "source_line_grounding",
+                        "path_correctness",
+                        "first_correct_file_rate",
+                        "routing_recall",
+                    )
+                })
+                record["incremental_rebuild_cost"] = metrics.get("incremental_rebuild_seconds", elapsed)
+                record["extractor_profile_hash"] = incremental_graph.snapshot.extractor_profile_hash
+                record["parsed_files"] = incremental_graph.snapshot.cache_stats.get("parsed_files")
+                record["affected_files"] = incremental_graph.snapshot.cache_stats.get("affected_files")
+                record["cold_build_seconds"] = round(first_elapsed, 6)
+
+                deletion = expected.get("deletion")
+                if isinstance(deletion, dict):
+                    deleted_name = str(deletion.get("path") or source.name)
+                    deleted_path = case_root / deleted_name
+                    if deleted_path.exists():
+                        deleted_path.unlink()
+                    deleted_graph = SemanticGraphIndex(build_snapshot_for_ref(case_root))
+                    remaining_paths = {
+                        entity.locator.path
+                        for entity in deleted_graph.snapshot.entities
+                        if entity.locator.path
+                    }
+                    expected_absent = {
+                        str(path)
+                        for path in deletion.get("expected_absent", [deleted_name])
+                    }
+                    record["deletion_status"] = "passed" if not (remaining_paths & expected_absent) else "failed"
+            except (OSError, ValueError, TypeError, KeyError) as exc:
+                record["ground_truth_status"] = "error"
+                record["error"] = str(exc)
+            records.append(record)
+    return records
+
+
+def _write_semantic_fixture_jsonl(path: Path, records: list[dict[str, Any]]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("w", encoding="utf-8") as handle:
+        for record in records:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+
+
+def _print_semantic_fixture_summary(records: list[dict[str, Any]]) -> None:
+    table = Table(title="Semantic fixture benchmark")
+    for column in ("fixture", "status", "precision", "recall", "grounding", "path", "parsed", "affected"):
+        table.add_column(column)
+    for record in records:
+        table.add_row(
+            str(record.get("fixture", "")),
+            str(record.get("ground_truth_status", "unavailable")),
+            _format_optional_metric(record.get("relationship_precision")),
+            _format_optional_metric(record.get("relationship_recall")),
+            _format_optional_metric(record.get("source_line_grounding")),
+            _format_optional_metric(record.get("path_correctness")),
+            str(record.get("parsed_files") if record.get("parsed_files") is not None else "n/a"),
+            str(record.get("affected_files") if record.get("affected_files") is not None else "n/a"),
+        )
+    console.print(table)
+
+
+def _format_optional_metric(value: Any) -> str:
+    return "n/a" if not isinstance(value, (int, float)) else f"{float(value):.3f}"
+
+
 @benchmark_app.callback(invoke_without_command=True)
 def benchmark(
     ctx: typer.Context,
@@ -10452,6 +10706,7 @@ def benchmark(
     from_history: int = typer.Option(0, "--from-history", help="Sample last N unique tasks from metrics.jsonl history."),
     write_cases: bool = typer.Option(False, "--write-cases", help="Append --from-history cases to .agentpack/benchmark.toml."),
     sample_fixtures: bool = typer.Option(False, "--sample-fixtures", help="Run bundled FastAPI/Next.js/mixed-repo fixture evals from a source checkout."),
+    semantic_fixtures: bool = typer.Option(False, "--semantic-fixtures", help="Run deterministic per-language semantic graph fixtures."),
     release_gate: bool = typer.Option(False, "--release-gate", help="Run the public real-repo release gate."),
     public_suite: bool = typer.Option(False, "--public-suite", help="Alias for the reproducible public benchmark suite."),
     reproduce: str = typer.Option("", "--reproduce", help="Reproduce a published benchmark version, e.g. v0.3.20."),
@@ -10527,6 +10782,13 @@ def benchmark(
         out = _write_results_template(root)
         console.print(f"[green]✓[/] Created [bold]{out}[/]")
         console.print("  Fill it with `agentpack benchmark --compare --misses` results from real historical tasks.")
+        return
+
+    if semantic_fixtures:
+        records = _run_semantic_fixture_suite(root)
+        if benchmark_jsonl:
+            _write_semantic_fixture_jsonl(Path(benchmark_jsonl), records)
+        _print_semantic_fixture_summary(records)
         return
 
     if sample_fixtures:

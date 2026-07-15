@@ -10,30 +10,25 @@ from fnmatch import fnmatch
 from pathlib import Path
 from typing import Iterator
 
-from agentpack.analysis.dependency_graph import build as build_dependency_graph
-from agentpack.analysis.symbols import extract_symbols
-from agentpack.analysis.tests import find_related_tests
 from agentpack.application.pack_service import AdapterRegistry
 from agentpack.architecture.models import (
     ArchitectureAlias,
     ArchitectureCheckResult,
     ArchitectureDiff,
-    ArchitectureEdge,
     ArchitectureEntity,
     ArchitectureEvidence,
-    ArchitectureLocator,
     ArchitectureSnapshot,
     ArchitectureViolation,
     EdgeChange,
     EntityChange,
 )
+from agentpack.architecture.store import SemanticGraphStore
 from agentpack.core.config import Config, load_config
 from agentpack.core.git import current_sha, dirty_files
 from agentpack.core.ignore import load_spec
-from agentpack.core.models import FileInfo, Symbol
 from agentpack.core.scanner import LANGUAGE_MAP, scan
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 6
 _CONFIDENCE_ORDER = {
     "unavailable": 0,
     "file_level": 1,
@@ -41,8 +36,8 @@ _CONFIDENCE_ORDER = {
     "structured": 3,
 }
 _CONFIG_LANGS = {"json", "yaml", "toml", "xml", "terraform", "dockerfile"}
-_BEST_EFFORT_LANGS = {"javascript", "typescript", "go", "rust"}
-_TREE_SITTER_LANGS = {"java", "kotlin", "ruby", "php", "protobuf", "terraform", "dockerfile", "graphql"}
+_TREE_SITTER_CORE_LANGS = {"python", "javascript", "typescript", "go", "rust", "java", "kotlin", "ruby", "php"}
+_TREE_SITTER_LANGS = _TREE_SITTER_CORE_LANGS | {"protobuf", "terraform", "dockerfile", "graphql"}
 
 
 def serialize_model(model: object) -> str:
@@ -53,24 +48,57 @@ def serialize_model(model: object) -> str:
     return json.dumps(payload, indent=2, sort_keys=True)
 
 
-def build_snapshot_for_ref(root: Path, ref: str | None = None) -> ArchitectureSnapshot:
+def build_snapshot_for_ref(
+    root: Path,
+    ref: str | None = None,
+    *,
+    cold: bool = False,
+    verify_incremental: bool = False,
+) -> ArchitectureSnapshot:
     requested_ref = (ref or "").strip()
     if requested_ref:
         commit_sha = _resolve_ref(root, requested_ref)
-        cached = _load_cached_snapshot(root, commit_sha)
-        if cached is not None:
-            return cached
+        cached = None if cold else _load_cached_snapshot(root, commit_sha)
+        if cached is not None and _cached_snapshot_header_is_valid(root, cached, commit_sha):
+            valid, _reason = _validate_ref_cached_snapshot(root, requested_ref, commit_sha, cached)
+            if valid:
+                return cached
         live_sha = current_sha(root)
         if live_sha == commit_sha and not dirty_files(root):
-            snapshot = _build_snapshot_from_root(root, requested_ref, commit_sha)
+            snapshot = _build_snapshot_from_root(root, requested_ref, commit_sha, cold=cold, verify_incremental=verify_incremental, cache_root=root)
         else:
             with _detached_worktree(root, commit_sha) as detached_root:
-                snapshot = _build_snapshot_from_root(detached_root, requested_ref, commit_sha)
+                snapshot = _build_snapshot_from_root(
+                    detached_root,
+                    requested_ref,
+                    commit_sha,
+                    cold=cold,
+                    verify_incremental=verify_incremental,
+                    cache_root=root,
+                    repo_fingerprint=_repo_fingerprint(root),
+                )
         _save_cached_snapshot(root, snapshot)
         return snapshot
 
     live_sha = current_sha(root) or "worktree"
-    return _build_snapshot_from_root(root, "WORKTREE", live_sha)
+    scan_result = _scan_for_architecture(root)
+    manifest = _short_hash(json.dumps({item.path: item.hash for item in scan_result.packable}, sort_keys=True))
+    cache_path = _worktree_cache_path(root, manifest)
+    cached = None if cold else _load_snapshot_path(cache_path)
+    if cached is not None:
+        cfg = load_config(root)
+        validator = SemanticGraphStore(root / cfg.architecture.cache_dir, schema_version=SCHEMA_VERSION)
+        valid, _reason = validator.validate_cached_snapshot(
+            scan_result.packable,
+            repo_fingerprint=_repo_fingerprint(root),
+            extractor_profile_hash=_extractor_profile_hash(),
+            snapshot=cached,
+        )
+        if valid:
+            return cached
+    snapshot = _build_snapshot_from_root(root, "WORKTREE", live_sha, scan_result=scan_result, cold=cold, verify_incremental=verify_incremental)
+    _save_snapshot_path(cache_path, snapshot)
+    return snapshot
 
 
 def build_diff(root: Path, base_ref: str, head_ref: str) -> ArchitectureDiff:
@@ -265,13 +293,11 @@ def capability_registry() -> dict[str, str]:
     from agentpack.analysis.tree_sitter_backend import supports_language as tree_sitter_supports_language
 
     available = tree_sitter_available()
-    languages = sorted(set(LANGUAGE_MAP.values()) | {"dockerfile"})
+    languages = sorted(set(LANGUAGE_MAP.values()) | _TREE_SITTER_LANGS | {"dockerfile"})
     capabilities: dict[str, str] = {}
     for language in languages:
-        if language == "python":
-            capabilities[language] = "structured"
-        elif language in _BEST_EFFORT_LANGS:
-            capabilities[language] = "best_effort"
+        if language in _TREE_SITTER_CORE_LANGS:
+            capabilities[language] = "structured" if available and tree_sitter_supports_language(language) else "best_effort"
         elif language in _TREE_SITTER_LANGS:
             capabilities[language] = "structured" if available and tree_sitter_supports_language(language) else "unavailable"
         elif language in _CONFIG_LANGS or language in {"markdown", "bash", "sql", "html", "css", "scss"}:
@@ -281,136 +307,55 @@ def capability_registry() -> dict[str, str]:
     return capabilities
 
 
-def _build_snapshot_from_root(root: Path, ref: str, commit_sha: str) -> ArchitectureSnapshot:
+def _build_snapshot_from_root(
+    root: Path,
+    ref: str,
+    commit_sha: str,
+    *,
+    scan_result=None,
+    cold: bool = False,
+    verify_incremental: bool = False,
+    cache_root: Path | None = None,
+    repo_fingerprint: str | None = None,
+) -> ArchitectureSnapshot:
+    """Build the canonical architecture artifact from the semantic graph."""
     cfg = load_config(root)
     ignore_spec = load_spec(root / cfg.project.ignore_file)
-    scan_result = scan(
+    scan_result = scan_result or scan(
         root,
         ignore_spec,
         cfg.context.max_file_tokens,
-        always_skip_paths=AdapterRegistry.generated_output_paths(root, cfg),
+        always_skip_paths=_architecture_skip_paths(root, cfg),
     )
     files = sorted(scan_result.packable, key=lambda item: item.path)
     capabilities = capability_registry()
-    repo_fingerprint = _repo_fingerprint(root)
-    graph = build_dependency_graph(files, root)
-
-    domain_entities: dict[str, ArchitectureEntity] = {}
-    file_entities: dict[str, ArchitectureEntity] = {}
-    symbol_candidates: list[tuple[FileInfo, Symbol]] = []
-    edges: list[ArchitectureEdge] = []
-
-    for file_info in files:
-        domain_name = _domain_for_path(file_info.path)
-        if domain_name not in domain_entities:
-            domain_entities[domain_name] = _make_entity(
-                repo_fingerprint=repo_fingerprint,
-                entity_type="domain",
-                qualified_name=domain_name,
-                display_name=domain_name,
-                normalized_signature="domain",
-                language=None,
-                locator=ArchitectureLocator(path=domain_name),
-                provenance="declared:path",
-                confidence_tier="file_level",
-                source_hash=_short_hash(domain_name),
-                metadata={"domain": domain_name},
-                evidence=[_evidence(kind="path", source="declared:path", confidence_tier="file_level", path=file_info.path, note="top-level path domain")],
-            )
-        entity_type = _classify_file_entity(file_info.path, file_info.language)
-        file_entity = _make_entity(
-            repo_fingerprint=repo_fingerprint,
-            entity_type=entity_type,
-            qualified_name=_qualified_file_name(file_info.path),
-            display_name=Path(file_info.path).name,
-            normalized_signature=_normalize_signature(f"{entity_type}:{file_info.language or 'text'}"),
-            language=file_info.language,
-            locator=ArchitectureLocator(path=file_info.path, start_line=1, end_line=1),
-            provenance=f"extractor:{file_info.language or 'file'}",
-            confidence_tier=capabilities.get(file_info.language or "", "file_level"),
-            source_hash=file_info.hash or _short_hash(file_info.path),
-            metadata={"domain": domain_name, "path": file_info.path},
-            evidence=[_evidence(kind="file", source=f"extractor:{file_info.language or 'file'}", confidence_tier=capabilities.get(file_info.language or "", "file_level"), path=file_info.path, source_hash=file_info.hash or "")],
-        )
-        file_entities[file_info.path] = file_entity
-        edges.append(_make_edge(domain_entities[domain_name], file_entity, "contains", "file_level", file_info.path, note="domain contains file"))
-
-        if capabilities.get(file_info.language or "", "file_level") in {"structured", "best_effort"}:
-            for symbol in extract_symbols(file_info.abs_path, file_info.language):
-                symbol_candidates.append((file_info, symbol))
-
-    duplicate_counts: dict[tuple[str, str], int] = {}
-    for file_info, symbol in symbol_candidates:
-        key = (str(symbol.name), _normalize_signature(symbol.signature))
-        duplicate_counts[key] = duplicate_counts.get(key, 0) + 1
-
-    symbol_entities: list[ArchitectureEntity] = []
-    for file_info, symbol in symbol_candidates:
-        file_entity = file_entities[file_info.path]
-        base_name = str(symbol.name)
-        normalized_signature = _normalize_signature(symbol.signature)
-        duplicate_key = (base_name, normalized_signature)
-        qualified_name = base_name if duplicate_counts[duplicate_key] == 1 else f"{file_entity.qualified_name}:{base_name}"
-        symbol_entity = _make_entity(
-            repo_fingerprint=repo_fingerprint,
-            entity_type="symbol",
-            qualified_name=qualified_name,
-            display_name=base_name,
-            normalized_signature=normalized_signature,
-            language=file_info.language,
-            locator=ArchitectureLocator(path=file_info.path, start_line=symbol.start_line, end_line=symbol.end_line),
-            provenance=_symbol_provenance(file_info.language),
-            confidence_tier=capabilities.get(file_info.language or "", "file_level"),
-            source_hash=_short_hash(symbol.body or symbol.signature or base_name),
-            metadata={"domain": file_entity.metadata.get("domain"), "path": file_info.path, "symbol_kind": symbol.kind},
-            evidence=[
-                _evidence(
-                    kind="symbol",
-                    source=_symbol_provenance(file_info.language),
-                    confidence_tier=capabilities.get(file_info.language or "", "file_level"),
-                    path=file_info.path,
-                    start_line=symbol.start_line,
-                    end_line=symbol.end_line,
-                    source_hash=_short_hash(symbol.body or symbol.signature or base_name),
-                    note=symbol.kind,
-                )
-            ],
-        )
-        symbol_entities.append(symbol_entity)
-        edges.append(_make_edge(file_entity, symbol_entity, "contains", capabilities.get(file_info.language or "", "file_level"), file_info.path, start_line=symbol.start_line, end_line=symbol.end_line, note="file contains symbol"))
-
-    for file_info in files:
-        source_entity = file_entities[file_info.path]
-        graph_node = graph.get(file_info.path)
-        for target_path in sorted(dep for dep in graph_node.imports if dep in file_entities):
-            target_entity = file_entities[target_path]
-            tier = capabilities.get(file_info.language or "", "file_level")
-            if tier == "unavailable":
-                continue
-            edges.append(_make_edge(source_entity, target_entity, "imports", tier, file_info.path, note="local import"))
-        if source_entity.entity_type == "test":
-            continue
-        for test_path in find_related_tests(file_info.path, set(file_entities)):
-            test_entity = file_entities.get(test_path)
-            if test_entity is None:
-                continue
-            edges.append(_make_edge(source_entity, test_entity, "tested_by", "best_effort", file_info.path, note="path-based related test"))
-
-    entities = sorted(
-        [*domain_entities.values(), *file_entities.values(), *symbol_entities],
-        key=lambda entity: (entity.entity_type, entity.qualified_name, entity.locator.path, entity.locator.start_line or 0),
-    )
-    sorted_edges = sorted(edges, key=lambda edge: (edge.edge_type, edge.source_entity_key, edge.target_entity_key))
-    return ArchitectureSnapshot(
+    repo_fingerprint = repo_fingerprint or _repo_fingerprint(root)
+    profile_hash = _extractor_profile_hash()
+    store = SemanticGraphStore(
+        (cache_root or root) / cfg.architecture.cache_dir,
         schema_version=SCHEMA_VERSION,
+        make_domain=_domain_for_path,
+    )
+    result = store.build(
+        files,
+        root=root,
+        repo_fingerprint=repo_fingerprint,
         ref=ref,
         commit_sha=commit_sha,
-        repo_fingerprint=repo_fingerprint,
-        extractor_profile_hash=_extractor_profile_hash(),
         capabilities=capabilities,
-        entities=entities,
-        edges=sorted_edges,
+        extractor_profile_hash=profile_hash,
+        cold=cold,
+        verify_incremental=verify_incremental,
     )
+    return result.snapshot
+
+
+def _architecture_skip_paths(root: Path, cfg: Config) -> set[str]:
+    paths = set(AdapterRegistry.generated_output_paths(root, cfg))
+    generated_assets = root / "src" / "agentpack" / "data" / "dashboard_app" / "assets"
+    if generated_assets.exists():
+        paths.update(str(path.relative_to(root)).replace("\\", "/") for path in generated_assets.rglob("*") if path.is_file())
+    return paths
 
 
 def _matches_selector(entity: ArchitectureEntity, selector) -> bool:
@@ -434,7 +379,7 @@ def _file_owner_keys(
     entities: dict[str, ArchitectureEntity],
 ) -> dict[str, str]:
     """Map symbols to their file entity so file-level relationships cover source changes."""
-    file_entity_types = {"module", "config", "test"}
+    file_entity_types = {"module", "config", "test", "document"}
     owners = {
         entity.entity_key: entity.entity_key
         for entity in snapshot.entities
@@ -484,17 +429,61 @@ def _has_blocking_evidence(evidence: list[ArchitectureEvidence]) -> bool:
 
 
 def _load_cached_snapshot(root: Path, commit_sha: str) -> ArchitectureSnapshot | None:
-    path = _cache_path(root, commit_sha)
+    return _load_snapshot_path(_cache_path(root, commit_sha))
+
+
+def _cached_snapshot_header_is_valid(root: Path, snapshot: ArchitectureSnapshot, commit_sha: str) -> bool:
+    return (
+        snapshot.schema_version == SCHEMA_VERSION
+        and snapshot.commit_sha == commit_sha
+        and snapshot.repo_fingerprint == _repo_fingerprint(root)
+        and snapshot.extractor_profile_hash == _extractor_profile_hash()
+    )
+
+
+def _validate_ref_cached_snapshot(
+    root: Path,
+    ref: str,
+    commit_sha: str,
+    snapshot: ArchitectureSnapshot,
+) -> tuple[bool, str | None]:
+    """Validate a ref snapshot against the ref's actual source tree.
+
+    Ref snapshots are stored in the main checkout, while extraction may run
+    in a temporary detached worktree. Scan that worktree before accepting the
+    fast path so a stale or corrupt record cannot masquerade as a valid ref.
+    """
+    with _detached_worktree(root, commit_sha) as detached_root:
+        cfg = load_config(detached_root)
+        scan_result = _scan_for_architecture(detached_root)
+        validator = SemanticGraphStore(
+            root / cfg.architecture.cache_dir,
+            schema_version=SCHEMA_VERSION,
+        )
+        return validator.validate_cached_snapshot(
+            scan_result.packable,
+            repo_fingerprint=_repo_fingerprint(root),
+            extractor_profile_hash=_extractor_profile_hash(),
+            snapshot=snapshot,
+        )
+
+
+def _load_snapshot_path(path: Path) -> ArchitectureSnapshot | None:
     if not path.exists():
         return None
     try:
-        return ArchitectureSnapshot.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        snapshot = ArchitectureSnapshot.model_validate(json.loads(path.read_text(encoding="utf-8")))
+        return snapshot if snapshot.schema_version == SCHEMA_VERSION else None
     except Exception:
         return None
 
 
 def _save_cached_snapshot(root: Path, snapshot: ArchitectureSnapshot) -> None:
     path = _cache_path(root, snapshot.commit_sha)
+    _save_snapshot_path(path, snapshot)
+
+
+def _save_snapshot_path(path: Path, snapshot: ArchitectureSnapshot) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(serialize_model(snapshot), encoding="utf-8")
 
@@ -502,6 +491,22 @@ def _save_cached_snapshot(root: Path, snapshot: ArchitectureSnapshot) -> None:
 def _cache_path(root: Path, commit_sha: str) -> Path:
     cfg = load_config(root)
     return root / cfg.architecture.cache_dir / f"{commit_sha}-{SCHEMA_VERSION}-{_extractor_profile_hash()}.json"
+
+
+def _worktree_cache_path(root: Path, manifest: str) -> Path:
+    cfg = load_config(root)
+    return root / cfg.architecture.cache_dir / f"worktree-{manifest}-{SCHEMA_VERSION}-{_extractor_profile_hash()}.json"
+
+
+def _scan_for_architecture(root: Path):
+    cfg = load_config(root)
+    ignore_spec = load_spec(root / cfg.project.ignore_file)
+    return scan(
+        root,
+        ignore_spec,
+        cfg.context.max_file_tokens,
+        always_skip_paths=_architecture_skip_paths(root, cfg),
+    )
 
 
 def _repo_fingerprint(root: Path) -> str:
@@ -512,129 +517,10 @@ def _repo_fingerprint(root: Path) -> str:
 def _extractor_profile_hash() -> str:
     payload = {
         "schema_version": SCHEMA_VERSION,
+        "extractor_version": "semantic-graph-v5",
         "capabilities": capability_registry(),
     }
     return _short_hash(json.dumps(payload, sort_keys=True))
-
-
-def _make_entity(
-    *,
-    repo_fingerprint: str,
-    entity_type: str,
-    qualified_name: str,
-    display_name: str,
-    normalized_signature: str,
-    language: str | None,
-    locator: ArchitectureLocator,
-    provenance: str,
-    confidence_tier: str,
-    source_hash: str,
-    metadata: dict[str, object],
-    evidence: list[ArchitectureEvidence],
-) -> ArchitectureEntity:
-    entity_key = _short_hash(f"{repo_fingerprint}|{entity_type}|{qualified_name}|{normalized_signature}")
-    revision_id = _short_hash(f"{entity_key}|{source_hash}")
-    return ArchitectureEntity(
-        entity_key=entity_key,
-        revision_id=revision_id,
-        entity_type=entity_type,
-        qualified_name=qualified_name,
-        display_name=display_name,
-        normalized_signature=normalized_signature,
-        language=language,
-        locator=locator,
-        provenance=provenance,
-        confidence_tier=confidence_tier,
-        source_hash=source_hash,
-        metadata=dict(metadata),
-        evidence=list(evidence),
-    )
-
-
-def _make_edge(
-    source: ArchitectureEntity,
-    target: ArchitectureEntity,
-    edge_type: str,
-    confidence_tier: str,
-    path: str,
-    *,
-    start_line: int | None = None,
-    end_line: int | None = None,
-    note: str = "",
-) -> ArchitectureEdge:
-    evidence = [
-        _evidence(
-            kind=edge_type,
-            source="extractor:graph",
-            confidence_tier=confidence_tier,
-            path=path,
-            start_line=start_line,
-            end_line=end_line,
-            source_hash=_short_hash(f"{path}:{start_line}:{end_line}:{note}"),
-            note=note,
-        )
-    ]
-    edge_key = _short_hash(f"{source.entity_key}|{edge_type}|{target.entity_key}")
-    revision_id = _short_hash(f"{edge_key}|{evidence[0].source_hash}|{confidence_tier}")
-    return ArchitectureEdge(
-        edge_key=edge_key,
-        revision_id=revision_id,
-        edge_type=edge_type,
-        source_entity_key=source.entity_key,
-        target_entity_key=target.entity_key,
-        confidence_tier=confidence_tier,
-        metadata={},
-        evidence=evidence,
-    )
-
-
-def _evidence(
-    *,
-    kind: str,
-    source: str,
-    confidence_tier: str,
-    path: str,
-    start_line: int | None = None,
-    end_line: int | None = None,
-    source_hash: str = "",
-    note: str = "",
-) -> ArchitectureEvidence:
-    return ArchitectureEvidence(
-        kind=kind,
-        source=source,
-        confidence_tier=confidence_tier,
-        confidence=float(_CONFIDENCE_ORDER[confidence_tier]) / float(max(_CONFIDENCE_ORDER.values()) or 1),
-        path=path,
-        start_line=start_line,
-        end_line=end_line,
-        source_hash=source_hash,
-        note=note,
-    )
-
-
-def _symbol_provenance(language: str | None) -> str:
-    if language == "python":
-        return "extractor:python_ast"
-    if language in _TREE_SITTER_LANGS:
-        return "extractor:tree_sitter"
-    return f"extractor:{language or 'unknown'}"
-
-
-def _normalize_signature(signature: str | None) -> str:
-    return " ".join((signature or "").split())
-
-
-def _qualified_file_name(path: str) -> str:
-    return ".".join(Path(path).with_suffix("").parts)
-
-
-def _classify_file_entity(path: str, language: str | None) -> str:
-    name = path.lower()
-    if "/tests/" in f"/{name}" or name.startswith("tests/") or Path(path).name.startswith("test_") or ".test." in name or ".spec." in name:
-        return "test"
-    if language in _CONFIG_LANGS:
-        return "config"
-    return "module"
 
 
 def _domain_for_path(path: str) -> str:

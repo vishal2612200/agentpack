@@ -161,6 +161,19 @@ export interface DashboardMap {
   weather: MapWeather[];
 }
 
+export interface SemanticGraphSummary {
+  schema_version: number;
+  commit_sha?: string;
+  entity_count: number;
+  edge_count: number;
+  unresolved_count: number;
+  capabilities: Record<string, string>;
+  cache_stats?: Record<string, number | string | boolean>;
+  relationship_counts: Record<string, number>;
+  entities: Array<{ entity_key: string; type: string; name: string; path: string; line?: number; language?: string; confidence_tier?: string }>;
+  edges: Array<{ edge_key: string; relationship: string; source: string; target: string; source_name?: string; target_name?: string; confidence_tier?: string; evidence?: Array<{ path?: string; start_line?: number; end_line?: number; source?: string; source_hash?: string; note?: string }> }>;
+}
+
 export interface ActionHistoryRow {
   action_id: string;
   label?: string;
@@ -392,4 +405,5 @@ export interface DashboardSnapshot {
     status?: string;
     summary?: string;
   }>;
+  semantic_graph: SemanticGraphSummary;
 }

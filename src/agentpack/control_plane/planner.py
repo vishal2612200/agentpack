@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from agentpack.core.command_surface import refresh_command, refresh_commands
+from agentpack.core.command_surface import refresh_command
 
 from agentpack.control_plane.models import ControlPlaneSnapshot, Recommendation
 

@@ -5,9 +5,8 @@ import subprocess
 from pathlib import Path
 
 import pytest
-from typer.testing import CliRunner
 
-from agentpack.cli import app
+from agentpack.dashboard.app_shell import DASHBOARD_APP_DIR, render_dashboard_shell
 
 
 def test_dashboard_html_renders_in_headless_browser(tmp_path: Path, monkeypatch) -> None:
@@ -18,8 +17,9 @@ def test_dashboard_html_renders_in_headless_browser(tmp_path: Path, monkeypatch)
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".agentpack").mkdir()
     (tmp_path / ".agentpack" / "task.md").write_text("fix auth token expiry\n", encoding="utf-8")
-    result = CliRunner().invoke(app, ["dashboard"])
-    assert result.exit_code == 0, result.output
+    app_root = tmp_path / ".agentpack"
+    (app_root / "assets").symlink_to(DASHBOARD_APP_DIR / "assets", target_is_directory=True)
+    (app_root / "index.html").write_text(render_dashboard_shell(), encoding="utf-8")
 
     screenshot = tmp_path / "dashboard.png"
     subprocess.run(
