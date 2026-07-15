@@ -29,6 +29,11 @@ def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     assert ".agentignore" in lines
     assert ".agentpack/cache/" in lines
     assert ".agentpack/context*" in lines
+    assert ".agentpack/reviews/" in lines
+    assert ".agentpack/review-*.prompt.md" in lines
+    assert ".agentpack/review-*.template.toon" in lines
+    assert ".agentpack/review-preflight.json" in lines
+    assert ".agentpack/review.prompt.md" in lines
     assert ".agentpack/.gitignore" in lines
     assert ".agentpack/.mcp_reminded" in lines
     assert ".agentpack/session.json" in lines
@@ -236,6 +241,11 @@ def test_init_share_cache_unignores_cache(tmp_path, monkeypatch) -> None:
     assert "!.agentpack/cache/" in repo_lines
     assert "!.agentpack/cache/**" in repo_lines
     assert "cache/" not in agentpack_lines
+    assert "reviews/" in agentpack_lines
+    assert "review-*.prompt.md" in agentpack_lines
+    assert "review-*.template.toon" in agentpack_lines
+    assert "review-preflight.json" in agentpack_lines
+    assert "review.prompt.md" in agentpack_lines
 
 
 def test_init_imports_safe_gitignore_rules_into_agentignore(tmp_path, monkeypatch) -> None:

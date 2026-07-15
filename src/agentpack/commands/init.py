@@ -56,6 +56,11 @@ def _repo_gitignore_entries(share_cache: bool = False, agent: str = "generic") -
         [
             ".agentpack/snapshots/",
             ".agentpack/context*",
+            ".agentpack/reviews/",
+            ".agentpack/review-*.prompt.md",
+            ".agentpack/review-*.template.toon",
+            ".agentpack/review-preflight.json",
+            ".agentpack/review.prompt.md",
             ".agentpack/metrics.jsonl",
             ".agentpack/session-events.jsonl",
             ".agentpack/learning-sessions.jsonl",
@@ -109,6 +114,11 @@ def _agentpack_gitignore_content(share_cache: bool = False) -> str:
         [
             "snapshots/",
             "context.*",
+            "reviews/",
+            "review-*.prompt.md",
+            "review-*.template.toon",
+            "review-preflight.json",
+            "review.prompt.md",
             "metrics.jsonl",
             "session-events.jsonl",
             "learning-sessions.jsonl",
