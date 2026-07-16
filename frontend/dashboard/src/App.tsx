@@ -44,7 +44,7 @@ import {
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskRecord, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 
 const ContextCityMap = lazy(() => import("./MapCity").then((module) => ({ default: module.ContextCityMap })));
@@ -704,8 +704,31 @@ function ProjectHomeView({
           </div>
         </Panel>
       ) : null}
+      {selected ? <Panel title="Work history" icon={Activity}>
+        <TaskTimeline events={snapshot.task_timeline || []} />
+      </Panel> : null}
     </div>
   );
+}
+
+function TaskTimeline({ events }: { events: DashboardTimelineEvent[] }) {
+  if (!events.length) {
+    return <div className="empty-state-block" data-testid="task-timeline-empty"><strong>No work history yet.</strong><p>Start a task or prepare AI context to create the first evidence-backed update.</p></div>;
+  }
+  return <ol className="timeline" data-testid="task-timeline">
+    {events.slice().reverse().map((event) => (
+      <li key={event.event_id}>
+        <span className="timeline-dot good" />
+        <div>
+          <strong>{event.label || event.event_type || "Work update"}</strong>
+          <small>{event.occurred_at ? formatDashboardDate(event.occurred_at) : "Recorded locally"}{event.agent ? ` · ${event.agent}` : ""}</small>
+          {event.summary ? <p className="muted">{event.summary}</p> : null}
+          {event.context_path ? <code>{event.context_path}</code> : null}
+          {event.issue_references?.length ? <small>Linked: {event.issue_references.join(", ")}</small> : null}
+        </div>
+      </li>
+    ))}
+  </ol>;
 }
 
 function AnalyticsView({ snapshot }: { snapshot: DashboardSnapshot }) {

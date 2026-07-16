@@ -23,7 +23,7 @@ from agentpack.dashboard.collectors import build_project_dashboard_snapshot, sem
 from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
 from agentpack.dashboard.models import DashboardFeedback
-from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, record_feedback, update_task
+from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, record_feedback, task_timeline, update_task
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 
 
@@ -375,6 +375,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(query_string)
             value = query.get("range", ["7d"])[0]
             return {"analytics": analytics_for_range(self.server.state.root, value).model_dump(mode="json")}
+        if path.startswith("/api/project/tasks/") and path.endswith("/timeline"):
+            task_id = path.removeprefix("/api/project/tasks/").removesuffix("/timeline").strip("/")
+            query = urllib.parse.parse_qs(query_string)
+            try:
+                limit = max(1, min(100, int(query.get("limit", ["50"])[0] or "50")))
+            except (TypeError, ValueError):
+                limit = 50
+            return {"timeline": [row.model_dump(mode="json") for row in task_timeline(self.server.state.root, task_id, limit=limit)]}
         if path.startswith("/api/project/tasks/"):
             task_id = path.rsplit("/", 1)[-1]
             task = next((row for row in snapshot.project_tasks if row.task_id == task_id), None)
@@ -383,6 +391,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return {
                 "task": task.model_dump(mode="json"),
                 "runs": [row.model_dump(mode="json") for row in snapshot.task_runs if row.task_id == task_id],
+                "timeline": [row.model_dump(mode="json") for row in task_timeline(self.server.state.root, task_id, limit=100)],
                 "feedback": [row.model_dump(mode="json") for row in snapshot.dashboard_feedback if row.task_id == task_id],
                 "impact": snapshot.task_map[:100],
             }

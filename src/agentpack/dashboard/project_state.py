@@ -10,6 +10,7 @@ from typing import Any
 from agentpack.core import git
 from agentpack.core.task_freshness import read_task_md
 from agentpack.core.thread_context import read_task_status
+from agentpack.session.events import read_events
 from agentpack.dashboard.models import (
     DashboardAnalytics,
     DashboardFeedback,
@@ -17,6 +18,7 @@ from agentpack.dashboard.models import (
     DashboardSnapshot,
     DashboardTaskRecord,
     DashboardTaskRun,
+    DashboardTimelineEvent,
     DashboardWorkspaceRecord,
     ContextHealth,
     ProjectInfo,
@@ -67,6 +69,7 @@ def build_project_home_snapshot(root: Path) -> DashboardSnapshot:
     snapshot.project_tasks = state["tasks"]
     snapshot.active_task = state["active_task"]
     snapshot.task_runs = state["runs"]
+    snapshot.task_timeline = state["timeline"]
     snapshot.dashboard_feedback = state["feedback"]
     snapshot.analytics = state["analytics"]
     snapshot.unassigned_history_count = int(state["unassigned_history_count"])
@@ -89,6 +92,7 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
     project_id = _project_id(root)
     workspace_id = _workspace_id(project_id, root)
     previous_project, previous_workspace, tasks, runs, feedback = load_dashboard_state(root)
+    session_events = read_events(root, limit=MAX_RUNS)
 
     project = DashboardProjectRecord(
         project_id=project_id,
@@ -157,6 +161,7 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
     tasks = sorted(by_key.values(), key=lambda item: (not item.active, item.updated_at, item.title), reverse=True)[-MAX_TASKS:]
 
     if current_task and snapshot.context.generated_at:
+        pack_event = _matching_pack_event(session_events, current_task.title, snapshot.context)
         run_id = _run_id(current_task.task_id, snapshot.context.generated_at, snapshot.context.source_command)
         if not any(item.run_id == run_id for item in runs):
             selected = [item.path for item in snapshot.selected_files]
@@ -165,9 +170,16 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
             run = DashboardTaskRun(
                 run_id=run_id,
                 task_id=current_task.task_id,
+                session_id=_session_id(project_id, workspace_id, pack_event) if pack_event else "",
+                agent=str(pack_event.get("agent") or ""),
                 started_at=snapshot.context.generated_at,
                 ended_at=snapshot.context.generated_at,
                 status="completed" if snapshot.context.status == "fresh" else "needs_attention",
+                event_ids=[_event_id(pack_event)] if pack_event else [],
+                context_path=str(pack_event.get("context_path") or ""),
+                citation_manifest_path=str(pack_event.get("citation_manifest_path") or ""),
+                issue_references=_string_list(pack_event.get("issue_references")),
+                issue_reference_details=[item for item in pack_event.get("issue_reference_details") or [] if isinstance(item, dict)][:20],
                 selected_files=selected[:100],
                 omitted_files=omitted[:100],
                 checks=checks[:100],
@@ -181,6 +193,10 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
             current_task.last_run_id = run_id
             current_task.updated_at = now
     runs = sorted(runs, key=lambda item: item.started_at)[-MAX_RUNS:]
+    timeline = _build_task_timeline(
+        [event for event in session_events if event.get("task_id") == (current_task.task_id if current_task else "")],
+        limit=100,
+    )
 
     directory = state_dir(root)
     directory.mkdir(parents=True, exist_ok=True)
@@ -199,6 +215,7 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
         "tasks": [item for item in tasks if item.project_id == project_id and item.workspace_id == workspace_id],
         "active_task": current_task,
         "runs": task_runs[-50:],
+        "timeline": timeline,
         "feedback": [item for item in feedback if current_task and item.task_id == current_task.task_id],
         "analytics": analytics,
         "unassigned_history_count": max(0, len(snapshot.task_history) - len(tasks)),
@@ -220,6 +237,13 @@ def analytics_for_range(root: Path, value: str = "7d") -> DashboardAnalytics:
     if project is None or workspace is None:
         return DashboardAnalytics(range="30d" if value == "30d" else "7d", available=False, unavailable_reason="No task or run evidence has been recorded yet.")
     return _analytics(project.project_id, workspace.workspace_id, tasks, runs, feedback, days=30 if value == "30d" else 7)
+
+
+def task_timeline(root: Path, task_id: str, *, limit: int = 100) -> list[DashboardTimelineEvent]:
+    """Return bounded, normalized event history for one project-scoped task."""
+    bounded_limit = max(1, min(100, int(limit)))
+    events = read_events(root.resolve(), limit=MAX_RUNS * 2)
+    return _build_task_timeline([event for event in events if event.get("task_id") == task_id], limit=bounded_limit)
 
 
 def create_dashboard_task(root: Path, title: str, *, description: str = "", status: str = "todo") -> DashboardTaskRecord:
@@ -342,6 +366,76 @@ def _task_id(project_id: str, workspace_id: str, title: str, thread_id: str) -> 
 
 def _run_id(task_id: str, generated_at: str, source: str) -> str:
     return "run-" + _digest(f"{task_id}:{generated_at}:{source}")
+
+
+def _session_id(project_id: str, workspace_id: str, event: dict[str, Any]) -> str:
+    if event.get("session_id"):
+        return str(event["session_id"])
+    agent = str(event.get("agent") or "")
+    context_path = str(event.get("context_path") or "")
+    timestamp = str(event.get("timestamp") or "")
+    return "session-" + _digest(f"{project_id}:{workspace_id}:{agent}:{context_path}:{timestamp[:10]}")
+
+
+def _event_id(event: dict[str, Any]) -> str:
+    if event.get("event_id"):
+        return str(event["event_id"])
+    return "event-" + _digest("|".join(str(event.get(key) or "") for key in ("type", "timestamp", "task", "context_path")))
+
+
+def _matching_pack_event(events: list[dict[str, Any]], task: str, _context: ContextHealth) -> dict[str, Any]:
+    task = task.strip()
+    for event in reversed(events):
+        if event.get("type") != "pack" and event.get("event_type") != "context_prepared":
+            continue
+        if task and str(event.get("task") or "").strip() != task:
+            continue
+        return event
+    return {}
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [str(item) for item in value if isinstance(item, str)]
+
+
+def _build_task_timeline(events: list[dict[str, Any]], *, limit: int) -> list[DashboardTimelineEvent]:
+    labels = {
+        "session_started": "Work session started",
+        "task_started": "Task started",
+        "context_prepared": "AI context prepared",
+        "pack": "AI context prepared",
+        "memory_recorded": "Memory recorded",
+        "check_completed": "Checks completed",
+        "github_reference_attached": "GitHub reference attached",
+        "task_completed": "Task completed",
+        "session_stopped": "Work session ended",
+    }
+    rows: list[DashboardTimelineEvent] = []
+    for event in events[-limit:]:
+        event_type = str(event.get("event_type") or event.get("type") or "event")
+        payload = event.get("payload") if isinstance(event.get("payload"), dict) else event
+        summary = str(payload.get("summary") or payload.get("status") or "")
+        rows.append(
+            DashboardTimelineEvent(
+                event_id=_event_id(event),
+                event_type=event_type,
+                label=labels.get(event_type, event_type.replace("_", " ").capitalize()),
+                occurred_at=str(event.get("occurred_at") or event.get("timestamp") or ""),
+                project_id=str(event.get("project_id") or ""),
+                workspace_id=str(event.get("workspace_id") or ""),
+                task_id=str(event.get("task_id") or ""),
+                session_id=_session_id("", "", event),
+                agent=str(event.get("agent") or ""),
+                source=str(event.get("source") or "legacy"),
+                summary=summary[:240],
+                context_path=str(payload.get("context_path") or event.get("context_path") or ""),
+                issue_references=_string_list(payload.get("issue_references") or event.get("issue_references")),
+                evidence=[item for item in event.get("evidence", []) if isinstance(item, dict)][:20],
+            )
+        )
+    return rows
 
 
 def _digest(value: str) -> str:

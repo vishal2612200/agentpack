@@ -1031,6 +1031,7 @@ class PackService:
             "pack",
             {
                 "task": request.task,
+                "thread_id": request.thread_id or "",
                 "issue_references": [item.ref for item in issue_reference_details],
                 "issue_reference_details": [item.to_dict() for item in issue_reference_details],
                 "agent": request.agent,
@@ -1045,6 +1046,7 @@ class PackService:
                 "citation_count": len(pack_obj.citations),
             },
             output_path=cfg.runtime.session_events_output,
+            source=request.task_source or "pack",
         )
         if thread_row:
             append_thread_index(root, thread_row)

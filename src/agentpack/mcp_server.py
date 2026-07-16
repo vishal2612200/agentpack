@@ -1077,13 +1077,24 @@ def serve() -> None:
 
         This is the recommended MCP-first entry point at the start of a task.
         """
+        root = _repo_root()
+        resolved_thread = resolve_session_thread_option(thread_id) or ""
+        from agentpack.adapters.detect import detect_agent
+        from agentpack.session.events import record_event
+
+        record_event(
+            root,
+            "task_started",
+            {"task": task, "thread_id": resolved_thread, "agent": detect_agent(root)},
+            source="mcp",
+        )
         return _pack_context_impl(
-            _repo_root(),
+            root,
             task=task,
             mode=mode,
             budget=budget,
             max_tokens=max_tokens,
-            thread_id=resolve_session_thread_option(thread_id) or "",
+            thread_id=resolved_thread,
         )
 
     @mcp.tool()

@@ -230,9 +230,16 @@ export interface DashboardTaskRecord {
 export interface DashboardTaskRun {
   run_id: string;
   task_id: string;
+  session_id?: string;
+  agent?: string;
   started_at?: string;
   ended_at?: string;
   status?: string;
+  event_ids?: string[];
+  context_path?: string;
+  citation_manifest_path?: string;
+  issue_references?: string[];
+  issue_reference_details?: Array<Record<string, unknown>>;
   selected_files?: string[];
   omitted_files?: string[];
   checks?: string[];
@@ -241,6 +248,23 @@ export interface DashboardTaskRun {
   saving_pct?: number;
   unresolved_edges?: number;
   evidence_refs?: string[];
+}
+
+export interface DashboardTimelineEvent {
+  event_id: string;
+  event_type?: string;
+  label?: string;
+  occurred_at?: string;
+  project_id?: string;
+  workspace_id?: string;
+  task_id?: string;
+  session_id?: string;
+  agent?: string;
+  source?: string;
+  summary?: string;
+  context_path?: string;
+  issue_references?: string[];
+  evidence?: Array<Record<string, unknown>>;
 }
 
 export interface DashboardFeedback {
@@ -285,6 +309,7 @@ export interface DashboardSnapshot {
   project_tasks?: DashboardTaskRecord[];
   active_task?: DashboardTaskRecord | null;
   task_runs?: DashboardTaskRun[];
+  task_timeline?: DashboardTimelineEvent[];
   dashboard_feedback?: DashboardFeedback[];
   analytics?: DashboardAnalytics;
   unassigned_history_count?: number;

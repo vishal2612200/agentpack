@@ -79,9 +79,16 @@ class DashboardTaskRun(BaseModel):
     schema_version: int = 1
     run_id: str
     task_id: str
+    session_id: str = ""
+    agent: str = ""
     started_at: str = ""
     ended_at: str = ""
     status: str = ""
+    event_ids: list[str] = Field(default_factory=list)
+    context_path: str = ""
+    citation_manifest_path: str = ""
+    issue_references: list[str] = Field(default_factory=list)
+    issue_reference_details: list[dict[str, Any]] = Field(default_factory=list)
     selected_files: list[str] = Field(default_factory=list)
     omitted_files: list[str] = Field(default_factory=list)
     checks: list[str] = Field(default_factory=list)
@@ -90,6 +97,24 @@ class DashboardTaskRun(BaseModel):
     saving_pct: float = 0.0
     unresolved_edges: int = 0
     evidence_refs: list[str] = Field(default_factory=list)
+
+
+class DashboardTimelineEvent(BaseModel):
+    schema_version: int = 1
+    event_id: str
+    event_type: str = ""
+    label: str = ""
+    occurred_at: str = ""
+    project_id: str = ""
+    workspace_id: str = ""
+    task_id: str = ""
+    session_id: str = ""
+    agent: str = ""
+    source: str = ""
+    summary: str = ""
+    context_path: str = ""
+    issue_references: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class DashboardFeedback(BaseModel):
@@ -631,6 +656,7 @@ class DashboardSnapshot(BaseModel):
     project_tasks: list[DashboardTaskRecord] = Field(default_factory=list)
     active_task: DashboardTaskRecord | None = None
     task_runs: list[DashboardTaskRun] = Field(default_factory=list)
+    task_timeline: list[DashboardTimelineEvent] = Field(default_factory=list)
     dashboard_feedback: list[DashboardFeedback] = Field(default_factory=list)
     analytics: DashboardAnalytics = Field(default_factory=DashboardAnalytics)
     unassigned_history_count: int = 0

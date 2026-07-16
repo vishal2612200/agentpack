@@ -1,13 +1,25 @@
 from __future__ import annotations
 
 import json
+import hashlib
+import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentpack.session.identity import remember_external_thread_ids, resolve_identity
+
 
 DEFAULT_EVENTS_PATH = ".agentpack/session-events.jsonl"
+EVENT_SCHEMA_VERSION = 1
+
+_CANONICAL_EVENT_TYPES = {
+    "pack": "context_prepared",
+    "task_memory": "memory_recorded",
+    "task_memory_event": "memory_recorded",
+    "task_start_snapshot": "task_started",
+}
 
 
 def record_event(
@@ -16,16 +28,39 @@ def record_event(
     payload: dict[str, Any] | None = None,
     *,
     output_path: str = DEFAULT_EVENTS_PATH,
-) -> None:
+    source: str = "agentpack",
+) -> dict[str, Any]:
     path = root / output_path
     path.parent.mkdir(parents=True, exist_ok=True)
+    data = dict(payload or {})
+    identity = resolve_identity(
+        root,
+        task=str(data.get("task") or ""),
+        thread_id=str(data.get("thread_id") or data.get("thread") or ""),
+        agent=str(data.get("agent") or ""),
+        explicit_task_id=str(data.get("task_id") or ""),
+    )
+    timestamp = datetime.now(timezone.utc).isoformat()
     event = {
+        "schema_version": EVENT_SCHEMA_VERSION,
+        "event_id": "event-" + uuid.uuid4().hex[:20],
+        "event_type": _CANONICAL_EVENT_TYPES.get(event_type, event_type),
+        "occurred_at": timestamp,
         "type": event_type,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        **(payload or {}),
+        "timestamp": timestamp,
+        "source": source,
+        "evidence": data.pop("evidence", []) if isinstance(data.get("evidence", []), list) else [],
+        "payload": data,
+        **data,
     }
+    # Canonical identity wins over legacy payload fields such as timestamp-based
+    # task IDs, while the original fields remain available in payload.
+    event.update(identity)
+    event["event_type"] = _CANONICAL_EVENT_TYPES.get(event_type, event_type)
+    remember_external_thread_ids(root, identity["external_thread_ids"])
     with path.open("a", encoding="utf-8") as f:
         f.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+    return event
 
 
 def read_events(root: Path, *, output_path: str = DEFAULT_EVENTS_PATH, limit: int = 200) -> list[dict[str, Any]]:
@@ -42,8 +77,47 @@ def read_events(root: Path, *, output_path: str = DEFAULT_EVENTS_PATH, limit: in
         except json.JSONDecodeError:
             continue
         if isinstance(rec, dict):
-            rows.append(rec)
+            rows.append(normalize_event(root, rec))
     return rows
+
+
+def normalize_event(root: Path, event: dict[str, Any]) -> dict[str, Any]:
+    """Return a compatibility-preserving canonical view without rewriting history."""
+    result = dict(event)
+    legacy_type = str(result.get("type") or result.get("event_type") or "unknown")
+    timestamp = str(result.get("timestamp") or result.get("occurred_at") or "")
+    result.setdefault("schema_version", EVENT_SCHEMA_VERSION)
+    result.setdefault("event_type", _CANONICAL_EVENT_TYPES.get(legacy_type, legacy_type))
+    result.setdefault("type", legacy_type)
+    result.setdefault("timestamp", timestamp)
+    result.setdefault("occurred_at", timestamp)
+    result.setdefault("source", "legacy")
+    result.setdefault("evidence", [])
+    if not isinstance(result.get("evidence"), list):
+        result["evidence"] = []
+    if not isinstance(result.get("payload"), dict):
+        result["payload"] = {
+            key: value
+            for key, value in result.items()
+            if key not in {"schema_version", "event_id", "event_type", "occurred_at", "type", "timestamp", "source", "evidence", "payload"}
+        }
+    identity = resolve_identity(
+        root,
+        task=str(result.get("task") or result.get("payload", {}).get("task") or ""),
+        thread_id=str(result.get("thread_id") or result.get("thread") or ""),
+        agent=str(result.get("agent") or ""),
+        explicit_task_id=str(result.get("task_id") or ""),
+    )
+    for key, value in identity.items():
+        if key == "external_thread_ids":
+            existing = result.get(key) if isinstance(result.get(key), list) else []
+            result[key] = list(dict.fromkeys([*existing, *value]))[:20]
+        else:
+            result[key] = value or result.get(key, "")
+    if not result.get("event_id"):
+        stable = json.dumps(result, sort_keys=True, separators=(",", ":"))
+        result["event_id"] = "event-" + hashlib.sha256(stable.encode("utf-8")).hexdigest()[:20]
+    return result
 
 
 def summarize_events(events: list[dict[str, Any]]) -> dict[str, Any]:
