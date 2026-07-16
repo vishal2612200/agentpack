@@ -45,6 +45,14 @@ def task_id(root: Path, task: str, *, thread_id: str = "", explicit: str = "") -
     return "task-" + digest(f"{project_id(root)}:{workspace_id(root)}:{thread_id}:{title}")
 
 
+def logical_task_id(root: Path, task: str) -> str:
+    """Return a task identity that remains stable across sessions and worktrees."""
+    title = " ".join(task.strip().split())
+    if not title:
+        return ""
+    return "logical-task-" + digest(f"{project_id(root)}:{title}")
+
+
 def session_id(root: Path) -> str:
     data = _load_session(root)
     if not data:
@@ -80,7 +88,8 @@ def remember_external_thread_ids(root: Path, values: list[str]) -> None:
     data = _load_session(root)
     if data is None:
         return
-    existing = data.get("external_thread_ids") if isinstance(data.get("external_thread_ids"), list) else []
+    raw_existing = data.get("external_thread_ids")
+    existing: list[Any] = raw_existing if isinstance(raw_existing, list) else []
     merged = list(dict.fromkeys([str(item) for item in [*existing, *values] if item]))[:20]
     if merged == existing:
         return
@@ -106,6 +115,7 @@ def resolve_identity(
         "project_id": project_id(root),
         "workspace_id": workspace_id(root),
         "task_id": task_id(root, task, thread_id=thread_id, explicit=explicit_task_id),
+        "logical_task_id": logical_task_id(root, task),
         "session_id": session_id(root),
         "external_thread_ids": threads,
         "agent": resolved_agent,

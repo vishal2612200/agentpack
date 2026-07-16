@@ -9,7 +9,7 @@ from agentpack.commands._shared import console, _root
 from agentpack.core.execution_state import build_execution_state
 from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 
-VALID_STATUSES = {"planned", "in_progress", "blocked", "done"}
+VALID_STATUSES = {"planned", "in_progress", "blocked", "handed_off", "done"}
 
 state_app = typer.Typer(help="Read and update AgentPack task execution state.")
 
@@ -48,7 +48,7 @@ def show_state(
 
 @state_app.command("set")
 def set_state(
-    status: str = typer.Argument(..., help="planned|in_progress|blocked|done"),
+    status: str = typer.Argument(..., help="planned|in_progress|blocked|handed_off|done"),
     summary: str = typer.Option("", "--summary", help="Task state summary."),
     thread: str = typer.Option("", "--thread", help="Use thread-scoped task state (auto by default in agent sessions; use 'global' for legacy global state)."),
 ) -> None:
@@ -71,7 +71,7 @@ def _state_path(root: Path, thread: str) -> Path:
 def _write_state(status: str, *, summary: str = "", thread: str = "") -> None:
     normalized = status.strip().lower()
     if normalized not in VALID_STATUSES:
-        console.print(f"[red]Invalid status: {status}. Use planned|in_progress|blocked|done.[/]")
+        console.print(f"[red]Invalid status: {status}. Use planned|in_progress|blocked|handed_off|done.[/]")
         raise typer.Exit(1)
     root = _root()
     path = _state_path(root, thread)

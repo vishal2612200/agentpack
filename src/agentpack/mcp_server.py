@@ -33,12 +33,18 @@ Tools exposed:
     get_delta_context   — return selected-file delta since the previous pack
     validate_toon       — validate TOON syntax from content or a repo-relative path
     get_stats           — token/saving stats for the latest pack
+    create_handoff      — package a structured report and complete Git-visible patch
+    list_handoffs       — list pending or historical project handoffs
+    get_handoff         — inspect one handoff by memorable name
+    accept_handoff      — atomically claim, apply, and resume a handoff
+    release_handoff     — release the current session's claim
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from agentpack import __version__
 from agentpack.core import git
@@ -46,7 +52,7 @@ from agentpack.core.command_surface import available_cli_commands, fallback_agen
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.structured_format import StructuredFormat, to_llm
 from agentpack.core.task_freshness import read_task_md, task_freshness, write_task_md
-from agentpack.core.thread_context import resolve_session_thread_option, task_is_done, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, read_task_status, task_is_terminal, thread_paths
 from agentpack.core.token_estimator import estimate_tokens
 from agentpack.control_plane import build_control_plane_snapshot, plan_next_actions
 from agentpack.control_plane.renderer import token_hint
@@ -84,6 +90,11 @@ MCP_TOOL_NAMES = (
     "compress_output",
     "validate_toon",
     "get_stats",
+    "create_handoff",
+    "list_handoffs",
+    "get_handoff",
+    "accept_handoff",
+    "release_handoff",
 )
 
 
@@ -236,10 +247,12 @@ def _truncate_to_budget(text: str, max_tokens: int = 20000) -> str:
 def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
     """Read the latest context pack, blocking to refresh when task.md changed."""
     scoped = thread_paths(root, thread_id)
-    if task_is_done(root, scoped.thread_id if scoped else None):
+    if task_is_terminal(root, scoped.thread_id if scoped else None):
         label = f"AgentPack session {scoped.thread_id}" if scoped else "AgentPack task"
+        status = read_task_status(root, scoped.thread_id if scoped else None)
+        terminal_description = "Completed context" if status == "done" else "Handed-off context"
         return (
-            f"> {label} is marked done. Completed context will not be reused.\n\n"
+            f"> {label} is marked {status}. {terminal_description} will not be reused.\n\n"
             "Start a new task/session with `agentpack start \"describe the task\"` or MCP `start_task(...)`."
         )
     pack_path = None
@@ -1117,6 +1130,91 @@ def serve() -> None:
             budget=budget,
             max_tokens=max_tokens,
             thread_id=resolve_session_thread_option(thread_id) or "",
+        )
+
+    @mcp.tool()
+    def create_handoff(report: dict[str, Any], name: str = "", target_provider: str = "", target_session_id: str = "") -> str:
+        """Create a single-consumer handoff with the complete Git-visible worktree patch."""
+        from agentpack.core.handoff import create_handoff as create
+
+        record = create(
+            _repo_root(),
+            report,
+            name=name,
+            target_provider=target_provider,
+            target_session_id=target_session_id,
+        )
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(_repo_root(), payload, requested="toon", root_name="handoff")
+
+    @mcp.tool()
+    def list_handoffs(status: str = "ready", format: str = "toon") -> str:
+        """List project handoffs without exposing internal UUIDs."""
+        from agentpack.core.handoff import HandoffStore
+
+        if format not in {"toon", "json"}:
+            raise ValueError("format must be toon or json")
+        statuses = None if status in {"", "all"} else {status}
+        records = []
+        for record in HandoffStore(_repo_root()).list(statuses):
+            records.append({
+                "name": record.name,
+                "status": record.status,
+                "created_at": record.created_at.isoformat(),
+                "source_provider": record.source.provider,
+                "task": record.report.task,
+                "summary": record.report.summary,
+                "next_action": record.report.next_action,
+            })
+        return to_llm(_repo_root(), records, requested=cast(StructuredFormat, format), root_name="handoffs")
+
+    @mcp.tool()
+    def get_handoff(name: str, format: str = "toon") -> str:
+        """Return one handoff by its memorable project-scoped name."""
+        from agentpack.core.handoff import HandoffStore, render_markdown
+
+        record = HandoffStore(_repo_root()).load(name)
+        if format == "markdown":
+            return render_markdown(record)
+        if format not in {"toon", "json"}:
+            raise ValueError("format must be toon, json, or markdown")
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(_repo_root(), payload, requested=cast(StructuredFormat, format), root_name="handoff")
+
+    @mcp.tool()
+    def accept_handoff(name: str = "", latest: bool = False, max_tokens: int = 20000) -> str:
+        """Atomically claim a handoff, apply its patch, and return bounded fresh context."""
+        from agentpack.core.handoff import accept_handoff as accept
+
+        record, warnings = accept(_repo_root(), name, latest=latest)
+        context = _pack_context_impl(
+            _repo_root(),
+            task=record.report.task,
+            max_tokens=max_tokens,
+            thread_id=record.claim.thread_id if record.claim else "",
+        )
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(
+            _repo_root(),
+            {"handoff": payload, "warnings": warnings, "context": context},
+            requested="toon",
+            root_name="handoff_resume",
+        )
+
+    @mcp.tool()
+    def release_handoff(name: str) -> str:
+        """Release the current session's claim so another session can resume it."""
+        from agentpack.core.handoff import release_handoff as release
+
+        record = release(_repo_root(), name)
+        return to_llm(
+            _repo_root(),
+            {"name": record.name, "status": record.status},
+            requested="toon",
+            root_name="handoff",
         )
 
     @mcp.tool()

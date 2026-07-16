@@ -32,6 +32,7 @@ def test_record_event_assigns_canonical_identity_and_unique_ids(tmp_path: Path) 
     assert first["project_id"].startswith("project-")
     assert first["workspace_id"].startswith("workspace-")
     assert first["task_id"].startswith("task-")
+    assert first["logical_task_id"].startswith("logical-task-")
     assert first["session_id"].startswith("session-")
     assert first["external_thread_ids"] == ["claude-1"]
     assert first["event_id"] != second["event_id"]

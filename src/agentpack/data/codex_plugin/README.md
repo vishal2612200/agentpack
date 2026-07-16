@@ -4,6 +4,8 @@ Thin Codex plugin for AgentPack ranked repo context.
 
 AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, and learning from current local session context.
 
+Use `@agentpack-handoff [name]` to package current work and `@agentpack-resume [name]` to claim it from another real session. Other agents use the same MCP tools or `agentpack handoff resume` CLI.
+
 Install AgentPack first:
 
 ```bash

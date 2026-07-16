@@ -13,10 +13,13 @@ PROJECT_INDEX_SCHEMA_VERSION = 1
 MAX_PROJECT_INDEX_ROWS = 200
 
 
-def project_index_path() -> Path:
+def agentpack_home() -> Path:
     base = os.environ.get("AGENTPACK_HOME")
-    home = Path(base).expanduser() if base else Path.home() / ".agentpack"
-    return home / "projects.json"
+    return Path(base).expanduser() if base else Path.home() / ".agentpack"
+
+
+def project_index_path() -> Path:
+    return agentpack_home() / "projects.json"
 
 
 def load_project_index(path: Path | None = None) -> list[dict[str, Any]]:

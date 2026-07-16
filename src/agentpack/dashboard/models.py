@@ -6,7 +6,7 @@ from pydantic import BaseModel, Field
 
 
 ContextStatus = Literal["fresh", "stale", "missing", "unknown"]
-TaskState = Literal["planned", "in_progress", "blocked", "done", "unknown"]
+TaskState = Literal["planned", "in_progress", "blocked", "handed_off", "done", "unknown"]
 DashboardTaskStatus = Literal["todo", "in_progress", "needs_attention", "done"]
 SkillFeedbackStatus = Literal[
     "none",

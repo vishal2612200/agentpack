@@ -496,13 +496,21 @@ agentpack install --agent antigravity  # GEMINI.md + git hooks + VS Code tasks
 ```
 
 All installs are idempotent — safe to re-run, merge with existing config, never duplicate.
-Claude installs also refresh `/agentpack`, `/agentpack-review`, and `/agentpack-learn`.
+Claude installs also refresh `/agentpack`, `/agentpack-review`, `/agentpack-learn`, `/agentpack-handoff`, and `/agentpack-resume`.
 Codex installs refresh the local plugin cache, enable `agentpack@local`, and
 disable stale enabled AgentPack marketplace entries so Codex loads the same
 version as the installed CLI.
 The review slash command runs the local Anchor, Judge, Critic, Actor review bundle; the learning
 slash command uses current local AgentPack session context and keeps the user
 learning statement at the end for prompt caching.
+
+### `agentpack handoff`
+
+Transfer current work between real Codex, Claude, Cursor, Windsurf, Gemini,
+Antigravity, Cline, Copilot, OpenCode, or generic sessions. Handoffs use memorable
+project-scoped names, a canonical JSON report, and a complete compressed Git patch
+under `AGENTPACK_HOME`. Use `create`, `list`, `show`, `resume`, `release`, `cancel`,
+`export`, and `import`. MCP exposes the same create/list/get/accept/release lifecycle.
 
 ---
 

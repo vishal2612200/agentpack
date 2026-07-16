@@ -191,6 +191,9 @@ def register(app: typer.Typer) -> None:
                 {"task": finish_task, "thread_id": thread_id or "", "summary": summary},
                 source="workflow",
             )
+            from agentpack.core.handoff import complete_claimed_handoff
+
+            complete_claimed_handoff(root)
         _record_task_memory_safe(
             root,
             task=finish_task,

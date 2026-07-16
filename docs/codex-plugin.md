@@ -16,6 +16,8 @@ This is the first concrete packaged plugin. The broader plugin and IDE distribut
 - `@agentpack-refresh [task]` refreshes stale context through the Codex guard path.
 - `@agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged understanding and judge prompts to inspect the current PR or diff.
 - `@agentpack-learn <statement>` turns current local AgentPack session context into an interactive learning prompt.
+- `@agentpack-handoff [name]` packages the structured task report and complete Git-visible patch.
+- `@agentpack-resume [name]` atomically claims and resumes a pending handoff.
 
 ## Install
 

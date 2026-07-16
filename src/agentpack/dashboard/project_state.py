@@ -418,7 +418,7 @@ def _analytics(project_id: str, workspace_id: str, tasks: list[DashboardTaskReco
 
 def _dashboard_status(state: str, context_status: str) -> str:
     value = (state or "").lower()
-    if value == "done":
+    if value in {"done", "handed_off"}:
         return "done"
     if value == "blocked" or context_status in {"stale", "missing"}:
         return "needs_attention"
