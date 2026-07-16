@@ -267,6 +267,17 @@ export interface DashboardTimelineEvent {
   evidence?: Array<Record<string, unknown>>;
 }
 
+export interface DashboardTaskDetail {
+  task: DashboardTaskRecord;
+  runs: DashboardTaskRun[];
+  timeline: DashboardTimelineEvent[];
+  github_references?: string[];
+  feedback?: DashboardFeedback[];
+  impact?: Array<Record<string, unknown>>;
+  impact_available?: boolean;
+  impact_reason?: string;
+}
+
 export interface DashboardFeedback {
   feedback_id: string;
   task_id: string;

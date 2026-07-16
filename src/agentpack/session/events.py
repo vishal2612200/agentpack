@@ -22,15 +22,25 @@ _CANONICAL_EVENT_TYPES = {
 }
 
 
+def configured_events_output(root: Path) -> str:
+    """Return the configured event path without making configuration mandatory."""
+    try:
+        from agentpack.core.config import load_config
+
+        return load_config(root).runtime.session_events_output or DEFAULT_EVENTS_PATH
+    except Exception:
+        return DEFAULT_EVENTS_PATH
+
+
 def record_event(
     root: Path,
     event_type: str,
     payload: dict[str, Any] | None = None,
     *,
-    output_path: str = DEFAULT_EVENTS_PATH,
+    output_path: str | None = None,
     source: str = "agentpack",
 ) -> dict[str, Any]:
-    path = root / output_path
+    path = root / (output_path or configured_events_output(root))
     path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(payload or {})
     identity = resolve_identity(
@@ -63,22 +73,37 @@ def record_event(
     return event
 
 
-def read_events(root: Path, *, output_path: str = DEFAULT_EVENTS_PATH, limit: int = 200) -> list[dict[str, Any]]:
-    path = root / output_path
-    if not path.exists():
-        return []
+def read_events(root: Path, *, output_path: str | None = None, limit: int = 200) -> list[dict[str, Any]]:
+    limit = max(1, int(limit))
+    resolved_output = output_path or configured_events_output(root)
+    paths = [root / resolved_output]
+    legacy_path = root / DEFAULT_EVENTS_PATH
+    if legacy_path not in paths:
+        paths.append(legacy_path)
     rows: list[dict[str, Any]] = []
-    for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
-        line = line.strip()
-        if not line:
+    seen_ids: set[str] = set()
+    for path in paths:
+        if not path.exists():
             continue
-        try:
-            rec = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        if isinstance(rec, dict):
-            rows.append(normalize_event(root, rec))
-    return rows
+        for line in path.read_text(encoding="utf-8").splitlines()[-limit:]:
+            line = line.strip()
+            if not line:
+                continue
+            try:
+                rec = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            normalized = normalize_event(root, rec)
+            event_id = str(normalized.get("event_id") or "")
+            if event_id and event_id in seen_ids:
+                continue
+            if event_id:
+                seen_ids.add(event_id)
+            rows.append(normalized)
+    rows.sort(key=lambda item: (str(item.get("occurred_at") or item.get("timestamp") or ""), str(item.get("event_id") or "")))
+    return rows[-limit:]
 
 
 def normalize_event(root: Path, event: dict[str, Any]) -> dict[str, Any]:

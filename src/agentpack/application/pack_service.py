@@ -1045,9 +1045,20 @@ class PackService:
                 "citation_manifest_path": citation_manifest_path,
                 "citation_count": len(pack_obj.citations),
             },
-            output_path=cfg.runtime.session_events_output,
             source=request.task_source or "pack",
         )
+        if issue_reference_details:
+            record_event(
+                root,
+                "github_reference_attached",
+                {
+                    "task": request.task,
+                    "thread_id": request.thread_id or "",
+                    "issue_references": [item.ref for item in issue_reference_details],
+                    "issue_reference_details": [item.to_dict() for item in issue_reference_details],
+                },
+                source="github-metadata",
+            )
         if thread_row:
             append_thread_index(root, thread_row)
         excluded_receipts = [r for r in pack_obj.receipts if r.action == "excluded"]

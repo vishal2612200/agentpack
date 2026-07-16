@@ -89,10 +89,14 @@ def load_dashboard_state(root: Path) -> tuple[DashboardProjectRecord | None, Das
 def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, Any]:
     root = root.resolve()
     now = datetime.now(timezone.utc).isoformat()
-    project_id = _project_id(root)
-    workspace_id = _workspace_id(project_id, root)
+    project_id, workspace_id = _scope_ids(root)
     previous_project, previous_workspace, tasks, runs, feedback = load_dashboard_state(root)
     session_events = read_events(root, limit=MAX_RUNS)
+    completed_task_ids = {
+        str(event.get("task_id"))
+        for event in session_events
+        if event.get("event_type") == "task_completed" and event.get("task_id")
+    }
 
     project = DashboardProjectRecord(
         project_id=project_id,
@@ -120,7 +124,7 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
         thread_ids = [row.thread_id] if row.thread_id else []
         key = (title, workspace_id)
         existing = by_key.get(key)
-        status = _dashboard_status(row.state or row.status, snapshot.context.status)
+        status = "done" if _task_id(project_id, workspace_id, title, row.thread_id or "") in completed_task_ids else _dashboard_status(row.state or row.status, snapshot.context.status)
         task = existing or DashboardTaskRecord(
             task_id=_task_id(project_id, workspace_id, title, ""),
             project_id=project_id,
@@ -130,6 +134,8 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
             imported=True,
         )
         task.status = status
+        if existing is not None and existing.status_source == "dashboard" and task.task_id not in completed_task_ids:
+            task.status = existing.status
         task.updated_at = now
         task.thread_ids = sorted(set(task.thread_ids + thread_ids))
         task.source_paths = sorted(set(task.source_paths + ([row.task_path] if row.task_path else [])))
@@ -152,6 +158,7 @@ def sync_dashboard_state(root: Path, snapshot: DashboardSnapshot) -> dict[str, A
             source_paths=[".agentpack/task.md"],
             active=True,
             imported=True,
+            status_source="dashboard",
         )
         by_key[(title, workspace_id)] = current_task
 
@@ -246,10 +253,97 @@ def task_timeline(root: Path, task_id: str, *, limit: int = 100) -> list[Dashboa
     return _build_task_timeline([event for event in events if event.get("task_id") == task_id], limit=bounded_limit)
 
 
-def create_dashboard_task(root: Path, title: str, *, description: str = "", status: str = "todo") -> DashboardTaskRecord:
+def _scope_ids(root: Path) -> tuple[str, str]:
     root = root.resolve()
     project_id = _project_id(root)
-    workspace_id = _workspace_id(project_id, root)
+    return project_id, _workspace_id(project_id, root)
+
+
+def _scoped_task_data(
+    root: Path,
+    task_id: str,
+) -> tuple[DashboardTaskRecord | None, list[DashboardTaskRun], list[DashboardFeedback]]:
+    project_id, workspace_id = _scope_ids(root)
+    _project, _workspace, tasks, runs, feedback = load_dashboard_state(root.resolve())
+    task = next(
+        (
+            item
+            for item in tasks
+            if item.task_id == task_id
+            and item.project_id == project_id
+            and item.workspace_id == workspace_id
+        ),
+        None,
+    )
+    return (
+        task,
+        [item for item in runs if item.task_id == task_id],
+        [item for item in feedback if item.task_id == task_id],
+    )
+
+
+def get_project_task(root: Path, task_id: str) -> DashboardTaskRecord | None:
+    """Return a task only when it belongs to this repository and worktree."""
+    return _scoped_task_data(root, task_id)[0]
+
+
+def task_event_is_in_scope(root: Path, task_id: str) -> bool:
+    """Allow legacy event-only tasks while enforcing project/workspace identity."""
+    if get_project_task(root, task_id) is not None:
+        return True
+    project_id, workspace_id = _scope_ids(root)
+    return any(
+        event.get("task_id") == task_id
+        and event.get("project_id") == project_id
+        and event.get("workspace_id") == workspace_id
+        for event in read_events(root.resolve(), limit=MAX_RUNS * 2)
+    )
+
+
+def task_detail(root: Path, task_id: str, *, limit: int = 100) -> dict[str, Any] | None:
+    """Build bounded detail data for one persisted project/workspace task."""
+    task, scoped_runs, scoped_feedback = _scoped_task_data(root, task_id)
+    if task is None:
+        return None
+    bounded_limit = max(1, min(100, int(limit)))
+    scoped_runs = scoped_runs[-bounded_limit:]
+    timeline = task_timeline(root, task_id, limit=bounded_limit)
+    github_references = sorted({ref for run in scoped_runs for ref in run.issue_references})
+    impact: list[dict[str, Any]] = []
+    for run in scoped_runs:
+        for path in run.selected_files:
+            impact.append({"path": path, "kind": "selected", "run_id": run.run_id})
+        for path in run.omitted_files:
+            impact.append({"path": path, "kind": "omitted", "run_id": run.run_id})
+    return {
+        "task": task,
+        "runs": scoped_runs,
+        "timeline": timeline,
+        "github_references": github_references[:50],
+        "feedback": scoped_feedback[-MAX_FEEDBACK:],
+        "impact": impact[:200],
+        "impact_available": bool(scoped_runs),
+        "impact_reason": "Run evidence is not available for this task yet." if not scoped_runs else "Derived from context-pack run evidence.",
+    }
+
+
+def task_detail_payload(root: Path, task_id: str, *, limit: int = 100) -> dict[str, Any] | None:
+    """Return JSON-ready task detail data for the dashboard API."""
+    detail = task_detail(root, task_id, limit=limit)
+    if detail is None:
+        return None
+    return {
+        **detail,
+        "task": detail["task"].model_dump(mode="json"),
+        "runs": [row.model_dump(mode="json") for row in detail["runs"]],
+        "timeline": [row.model_dump(mode="json") for row in detail["timeline"]],
+        "feedback": [row.model_dump(mode="json") for row in detail["feedback"]],
+    }
+
+
+def create_dashboard_task(root: Path, title: str, *, description: str = "", status: str = "todo") -> DashboardTaskRecord:
+    root = root.resolve()
+    project_id, workspace_id = _scope_ids(root)
     project, workspace, tasks, _runs, _feedback = load_dashboard_state(root)
     now = datetime.now(timezone.utc).isoformat()
     task = DashboardTaskRecord(
@@ -259,6 +353,7 @@ def create_dashboard_task(root: Path, title: str, *, description: str = "", stat
         title=title.strip(),
         description=description.strip(),
         status=status if status in {"todo", "in_progress", "needs_attention", "done"} else "todo",
+        status_source="dashboard",
         created_at=now,
         updated_at=now,
         source_paths=[".agentpack/task.md"],
@@ -278,13 +373,14 @@ def create_dashboard_task(root: Path, title: str, *, description: str = "", stat
 
 def update_task(root: Path, task_id: str, *, title: str | None = None, status: str | None = None) -> DashboardTaskRecord | None:
     directory = state_dir(root) / "tasks"
-    task = _load_model(directory / f"{task_id}.json", DashboardTaskRecord)
+    task = get_project_task(root, task_id)
     if task is None:
         return None
     if title is not None and title.strip():
         task.title = title.strip()
     if status in {"todo", "in_progress", "needs_attention", "done"}:
         task.status = status
+        task.status_source = "dashboard"
     task.updated_at = datetime.now(timezone.utc).isoformat()
     _write_model(directory / f"{task.task_id}.json", task)
     return task
@@ -403,6 +499,7 @@ def _string_list(value: object) -> list[str]:
 def _build_task_timeline(events: list[dict[str, Any]], *, limit: int) -> list[DashboardTimelineEvent]:
     labels = {
         "session_started": "Work session started",
+        "agent_session_started": "Agent work session started",
         "task_started": "Task started",
         "context_prepared": "AI context prepared",
         "pack": "AI context prepared",

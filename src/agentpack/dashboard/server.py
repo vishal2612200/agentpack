@@ -23,7 +23,8 @@ from agentpack.dashboard.collectors import build_project_dashboard_snapshot, sem
 from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
 from agentpack.dashboard.models import DashboardFeedback
-from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, record_feedback, task_timeline, update_task
+from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
+from agentpack.session.events import record_event
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 
 
@@ -158,6 +159,12 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
+            if parsed.path.startswith("/api/project/tasks/"):
+                task_id = parsed.path.removeprefix("/api/project/tasks/").strip("/").removesuffix("/timeline").strip("/")
+                valid = task_event_is_in_scope(self.server.state.root, task_id) if parsed.path.endswith("/timeline") else get_project_task(self.server.state.root, task_id) is not None
+                if not valid:
+                    self._send_json({"error": "task not found"}, status=HTTPStatus.NOT_FOUND)
+                    return
             self._send_json(self._section_payload(parsed.path, parsed.query))
             return
         if parsed.path.startswith("/api/terminal/") and parsed.path.endswith("/events"):
@@ -227,10 +234,18 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         if parsed.path == "/api/project/tasks/update":
             payload = self._read_json()
             task_id = str(payload.get("task_id") or "")
+            previous = get_project_task(self.server.state.root, task_id) if task_id else None
             task = update_task(self.server.state.root, task_id, title=payload.get("title"), status=payload.get("status")) if task_id else None
             if task is None:
                 self._send_json({"error": "task not found"}, status=HTTPStatus.NOT_FOUND)
                 return
+            if task.status == "done" and (previous is None or previous.status != "done"):
+                record_event(
+                    self.server.state.root,
+                    "task_completed",
+                    {"task": task.title, "task_id": task.task_id, "summary": "Marked done in the dashboard."},
+                    source="dashboard",
+                )
             self._send_json({"task": task.model_dump(mode="json"), "dashboard": self.server.state.payload()})
             return
         if parsed.path == "/api/project/feedback":
@@ -385,16 +400,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return {"timeline": [row.model_dump(mode="json") for row in task_timeline(self.server.state.root, task_id, limit=limit)]}
         if path.startswith("/api/project/tasks/"):
             task_id = path.rsplit("/", 1)[-1]
-            task = next((row for row in snapshot.project_tasks if row.task_id == task_id), None)
-            if task is None:
+            detail = task_detail_payload(self.server.state.root, task_id, limit=100)
+            if detail is None:
                 return {"error": "task not found"}
-            return {
-                "task": task.model_dump(mode="json"),
-                "runs": [row.model_dump(mode="json") for row in snapshot.task_runs if row.task_id == task_id],
-                "timeline": [row.model_dump(mode="json") for row in task_timeline(self.server.state.root, task_id, limit=100)],
-                "feedback": [row.model_dump(mode="json") for row in snapshot.dashboard_feedback if row.task_id == task_id],
-                "impact": snapshot.task_map[:100],
-            }
+            return detail
         return {}
 
     def _run_typed_action(self, payload: dict[str, Any]) -> None:

@@ -66,6 +66,7 @@ class DashboardTaskRecord(BaseModel):
     title: str
     description: str = ""
     status: DashboardTaskStatus = "todo"
+    status_source: str = "imported"
     created_at: str = ""
     updated_at: str = ""
     thread_ids: list[str] = Field(default_factory=list)

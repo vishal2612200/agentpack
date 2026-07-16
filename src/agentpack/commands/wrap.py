@@ -11,7 +11,6 @@ from agentpack.adapters.detect import detect_agent
 from agentpack.application.pack_service import PackRequest, PackService
 from agentpack.commands._shared import _root, console
 from agentpack.core import git
-from agentpack.core.config import load_config
 from agentpack.core.task_freshness import write_task_md
 from agentpack.session.events import record_event
 
@@ -37,7 +36,6 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Pack fresh context, then launch a coding agent."""
         root = _root()
-        cfg = load_config(root)
         resolved_agent = detect_agent(root) if agent_name == "auto" else agent_name
         if task.strip():
             write_task_md(root, task.strip())
@@ -59,7 +57,6 @@ def register(app: typer.Typer) -> None:
             root,
             "wrap",
             {"agent": resolved_agent, "task": resolved_task, "context_path": str(result.out_path.relative_to(root))},
-            output_path=cfg.runtime.session_events_output,
         )
         console.print(f"[green]Context ready:[/] {result.out_path.relative_to(root)}")
         if check_setup:
@@ -74,6 +71,16 @@ def register(app: typer.Typer) -> None:
         if executable is None:
             console.print(f"[red]Agent binary not found on PATH:[/] {binary}")
             raise typer.Exit(1)
+        record_event(
+            root,
+            "agent_session_started",
+            {
+                "agent": resolved_agent,
+                "task": resolved_task,
+                "context_path": str(result.out_path.relative_to(root)),
+            },
+            source="agent-launch",
+        )
         env = {**os.environ, **launch_env}
         raise typer.Exit(subprocess.call(command, cwd=root, env=env))
 

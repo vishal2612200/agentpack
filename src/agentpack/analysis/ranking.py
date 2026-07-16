@@ -1439,7 +1439,7 @@ def _first_relationship_receipt(graph: SemanticGraphIndex, path: str, relationsh
 
 
 def _receipt_reason(receipt: dict[str, Any]) -> str:
-    evidence = next((item for item in receipt.get("evidence", []) if item.get("path")), {})
+    evidence: dict[str, Any] = next((item for item in receipt.get("evidence", []) if item.get("path")), {})
     location = str(evidence.get("path") or "unknown")
     if evidence.get("start_line"):
         location += f":{evidence['start_line']}"

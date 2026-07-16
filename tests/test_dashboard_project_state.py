@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import threading
 import urllib.request
+import urllib.error
 from pathlib import Path
 
 from agentpack.dashboard.models import (
@@ -154,6 +155,54 @@ def test_project_task_timeline_api_is_bounded(tmp_path: Path) -> None:
             payload = json.loads(response.read())
         assert len(payload["timeline"]) == 1
         assert payload["timeline"][0]["event_type"] == "task_started"
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_project_task_detail_is_scoped_and_done_emits_completion_event(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    server = create_dashboard_server(tmp_path, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    headers = {"X-AgentPack-Token": server.state.token, "Content-Type": "application/json"}
+    try:
+        create = urllib.request.Request(f"{base}/api/project/tasks", data=json.dumps({"title": "scoped detail"}).encode(), headers=headers, method="POST")
+        with urllib.request.urlopen(create) as response:
+            task = json.loads(response.read())["task"]
+
+        detail_request = urllib.request.Request(f"{base}/api/project/tasks/{task['task_id']}", headers=headers)
+        with urllib.request.urlopen(detail_request) as response:
+            detail = json.loads(response.read())
+        assert detail["task"]["task_id"] == task["task_id"]
+        assert detail["impact_available"] is False
+        assert detail["impact"] == []
+
+        update = urllib.request.Request(
+            f"{base}/api/project/tasks/update",
+            data=json.dumps({"task_id": task["task_id"], "status": "done"}).encode(),
+            headers=headers,
+            method="POST",
+        )
+        with urllib.request.urlopen(update) as response:
+            assert json.loads(response.read())["task"]["status"] == "done"
+
+        refreshed = urllib.request.Request(f"{base}/api/project/tasks?limit=10", headers=headers)
+        with urllib.request.urlopen(refreshed) as response:
+            assert next(row for row in json.loads(response.read())["tasks"] if row["task_id"] == task["task_id"])["status"] == "done"
+
+        from agentpack.session.events import read_events
+
+        assert any(event["event_type"] == "task_completed" for event in read_events(tmp_path))
+        missing = urllib.request.Request(f"{base}/api/project/tasks/task-not-in-this-workspace", headers=headers)
+        try:
+            urllib.request.urlopen(missing)
+        except urllib.error.HTTPError as error:
+            assert error.code == 404
+        else:
+            raise AssertionError("out-of-scope task should return 404")
     finally:
         server.shutdown()
         server.server_close()

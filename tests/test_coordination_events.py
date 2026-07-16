@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from agentpack.session.events import read_events, record_event
+from agentpack.session.events import configured_events_output, read_events, record_event
 from agentpack.session.state import create_session, load_session, stop_session
 
 
@@ -38,6 +38,20 @@ def test_record_event_assigns_canonical_identity_and_unique_ids(tmp_path: Path) 
     assert load_session(tmp_path).external_thread_ids == ["claude-1"]
 
 
+def test_coordination_lifecycle_event_types_are_preserved(tmp_path: Path) -> None:
+    event_types = [
+        "agent_session_started",
+        "github_reference_attached",
+        "check_completed",
+        "task_completed",
+    ]
+    for event_type in event_types:
+        record_event(tmp_path, event_type, {"task": "coordination lifecycle"})
+
+    observed = [event["event_type"] for event in read_events(tmp_path)]
+    assert observed == event_types
+
+
 def test_legacy_events_are_normalized_without_rewriting_history(tmp_path: Path) -> None:
     path = tmp_path / ".agentpack" / "session-events.jsonl"
     path.parent.mkdir(parents=True)
@@ -67,3 +81,18 @@ def test_legacy_session_gets_deterministic_migrated_id(tmp_path: Path) -> None:
     assert first is not None and second is not None
     assert first.session_id.startswith("session-")
     assert first.session_id == second.session_id
+
+
+def test_configured_event_path_is_read_with_legacy_fallback_and_deduplicated(tmp_path: Path) -> None:
+    config_dir = tmp_path / ".agentpack"
+    config_dir.mkdir()
+    (config_dir / "config.toml").write_text('[runtime]\nsession_events_output = ".agentpack/custom-events.jsonl"\n', encoding="utf-8")
+    first = record_event(tmp_path, "task_started", {"task": "configured events"})
+    legacy = config_dir / "session-events.jsonl"
+    legacy.write_text(json.dumps(first) + "\n", encoding="utf-8")
+
+    events = read_events(tmp_path)
+
+    assert configured_events_output(tmp_path) == ".agentpack/custom-events.jsonl"
+    assert (config_dir / "custom-events.jsonl").exists()
+    assert [event["event_id"] for event in events].count(first["event_id"]) == 1

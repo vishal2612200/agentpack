@@ -301,7 +301,7 @@ def extract_symbols_ts(path: Path, language: str) -> list[Symbol]:
         chain = _enclosing_scope_chain(node, class_node_ids)
         if chain:
             qualified = _qualify(name, node, class_node_ids, class_name_by_id)
-            kind: _SymbolKind = "method"
+            kind = "method"
         else:
             qualified = name
             kind = "function"

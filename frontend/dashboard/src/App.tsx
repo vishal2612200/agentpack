@@ -44,7 +44,7 @@ import {
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 
 const ContextCityMap = lazy(() => import("./MapCity").then((module) => ({ default: module.ContextCityMap })));
@@ -558,12 +558,48 @@ function ProjectHomeView({
   const [newTask, setNewTask] = useState("");
   const [taskError, setTaskError] = useState("");
   const [feedbackSent, setFeedbackSent] = useState(false);
+  const [taskDetail, setTaskDetail] = useState<DashboardTaskDetail | null>(null);
+  const [taskDetailState, setTaskDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const selected = tasks.find((item) => item.task_id === selectedTaskId) || active;
   const analytics = snapshot.analytics;
 
   useEffect(() => {
     setSelectedTaskId(active?.task_id || "");
   }, [active?.task_id]);
+
+  useEffect(() => {
+    const taskId = selected?.task_id;
+    if (!taskId) {
+      setTaskDetail(null);
+      setTaskDetailState("idle");
+      return;
+    }
+    let cancelled = false;
+    setTaskDetail(null);
+    setTaskDetailState("loading");
+    fetch(apiUrl(`/api/project/tasks/${encodeURIComponent(taskId)}`), { headers: authHeaders() })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load task details.");
+        return response.json() as Promise<DashboardTaskDetail>;
+      })
+      .then((detail) => {
+        if (cancelled) return;
+        setTaskDetail(detail);
+        setTaskDetailState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTaskDetail(null);
+        setTaskDetailState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.task_id]);
+
+  useEffect(() => {
+    setFeedbackSent(false);
+  }, [selected?.task_id]);
 
   const createTask = async (event: FormEvent) => {
     event.preventDefault();
@@ -598,10 +634,15 @@ function ProjectHomeView({
     const response = await fetch(apiUrl("/api/project/feedback"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ task_id: selected.task_id, run_id: selected.last_run_id || "", value })
+      body: JSON.stringify({ task_id: selected.task_id, run_id: taskDetail && taskDetail.runs.length ? taskDetail.runs[taskDetail.runs.length - 1].run_id : selected.last_run_id || "", value })
     });
     if (response.ok) setFeedbackSent(true);
   };
+
+  const selectedDetail = taskDetail?.task.task_id === selected?.task_id ? taskDetail : null;
+  const latestRun = selectedDetail && selectedDetail.runs.length ? selectedDetail.runs[selectedDetail.runs.length - 1] : undefined;
+  const selectedFiles = latestRun?.selected_files || [];
+  const omittedFiles = latestRun?.omitted_files || [];
 
   return (
     <div className="view-stack project-home" data-testid="project-home">
@@ -688,10 +729,31 @@ function ProjectHomeView({
             </div>
             <div className="stack-sm">
               <label className="field"><span>Status</span><select value={selected.status} onChange={(event) => updateStatus(event.target.value)}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="needs_attention">Needs attention</option><option value="done">Done</option></select></label>
-              <div className="detail-stat"><span>Files prepared</span><strong>{selected.task_id === active?.task_id ? snapshot.selected_files.length : "Not run"}</strong></div>
-              <div className="detail-stat"><span>Evidence</span><strong>{selected.task_id === active?.task_id ? snapshot.semantic_graph.edge_count : "Not run"}</strong></div>
+              <div className="detail-stat"><span>Files prepared</span><strong>{selectedDetail ? selectedFiles.length : taskDetailState === "loading" ? "Loading" : "Not run"}</strong></div>
+              <div className="detail-stat"><span>Evidence</span><strong>{selectedDetail ? selectedDetail.impact?.length || 0 : taskDetailState === "loading" ? "Loading" : "Not run"}</strong></div>
             </div>
           </div>
+          {taskDetailState === "loading" ? <p className="muted" data-testid="task-detail-loading">Loading this task&apos;s evidence...</p> : null}
+          {taskDetailState === "error" ? <p className="error-text" data-testid="task-detail-error">Task details could not be loaded.</p> : null}
+          {selectedDetail ? <div className="task-evidence-grid" data-testid="task-detail-evidence">
+            <div>
+              <p className="eyebrow">Files prepared</p>
+              {selectedFiles.length ? <ul className="compact-list">{selectedFiles.slice(0, 12).map((path) => <li key={`selected-${path}`}><code>{path}</code></li>)}</ul> : <p className="muted">No files were selected yet.</p>}
+            </div>
+            <div>
+              <p className="eyebrow">Files left out</p>
+              {omittedFiles.length ? <ul className="compact-list">{omittedFiles.slice(0, 12).map((path) => <li key={`omitted-${path}`}><code>{path}</code></li>)}</ul> : <p className="muted">No omitted-file evidence yet.</p>}
+            </div>
+            <div>
+              <p className="eyebrow">Checks</p>
+              {latestRun?.checks?.length ? <ul className="compact-list">{latestRun.checks.slice(0, 12).map((check) => <li key={check}>{check}</li>)}</ul> : <p className="muted">No checks recorded yet.</p>}
+            </div>
+            <div>
+              <p className="eyebrow">Impact evidence</p>
+              <p className="muted">{selectedDetail.impact_reason || "No impact evidence recorded yet."}</p>
+              {selectedDetail.github_references?.length ? <p className="muted">GitHub: {selectedDetail.github_references.join(", ")}</p> : null}
+            </div>
+          </div> : null}
           <div className="feedback-box" data-testid="task-feedback">
             <div><strong>Was this useful?</strong><small>Your answer improves future context selection.</small></div>
             <div className="inline-actions">
@@ -705,7 +767,9 @@ function ProjectHomeView({
         </Panel>
       ) : null}
       {selected ? <Panel title="Work history" icon={Activity}>
-        <TaskTimeline events={snapshot.task_timeline || []} />
+        {taskDetailState === "loading" && !selectedDetail ? <p className="muted">Loading work history...</p> : null}
+        {taskDetailState === "error" ? <p className="error-text">Work history could not be loaded.</p> : null}
+        {taskDetailState === "ready" && selectedDetail ? <TaskTimeline events={selectedDetail.timeline || []} /> : null}
       </Panel> : null}
     </div>
   );

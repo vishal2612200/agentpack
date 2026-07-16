@@ -25,6 +25,7 @@ from agentpack.core.loop_protocol import (
 from agentpack.core.thread_context import resolve_session_thread_option
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.learning.task_memory import record_task_memory
+from agentpack.session.events import record_event
 
 
 def register(app: typer.Typer) -> None:
@@ -161,6 +162,19 @@ def register(app: typer.Typer) -> None:
             _finish(stages, json_output)
         if not skip_checks:
             stages.append(_run("dev-check", cli_module_argv("dev-check"), root))
+            record_event(
+                root,
+                "check_completed",
+                {
+                    "task": finish_task,
+                    "thread_id": thread_id or "",
+                    "command": stages[-1]["command"],
+                    "status": "passed" if stages[-1]["returncode"] == 0 else "failed",
+                    "returncode": stages[-1]["returncode"],
+                    "summary": stages[-1].get("detail", ""),
+                },
+                source="workflow",
+            )
         if stages and stages[-1]["returncode"] != 0:
             _finish(stages, json_output)
 
@@ -170,6 +184,13 @@ def register(app: typer.Typer) -> None:
         stages.append(_run("state-done", cli_module_argv(*state_args), root))
         if stages[-1]["returncode"] == 0 and loop_applies:
             mark_done(root, summary)
+        if stages[-1]["returncode"] == 0:
+            record_event(
+                root,
+                "task_completed",
+                {"task": finish_task, "thread_id": thread_id or "", "summary": summary},
+                source="workflow",
+            )
         _record_task_memory_safe(
             root,
             task=finish_task,
