@@ -457,6 +457,7 @@ export function DashboardWorkspace() {
           {view === "home" && (
             <ProjectHomeView
               snapshot={payload.snapshot}
+              repositoryMap={payload.map}
               agents={payload.agents}
               mode={presentationMode}
               onRunAction={handleRunAction}
@@ -653,6 +654,7 @@ function ProjectDropdown({
 
 function ProjectHomeView({
   snapshot,
+  repositoryMap,
   agents,
   mode,
   onRunAction,
@@ -661,6 +663,7 @@ function ProjectHomeView({
   onOpenGraph
 }: {
   snapshot: DashboardSnapshot;
+  repositoryMap: DashboardMap;
   agents?: DashboardPayload["agents"];
   mode: PresentationMode;
   onRunAction: (action: string, body?: Record<string, unknown>) => void;
@@ -677,7 +680,6 @@ function ProjectHomeView({
   const [taskDetail, setTaskDetail] = useState<DashboardTaskDetail | null>(null);
   const [taskDetailState, setTaskDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle");
   const selected = tasks.find((item) => item.task_id === selectedTaskId) || active;
-  const analytics = snapshot.analytics;
 
   useEffect(() => {
     setSelectedTaskId(active?.task_id || "");
@@ -759,39 +761,41 @@ function ProjectHomeView({
   const latestRun = selectedDetail && selectedDetail.runs.length ? selectedDetail.runs[selectedDetail.runs.length - 1] : undefined;
   const selectedFiles = latestRun?.selected_files || [];
   const omittedFiles = latestRun?.omitted_files || [];
+  const repositoryContextStatus = snapshot.context.status || "unknown";
+  const repositoryEntityCount = repositoryMap.summary.building_count || snapshot.semantic_graph?.entity_count || 0;
+  const repositoryRelationshipCount = repositoryMap.summary.road_count || snapshot.semantic_graph?.edge_count || 0;
+  const activeWorkCount = tasks.filter((item) => item.status !== "done").length;
 
   return (
     <div className="view-stack project-home" data-testid="project-home">
       <section className="project-home-hero">
         <div>
-          <div className="hero-mode"><span className="signal-dot" /> {mode === "explain" ? "Workspace briefing" : "Build workspace"} <code>{active?.task_id || "ready"}</code></div>
-          <h1>{active?.title || "Start your next task"}</h1>
-          <p className="muted">{active ? (mode === "explain" ? "AgentPack has organized the evidence behind your next useful action." : "Inspect the exact files, symbols, commands, and checks behind this task.") : "Start with a task and AgentPack will stage the workspace around it."}</p>
+          <div className="hero-mode"><span className="signal-dot" /> Repository workspace <code>{snapshot.project.git_sha || "local"}</code></div>
+          <h1>{snapshot.project.name}</h1>
+          <p className="muted">{mode === "explain" ? "Understand this project across code, tests, context, agents, and current work." : "Inspect repository structure, symbols, relationships, evidence, sessions, and work items from one control plane."}</p>
           <div className="workspace-context">
             <span><GitBranch size={13} aria-hidden="true" /> {snapshot.workspace?.branch || snapshot.project.branch || "local workspace"}</span>
             <code>{snapshot.workspace?.path || snapshot.project.path}</code>
           </div>
         </div>
         <div className="hero-actions">
-          <span className="hero-state"><CircleDot size={13} aria-hidden="true" /> Ready for direction</span>
-          <button className="primary-action" type="button" onClick={() => onRunAction("next")}>
-            <PlayCircle size={16} aria-hidden="true" /> Prepare next step
+          <span className="hero-state"><CircleDot size={13} aria-hidden="true" /> Repository {repositoryContextStatus}</span>
+          <button className="primary-action" type="button" onClick={onOpenGraph}>
+            Explore repository <ChevronRight size={16} aria-hidden="true" />
           </button>
-          <button className="secondary-action" type="button" onClick={onOpenGraph}>
-            Impact map <ChevronRight size={16} aria-hidden="true" />
-          </button>
+          {active ? <button className="secondary-action" type="button" onClick={() => onRunAction("next")}><PlayCircle size={16} aria-hidden="true" /> Prepare active work</button> : null}
         </div>
       </section>
 
       <div className="metric-grid home-metrics">
-        <Metric label="Open tasks" value={tasks.filter((item) => item.status !== "done").length} tone="neutral" />
-        <Metric label="Completed" value={analytics?.tasks_completed || 0} tone="good" />
-        <Metric label="AI context prepared" value={analytics?.context_packs || 0} tone="memory" />
-        <Metric label="Context reduced" value={`${analytics?.average_saving_pct || 0}%`} tone="good" />
+        <Metric label="Mapped files" value={repositoryEntityCount || "Not ready"} tone={repositoryEntityCount ? "neutral" : "warn"} />
+        <Metric label="Relationships" value={repositoryRelationshipCount || "Not ready"} tone={repositoryRelationshipCount ? "memory" : "warn"} />
+        <Metric label="Active work" value={activeWorkCount} tone={activeWorkCount ? "neutral" : "good"} />
+        <Metric label="Project context" value={repositoryContextStatus} tone={riskTone(repositoryContextStatus)} />
       </div>
 
       <div className="home-grid">
-        <Panel title="Current task" icon={ClipboardList}>
+        <Panel title="Active work" icon={ClipboardList}>
           {active ? (
             <div className="task-focus-card">
               <div className="task-card-heading">
@@ -818,7 +822,7 @@ function ProjectHomeView({
           )}
         </Panel>
 
-        <Panel title="Tasks in this workspace" icon={FolderKanban}>
+        <Panel title="Project work queue" icon={FolderKanban}>
           <div className="stack-sm">
             {tasks.slice(0, 20).map((task) => (
               <button key={task.task_id} type="button" className={task.task_id === selected?.task_id ? "task-list-row active" : "task-list-row"} onClick={() => setSelectedTaskId(task.task_id)}>
