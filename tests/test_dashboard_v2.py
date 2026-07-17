@@ -14,6 +14,8 @@ from agentpack.dashboard.server import create_dashboard_server
 from agentpack.dashboard.models import ThreadRow
 from agentpack.dashboard.v2 import _agent_summary, build_dashboard_v2_impact, build_dashboard_v2_payload
 
+SCHEMA_PATH = Path(__file__).resolve().parents[1] / "docs" / "schemas" / "dashboard-v2.schema.json"
+
 
 def _request(url: str, token: str) -> dict:
     request = urllib.request.Request(url, headers={"X-AgentPack-Token": token})
@@ -60,7 +62,7 @@ def test_dashboard_v2_envelope_is_versioned_and_hides_handoff_uuid(tmp_path: Pat
         )
         assert evidence["schema_version"] == 2
         assert actions["schema_version"] == 2
-        schema = json.loads(Path("docs/schemas/dashboard-v2.schema.json").read_text(encoding="utf-8"))
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         _assert_schema(schema, "evidenceResponse", evidence)
         _assert_schema(schema, "actionsResponse", actions)
         _assert_schema(schema, "agentsResponse", agents)
@@ -91,7 +93,7 @@ def test_dashboard_v2_envelope_matches_canonical_schema(tmp_path: Path, monkeypa
     (tmp_path / "src" / "service.py").write_text("def run():\n    return True\n", encoding="utf-8")
 
     payload = build_dashboard_v2_payload(tmp_path, detail="home")
-    schema = json.loads(Path("docs/schemas/dashboard-v2.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
 
     errors = sorted(Draft202012Validator(schema).iter_errors(payload), key=lambda error: list(error.path))
     assert not errors, [f"{list(error.path)}: {error.message}" for error in errors]
@@ -117,7 +119,7 @@ def test_dashboard_v2_action_inspection_returns_explainable_contract(tmp_path: P
         )
         with urllib.request.urlopen(request, timeout=30) as response:
             payload = json.loads(response.read().decode("utf-8"))
-        schema = json.loads(Path("docs/schemas/dashboard-v2.schema.json").read_text(encoding="utf-8"))
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
         _assert_schema(schema, "actionInspectionResponse", payload)
         inspection = payload["inspection"]
         assert inspection["schema_version"] == 2
@@ -147,7 +149,7 @@ def test_dashboard_v2_impact_filters_tree_sitter_entities(tmp_path: Path) -> Non
     assert any(entity["name"].endswith("validate") for entity in payload["summary"]["entities"])
     assert any(entity["id"].startswith("file:") for entity in payload["scene"]["entities"])
     assert any(entity["id"].startswith("semantic:") for entity in payload["entities"])
-    schema = json.loads(Path("docs/schemas/dashboard-v2.schema.json").read_text(encoding="utf-8"))
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
     _assert_schema(schema, "impactResponse", payload)
 
 
