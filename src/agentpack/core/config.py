@@ -116,6 +116,10 @@ class RuntimeConfig(BaseModel):
     max_episodic_cases: int = 1000
 
 
+class HandoffConfig(BaseModel):
+    max_patch_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
+
+
 class HooksConfig(BaseModel):
     task_switch_detection: bool = True
     task_switch_min_terms: int = 1
@@ -216,6 +220,7 @@ class Config(BaseModel):
     learning: LearningConfig = Field(default_factory=LearningConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    handoff: HandoffConfig = Field(default_factory=HandoffConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     agentic: AgenticConfig = Field(default_factory=AgenticConfig)
@@ -304,6 +309,10 @@ max_retrieve_chars = 20000
 max_output_summary_items = 40
 max_session_events = 2000
 max_episodic_cases = 1000
+
+[handoff]
+# Maximum uncompressed Git patch size. Raise deliberately for large binary work.
+max_patch_bytes = 20971520
 
 [loop]
 enabled = true

@@ -5,7 +5,8 @@ from pydantic import BaseModel, Field
 
 from agentpack.core.modes import PackMode
 
-SUMMARY_SCHEMA_VERSION = 2
+SUMMARY_SCHEMA_VERSION = 3
+SUMMARY_EXTRACTOR_PROFILE = "offline-summary-v2|tree-sitter-semantic-v2"
 
 
 class ScanResult(BaseModel):
@@ -70,6 +71,7 @@ class FileSummary(BaseModel):
     language: str | None = None
     provider: str = "offline"
     schema_version: int = SUMMARY_SCHEMA_VERSION
+    extractor_profile_hash: str = SUMMARY_EXTRACTOR_PROFILE
     summary: str
     imports: list[str] = Field(default_factory=list)
     symbols: list[Symbol] = Field(default_factory=list)

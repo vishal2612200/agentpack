@@ -8,6 +8,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentpack.architecture.compat import LegacyGraphQuery
+from agentpack.architecture.index import SemanticGraphIndex
 from agentpack.core.models import DependencyGraph, FileInfo
 from agentpack.core.config import ScoringWeights
 from agentpack.analysis.monorepo import workspace_for_path, workspace_tokens
@@ -1412,12 +1414,50 @@ def _should_dampen_go_symbol_carrier(path: str, reasons: list[str], content_hits
     return False
 
 
+def _relations_for_path(
+    dep_graph: object | None,
+    path: str,
+    semantic_graph: SemanticGraphIndex | None = None,
+) -> dict[str, list[str]]:
+    if semantic_graph is not None:
+        return semantic_graph.file_relations(path)
+    if dep_graph is None:
+        return {"imports": [], "imported_by": [], "tests": []}
+    if isinstance(dep_graph, DependencyGraph):
+        return LegacyGraphQuery(dep_graph).file_relations(path)
+    node = dep_graph.get(path) if isinstance(dep_graph, dict) else None
+    if node is None:
+        return {"imports": [], "imported_by": [], "tests": []}
+    return {"imports": list(node.imports), "imported_by": list(node.imported_by), "tests": list(node.tests)}
+
+
+def _first_relationship_receipt(graph: SemanticGraphIndex, path: str, relationship: str) -> dict[str, Any] | None:
+    return next(
+        (row for row in graph.relationship_receipts(path, limit=20) if row.get("relationship") == relationship),
+        None,
+    )
+
+
+def _receipt_reason(receipt: dict[str, Any]) -> str:
+    evidence: dict[str, Any] = next((item for item in receipt.get("evidence", []) if item.get("path")), {})
+    location = str(evidence.get("path") or "unknown")
+    if evidence.get("start_line"):
+        location += f":{evidence['start_line']}"
+    return (
+        f"graph edge {receipt.get('edge_key', '')} "
+        f"({receipt.get('relationship', 'relationship')} "
+        f"{receipt.get('source_entity_key', '')}->{receipt.get('target_entity_key', '')}) "
+        f"at {location}; confidence {receipt.get('confidence_tier', 'unknown')}; "
+        f"evidence {receipt.get('evidence_reference', '')}"
+    )
+
+
 def score_files(
     files: list[FileInfo],
     changed_paths: set[str],
     staged_paths: set[str],
     recently_modified: list[str],
-    dep_graph: "DependencyGraph | dict",
+    dep_graph: object | None,
     keywords: set[str] | dict[str, float] | KeywordPlan,
     include_tests: bool = True,
     include_configs: bool = True,
@@ -1425,9 +1465,10 @@ def score_files(
     summaries: dict | None = None,
     churn_counts: dict[str, int] | None = None,
     co_changed_paths: dict[str, int] | None = None,
+    semantic_graph: SemanticGraphIndex | None = None,
 ) -> list[tuple[FileInfo, float, list[str]]]:
     from agentpack.core.models import DependencyGraph as _DG
-    if not isinstance(dep_graph, _DG):
+    if semantic_graph is None and not isinstance(dep_graph, _DG):
         dep_graph = _DG()
     w = weights or _DEFAULT_WEIGHTS
     all_paths = {f.path for f in files}
@@ -1486,7 +1527,7 @@ def score_files(
             score += path_term_bonus
             reasons.append(f"multi-term path match +{path_term_bonus:.0f}")
 
-        node = dep_graph.get(fi.path)
+        relations = _relations_for_path(dep_graph, fi.path, semantic_graph)
         sym_names: list[str] = []
         summary_data = summaries.get(fi.path) if summaries and fi.path in summaries else None
         if summary_data:
@@ -1640,20 +1681,26 @@ def score_files(
                 score = max(0.0, score * 0.72)
                 reasons.append("explicit test task non-test dampening")
 
-        for dep_path in node.imports:
+        for dep_path in relations["imports"]:
             if dep_path in changed_paths or _path_matches_keywords(dep_path, keywords) > 0:
                 score += w.direct_dep
                 reasons.append("direct dependency of changed file")
+                if semantic_graph is not None:
+                    receipt = _first_relationship_receipt(semantic_graph, fi.path, "imports")
+                    if receipt:
+                        reasons.append(_receipt_reason(receipt))
                 break
 
-        for other_path, other_node in dep_graph.items():
-            if fi.path in other_node.imports and other_path in changed_paths:
-                score += w.reverse_dep
-                reasons.append("reverse dependency")
-                break
+        if any(other_path in changed_paths for other_path in relations["imported_by"]):
+            score += w.reverse_dep
+            reasons.append("reverse dependency")
+            if semantic_graph is not None:
+                receipt = _first_relationship_receipt(semantic_graph, fi.path, "imports")
+                if receipt:
+                    reasons.append(_receipt_reason(receipt))
 
         if include_tests:
-            tests = node.tests
+            tests = relations["tests"]
             if tests and any(t in all_paths for t in tests):
                 score += w.related_test
                 reasons.append("has related tests")
@@ -1921,11 +1968,12 @@ def boost_paired_tests(
 
 def boost_recall_neighbors(
     scored: list[tuple[FileInfo, float, list[str]]],
-    dep_graph: DependencyGraph,
+    dep_graph: object | None,
     changed_paths: set[str],
     weights: ScoringWeights | None = None,
     *,
     seed_limit: int = 8,
+    semantic_graph: SemanticGraphIndex | None = None,
 ) -> list[tuple[FileInfo, float, list[str]]]:
     """Boost import/reverse-import/test neighbors of strong seed files.
 
@@ -1952,8 +2000,8 @@ def boost_recall_neighbors(
 
     boosts: dict[str, tuple[float, str]] = {}
     for seed in seed_paths:
-        node = dep_graph.get(seed)
-        neighbors = [*node.imports, *node.imported_by, *node.tests]
+        relations = _relations_for_path(dep_graph, seed, semantic_graph)
+        neighbors = [*relations["imports"], *relations["imported_by"], *relations["tests"]]
         for neighbor in neighbors:
             if neighbor == seed or neighbor not in path_set:
                 continue
@@ -1975,12 +2023,13 @@ def boost_recall_neighbors(
 
 def boost_second_pass_expansion(
     scored: list[tuple[FileInfo, float, list[str]]],
-    dep_graph: DependencyGraph,
+    dep_graph: object | None,
     keywords: set[str] | dict[str, float] | KeywordPlan,
     weights: ScoringWeights | None = None,
     *,
     seed_limit: int = 10,
     max_boosts: int = 32,
+    semantic_graph: SemanticGraphIndex | None = None,
 ) -> list[tuple[FileInfo, float, list[str]]]:
     """Boost guarded two-hop neighbours around strong first-pass seeds.
 
@@ -2017,8 +2066,12 @@ def boost_second_pass_expansion(
     boosts: dict[str, tuple[float, str, str]] = {}
 
     def neighbours(path: str) -> set[str]:
-        node = dep_graph.get(path)
-        return {p for p in (*node.imports, *node.imported_by, *node.tests) if p in path_map and p != path}
+        relations = _relations_for_path(dep_graph, path, semantic_graph)
+        return {
+            p
+            for p in (*relations["imports"], *relations["imported_by"], *relations["tests"])
+            if p in path_map and p != path
+        }
 
     for seed in seed_paths:
         seed_domains = _domain_tokens(seed) | keyword_tokens

@@ -1,24 +1,30 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import mimetypes
 import secrets
 import threading
 import urllib.parse
 import webbrowser
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
 from agentpack.core.project_index import register_project
+from agentpack.core.task_freshness import write_task_md
 from agentpack.dashboard.action_history import read_action_history, record_dashboard_action
 from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
 from agentpack.dashboard.app_shell import DASHBOARD_APP_DIR, render_dashboard_shell
-from agentpack.dashboard.collectors import build_project_dashboard_snapshot
+from agentpack.dashboard.collectors import build_project_dashboard_snapshot, semantic_graph_summary
 from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
+from agentpack.dashboard.models import DashboardFeedback
+from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
+from agentpack.session.events import record_event
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 
 
@@ -50,6 +56,17 @@ class DashboardServerState:
             "graph": graph.model_dump(mode="json"),
             "map": dashboard_map.model_dump(mode="json"),
             "action_history": [row.model_dump(mode="json") for row in action_history],
+        }
+
+    def home_payload(self) -> dict[str, Any]:
+        with self.lock:
+            root = self.root
+        snapshot = build_project_home_snapshot(root)
+        return {
+            "snapshot": snapshot.model_dump(mode="json"),
+            "graph": {"schema_version": 1, "root_id": "task:active", "summary": {}, "nodes": [], "edges": []},
+            "map": {"schema_version": 1, "summary": {}, "districts": [], "buildings": [], "roads": [], "landmarks": [], "weather": []},
+            "action_history": [],
         }
 
     def switch_root(self, path: str) -> dict[str, Any]:
@@ -123,25 +140,32 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
-            self._send_json(self.server.state.payload())
+            detail = urllib.parse.parse_qs(parsed.query).get("detail", ["full"])[0]
+            self._send_json(self.server.state.home_payload() if detail == "home" else self.server.state.payload())
             return
-        if parsed.path in {"/api/map", "/api/actions/history"}:
+        if parsed.path in {"/api/map", "/api/graph", "/api/actions/history"}:
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
-            self._send_json(self._section_payload(parsed.path))
+            self._send_json(self._section_payload(parsed.path, parsed.query))
             return
         if parsed.path in {"/api/config", "/api/tasks", "/api/threads"}:
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
-            self._send_json(self._section_payload(parsed.path))
+            self._send_json(self._section_payload(parsed.path, parsed.query))
             return
-        if parsed.path == "/api/projects":
+        if parsed.path in {"/api/projects", "/api/project", "/api/project/tasks", "/api/project/analytics"} or parsed.path.startswith("/api/project/tasks/"):
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
-            self._send_json(self._section_payload(parsed.path))
+            if parsed.path.startswith("/api/project/tasks/"):
+                task_id = parsed.path.removeprefix("/api/project/tasks/").strip("/").removesuffix("/timeline").strip("/")
+                valid = task_event_is_in_scope(self.server.state.root, task_id) if parsed.path.endswith("/timeline") else get_project_task(self.server.state.root, task_id) is not None
+                if not valid:
+                    self._send_json({"error": "task not found"}, status=HTTPStatus.NOT_FOUND)
+                    return
+            self._send_json(self._section_payload(parsed.path, parsed.query))
             return
         if parsed.path.startswith("/api/terminal/") and parsed.path.endswith("/events"):
             if not self._authorized(parsed):
@@ -196,6 +220,55 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
             self._send_json(switched)
+            return
+        if parsed.path == "/api/project/tasks":
+            payload = self._read_json()
+            title = str(payload.get("title") or payload.get("task") or "").strip()
+            if not title:
+                self._send_json({"error": "title is required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            write_task_md(self.server.state.root, title)
+            task = create_dashboard_task(self.server.state.root, title, description=str(payload.get("description") or ""), status=str(payload.get("status") or "todo"))
+            self._send_json({"task": task.model_dump(mode="json"), "dashboard": self.server.state.payload()})
+            return
+        if parsed.path == "/api/project/tasks/update":
+            payload = self._read_json()
+            task_id = str(payload.get("task_id") or "")
+            previous = get_project_task(self.server.state.root, task_id) if task_id else None
+            task = update_task(self.server.state.root, task_id, title=payload.get("title"), status=payload.get("status")) if task_id else None
+            if task is None:
+                self._send_json({"error": "task not found"}, status=HTTPStatus.NOT_FOUND)
+                return
+            if task.status == "done" and (previous is None or previous.status != "done"):
+                record_event(
+                    self.server.state.root,
+                    "task_completed",
+                    {"task": task.title, "task_id": task.task_id, "summary": "Marked done in the dashboard."},
+                    source="dashboard",
+                )
+            self._send_json({"task": task.model_dump(mode="json"), "dashboard": self.server.state.payload()})
+            return
+        if parsed.path == "/api/project/feedback":
+            payload = self._read_json()
+            task_id = str(payload.get("task_id") or "")
+            value = str(payload.get("value") or "")
+            if not task_id or value not in {"helped", "partly_helped", "missed_context", "not_sure"}:
+                self._send_json({"error": "task_id and a valid feedback value are required"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            run_id = str(payload.get("run_id") or "")
+            feedback_id = "feedback-" + hashlib.sha256(f"{task_id}:{run_id}:{value}:{payload.get('note') or ''}".encode("utf-8")).hexdigest()[:20]
+            feedback = record_feedback(
+                self.server.state.root,
+                DashboardFeedback(
+                    feedback_id=feedback_id,
+                    task_id=task_id,
+                    run_id=run_id,
+                    value=value,
+                    note=str(payload.get("note") or "")[:500],
+                    created_at=datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+            self._send_json({"feedback": feedback.model_dump(mode="json")})
             return
         typed_paths = {
             "/api/tasks/set": "set_task",
@@ -253,8 +326,25 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return {}
         return payload if isinstance(payload, dict) else {}
 
-    def _section_payload(self, path: str) -> dict[str, Any]:
-        snapshot = build_project_dashboard_snapshot(self.server.state.root)
+    def _section_payload(self, path: str, query_string: str = "") -> dict[str, Any]:
+        project_path = path == "/api/project" or path.startswith("/api/project/")
+        snapshot = build_project_home_snapshot(self.server.state.root) if project_path else build_project_dashboard_snapshot(self.server.state.root)
+        if path == "/api/graph":
+            query = urllib.parse.parse_qs(query_string)
+            try:
+                limit = int(query.get("limit", ["200"])[0] or "200")
+            except (TypeError, ValueError):
+                limit = 200
+            graph = semantic_graph_summary(
+                self.server.state.root,
+                relationship=query.get("relationship", [""])[0],
+                confidence=query.get("confidence", [""])[0],
+                language=query.get("language", [""])[0],
+                evidence_source=query.get("evidence_source", [""])[0],
+                query=query.get("query", [""])[0],
+                limit=limit,
+            )
+            return {"semantic_graph": graph.model_dump(mode="json")}
         if path == "/api/map":
             graph = build_dashboard_graph(snapshot, self.server.state.root)
             return {"map": build_dashboard_map(snapshot, graph).model_dump(mode="json")}
@@ -270,7 +360,50 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 "summary": snapshot.threads.model_dump(mode="json"),
             }
         if path == "/api/projects":
-            return {"projects": [row.model_dump(mode="json") for row in snapshot.projects]}
+            return {
+                "projects": [row.model_dump(mode="json") for row in snapshot.projects],
+                "current_project": snapshot.project_record.model_dump(mode="json") if snapshot.project_record else None,
+                "current_workspace": snapshot.workspace.model_dump(mode="json") if snapshot.workspace else None,
+                "tasks": [row.model_dump(mode="json") for row in snapshot.project_tasks],
+            }
+        if path == "/api/project":
+            return {
+                "project": snapshot.project_record.model_dump(mode="json") if snapshot.project_record else None,
+                "workspace": snapshot.workspace.model_dump(mode="json") if snapshot.workspace else None,
+                "active_task": snapshot.active_task.model_dump(mode="json") if snapshot.active_task else None,
+                "tasks": [row.model_dump(mode="json") for row in snapshot.project_tasks[:100]],
+                "analytics": snapshot.analytics.model_dump(mode="json"),
+                "unassigned_history_count": snapshot.unassigned_history_count,
+            }
+        if path == "/api/project/tasks":
+            query = urllib.parse.parse_qs(query_string)
+            status = query.get("status", [""])[0]
+            try:
+                limit = max(1, min(100, int(query.get("limit", ["50"])[0] or "50")))
+            except (TypeError, ValueError):
+                limit = 50
+            tasks = snapshot.project_tasks
+            if status in {"todo", "in_progress", "needs_attention", "done"}:
+                tasks = [row for row in tasks if row.status == status]
+            return {"tasks": [row.model_dump(mode="json") for row in tasks[:limit]], "workspace": snapshot.workspace.model_dump(mode="json") if snapshot.workspace else None}
+        if path == "/api/project/analytics":
+            query = urllib.parse.parse_qs(query_string)
+            value = query.get("range", ["7d"])[0]
+            return {"analytics": analytics_for_range(self.server.state.root, value).model_dump(mode="json")}
+        if path.startswith("/api/project/tasks/") and path.endswith("/timeline"):
+            task_id = path.removeprefix("/api/project/tasks/").removesuffix("/timeline").strip("/")
+            query = urllib.parse.parse_qs(query_string)
+            try:
+                limit = max(1, min(100, int(query.get("limit", ["50"])[0] or "50")))
+            except (TypeError, ValueError):
+                limit = 50
+            return {"timeline": [row.model_dump(mode="json") for row in task_timeline(self.server.state.root, task_id, limit=limit)]}
+        if path.startswith("/api/project/tasks/"):
+            task_id = path.rsplit("/", 1)[-1]
+            detail = task_detail_payload(self.server.state.root, task_id, limit=100)
+            if detail is None:
+                return {"error": "task not found"}
+            return detail
         return {}
 
     def _run_typed_action(self, payload: dict[str, Any]) -> None:

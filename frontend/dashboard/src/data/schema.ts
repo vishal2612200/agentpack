@@ -161,6 +161,19 @@ export interface DashboardMap {
   weather: MapWeather[];
 }
 
+export interface SemanticGraphSummary {
+  schema_version: number;
+  commit_sha?: string;
+  entity_count: number;
+  edge_count: number;
+  unresolved_count: number;
+  capabilities: Record<string, string>;
+  cache_stats?: Record<string, number | string | boolean>;
+  relationship_counts: Record<string, number>;
+  entities: Array<{ entity_key: string; type: string; name: string; path: string; line?: number; language?: string; confidence_tier?: string }>;
+  edges: Array<{ edge_key: string; relationship: string; source: string; target: string; source_name?: string; target_name?: string; confidence_tier?: string; evidence?: Array<{ path?: string; start_line?: number; end_line?: number; source?: string; source_hash?: string; note?: string }> }>;
+}
+
 export interface ActionHistoryRow {
   action_id: string;
   label?: string;
@@ -178,6 +191,121 @@ export interface ActionHistoryRow {
   follow_up_actions?: string[];
 }
 
+export type DashboardTaskStatus = "todo" | "in_progress" | "needs_attention" | "done";
+
+export interface DashboardProjectRecord {
+  project_id: string;
+  name: string;
+  repository_path: string;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export interface DashboardWorkspaceRecord {
+  workspace_id: string;
+  project_id: string;
+  path: string;
+  branch?: string;
+  git_sha?: string;
+  is_current?: boolean;
+  updated_at?: string;
+}
+
+export interface DashboardTaskRecord {
+  task_id: string;
+  project_id: string;
+  workspace_id: string;
+  title: string;
+  description?: string;
+  status: DashboardTaskStatus;
+  created_at?: string;
+  updated_at?: string;
+  thread_ids?: string[];
+  source_paths?: string[];
+  active?: boolean;
+  imported?: boolean;
+  last_run_id?: string;
+}
+
+export interface DashboardTaskRun {
+  run_id: string;
+  task_id: string;
+  session_id?: string;
+  agent?: string;
+  started_at?: string;
+  ended_at?: string;
+  status?: string;
+  event_ids?: string[];
+  context_path?: string;
+  citation_manifest_path?: string;
+  issue_references?: string[];
+  issue_reference_details?: Array<Record<string, unknown>>;
+  selected_files?: string[];
+  omitted_files?: string[];
+  checks?: string[];
+  packed_tokens?: number;
+  raw_tokens?: number;
+  saving_pct?: number;
+  unresolved_edges?: number;
+  evidence_refs?: string[];
+}
+
+export interface DashboardTimelineEvent {
+  event_id: string;
+  event_type?: string;
+  label?: string;
+  occurred_at?: string;
+  project_id?: string;
+  workspace_id?: string;
+  task_id?: string;
+  session_id?: string;
+  agent?: string;
+  source?: string;
+  summary?: string;
+  context_path?: string;
+  issue_references?: string[];
+  evidence?: Array<Record<string, unknown>>;
+}
+
+export interface DashboardTaskDetail {
+  task: DashboardTaskRecord;
+  runs: DashboardTaskRun[];
+  timeline: DashboardTimelineEvent[];
+  github_references?: string[];
+  feedback?: DashboardFeedback[];
+  impact?: Array<Record<string, unknown>>;
+  impact_available?: boolean;
+  impact_reason?: string;
+}
+
+export interface DashboardFeedback {
+  feedback_id: string;
+  task_id: string;
+  run_id?: string;
+  value: "helped" | "partly_helped" | "missed_context" | "not_sure";
+  note?: string;
+  created_at?: string;
+}
+
+export interface DashboardAnalytics {
+  range: "7d" | "30d";
+  available: boolean;
+  tasks_total: number;
+  tasks_completed: number;
+  runs_total: number;
+  context_packs: number;
+  files_selected: number;
+  files_omitted: number;
+  packed_tokens: number;
+  raw_tokens: number;
+  average_saving_pct: number;
+  checks_total: number;
+  unresolved_edges: number;
+  feedback_counts: Record<string, number>;
+  evidence: string[];
+  unavailable_reason?: string;
+}
+
 export interface DashboardSnapshot {
   schema_version: number;
   generated_at?: string;
@@ -187,6 +315,15 @@ export interface DashboardSnapshot {
     branch?: string;
     git_sha?: string;
   };
+  project_record?: DashboardProjectRecord | null;
+  workspace?: DashboardWorkspaceRecord | null;
+  project_tasks?: DashboardTaskRecord[];
+  active_task?: DashboardTaskRecord | null;
+  task_runs?: DashboardTaskRun[];
+  task_timeline?: DashboardTimelineEvent[];
+  dashboard_feedback?: DashboardFeedback[];
+  analytics?: DashboardAnalytics;
+  unassigned_history_count?: number;
   task: {
     text?: string;
     state?: string;
@@ -392,4 +529,5 @@ export interface DashboardSnapshot {
     status?: string;
     summary?: string;
   }>;
+  semantic_graph: SemanticGraphSummary;
 }

@@ -86,7 +86,9 @@ def fallback_agent_guidance() -> str:
     return (
         "If AgentPack tools are unavailable or context looks stale/wrong-worktree, "
         "do not trust old pack output. Use direct `rg`, PR diff inspection, and target-file reads, "
-        "then run focused validation."
+        "then run focused validation. For session handoffs, use MCP `create_handoff` and "
+        "`accept_handoff`; when MCP is unavailable, run `agentpack handoff create` or "
+        "`agentpack handoff resume [name]`."
     )
 
 

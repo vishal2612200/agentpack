@@ -48,7 +48,7 @@ agentpack review --pr <number-or-url> "$ARGUMENTS"
 6. Do not perform the review inline from this command. If you cannot write the required files, stop and report blocked.
 7. The Anchor role starts from `.agentpack/review-understanding.template.toon` and writes the compatible run-scoped understanding TOON declared by `agentpack review`.
 8. Run `agentpack review --check`; do not start Judge unless Anchor validates.
-9. Judge reads that understanding TOON from disk, starts from `.agentpack/review-findings.template.toon`, and writes candidate findings at the declared path.
+9. Judge must read that understanding TOON from disk, start from `.agentpack/review-findings.template.toon`, and write the candidate findings TOON at the declared path.
 10. Run `agentpack review --check`; Critic reads both canonical handoffs, starts from `.agentpack/review-critique.template.toon`, and writes exactly one accept, reject, or downgrade decision for every Judge finding.
 11. Run `agentpack review --check` to generate `approved-findings.toon`. `--dry-run-post` and `--post-inline-comments` consume only that approved artifact. Actor is publish-only and never edits or pushes a PR branch. Do not produce a final review summary unless Critic validates and any intended PR-bound inline post succeeds.
 12. If an older model emits valid JSON or fenced output instead of TOON, rerun `agentpack review --check`; AgentPack canonicalizes schema-valid output to TOON and writes a repair guide for invalid output.

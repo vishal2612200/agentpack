@@ -11,13 +11,13 @@ Do not claim correctness unless relevant checks actually ran.
 
 ## Steps
 
-1. Resolve the immutable PR context before reading the diff or code. Prefer MCP:
+1. Refresh AgentPack context for this exact review task before reading PR diff or code. Prefer MCP:
 
 ```text
-agentpack_get_pr_context(pr="$ARGUMENTS", focus="$ARGUMENTS", format="toon")
+agentpack_pack_context(task="review current PR $ARGUMENTS")
 ```
 
-Then refresh task context as needed. If MCP is unavailable, run:
+If MCP is unavailable, run:
 
 ```bash
 agentpack guard --agent auto --repair-stale --refresh-context
@@ -41,7 +41,7 @@ agentpack review --pr <number-or-url> "$ARGUMENTS"
 5. Do not perform the review inline from this skill. If you cannot write the required files, stop and report blocked.
 6. The Anchor role starts from `.agentpack/review-understanding.template.toon` and writes the compatible run-scoped understanding TOON at the output path declared by `agentpack review`.
 7. Run `agentpack review --check`; do not start Judge unless Anchor validates.
-8. Judge must read that understanding TOON from disk, start from `.agentpack/review-findings.template.toon`, and write candidate findings at the declared run-scoped path.
+8. Judge must read that understanding TOON from disk, start from `.agentpack/review-findings.template.toon`, and write the candidate findings TOON at the declared run-scoped path.
 9. Run `agentpack review --check`; Critic must read the canonical Anchor and Judge handoffs, start from `.agentpack/review-critique.template.toon`, and write exactly one accept, reject, or downgrade decision for every Judge finding at the declared path.
 10. Run `agentpack review --check` to validate Critic and generate `approved-findings.toon`. `--dry-run-post` and `--post-inline-comments` consume only that approved artifact. Actor is publish-only: it never edits or pushes a PR branch. Do not produce a final review summary unless Critic validates and any intended PR-bound inline post succeeds.
 11. If an older model emits valid JSON or fenced output instead of TOON, rerun `agentpack review --check`; AgentPack canonicalizes schema-valid output to TOON and writes a repair guide for invalid output.

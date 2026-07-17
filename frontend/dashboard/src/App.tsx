@@ -1,10 +1,12 @@
-import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { Component, lazy, Suspense, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from "react";
 import {
   Activity,
   AlertTriangle,
+  BarChart3,
   Brain,
   Building2,
   CheckCircle2,
+  ChevronRight,
   CircleDot,
   ClipboardList,
   Code2,
@@ -42,12 +44,12 @@ import {
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, MapBuilding, MapRoad } from "./data/schema";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 
 const ContextCityMap = lazy(() => import("./MapCity").then((module) => ({ default: module.ContextCityMap })));
 
-type View = "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
+type View = "home" | "analytics" | "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
 
 interface CommandInspection {
   command: string;
@@ -73,24 +75,30 @@ interface PendingCommand {
   inspection: CommandInspection;
 }
 
-const views: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "cockpit", label: "Cockpit", icon: Activity },
+const primaryViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
+  { id: "home", label: "Project home", icon: Building2 },
   { id: "tasks", label: "Tasks", icon: ClipboardList },
-  { id: "threads", label: "Threads", icon: GitBranch },
-  { id: "context", label: "Context", icon: Database },
-  { id: "graph", label: "Map", icon: MapIcon },
+  { id: "analytics", label: "How AgentPack helped", icon: BarChart3 }
+];
+
+const advancedViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
+  { id: "graph", label: "Impact map", icon: MapIcon },
+  { id: "context", label: "AI context", icon: Database },
   { id: "files", label: "Files", icon: FileText },
+  { id: "workflow", label: "Run checks", icon: Workflow },
+  { id: "threads", label: "Work sessions", icon: GitBranch },
+  { id: "learning", label: "Learning", icon: Brain },
   { id: "settings", label: "Settings", icon: Settings },
-  { id: "integrations", label: "Integrations", icon: TerminalSquare },
-  { id: "workflow", label: "Workflow", icon: Workflow },
-  { id: "learning", label: "Learning & Skills", icon: Brain },
-  { id: "raw", label: "Raw Data", icon: Code2 }
+  { id: "integrations", label: "Agent connection", icon: TerminalSquare },
+  { id: "raw", label: "Diagnostics", icon: Code2 },
+  { id: "cockpit", label: "Decision details", icon: Activity }
 ];
 
 export function App() {
   const [payload, setPayload] = useState<DashboardPayload | null>(null);
+  const [payloadDetail, setPayloadDetail] = useState<"home" | "full">("home");
   const [error, setError] = useState<string>("");
-  const [view, setView] = useState<View>("cockpit");
+  const [view, setView] = useState<View>("home");
   const [selectedId, setSelectedId] = useState<string>("task:active");
   const [query, setQuery] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
@@ -99,15 +107,20 @@ export function App() {
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
   const streams = useRef<Map<string, EventSource>>(new Map());
 
-  const refreshDashboard = async () => {
-    const loaded = await loadDashboardPayload();
+  const refreshDashboard = async (detail: "home" | "full" = payloadDetail) => {
+    const loaded = await loadDashboardPayload(detail);
+    setPayloadDetail(detail);
     setPayload(loaded);
     setSelectedId((current) => current || loaded.graph.root_id || "task:active");
     return loaded;
   };
 
+  const loadFullDashboard = () => {
+    refreshDashboard("full").catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard details"));
+  };
+
   useEffect(() => {
-    refreshDashboard()
+    refreshDashboard("home")
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
   }, []);
 
@@ -124,7 +137,7 @@ export function App() {
         message={error}
         onRetry={() => {
           setError("");
-          refreshDashboard().catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
+          refreshDashboard("home").catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
         }}
       />
     );
@@ -134,6 +147,25 @@ export function App() {
   }
 
   const selected = findSelected(payload.graph, selectedId);
+  const renderNavItem = (item: (typeof primaryViews)[number]) => {
+    const Icon = item.icon;
+    return (
+      <button
+        key={item.id}
+        type="button"
+        className={view === item.id ? "nav-item active" : "nav-item"}
+        onClick={() => {
+          setView(item.id);
+          if (item.id !== "home" && item.id !== "analytics") loadFullDashboard();
+        }}
+        aria-label={item.label}
+        title={item.label}
+      >
+        <Icon size={17} aria-hidden="true" />
+        <span>{item.label}</span>
+      </button>
+    );
+  };
 
   const handleRunCommand = async (command: string) => {
     const inspection = await inspectCommand(command);
@@ -206,6 +238,7 @@ export function App() {
       return;
     }
     setPayload(result as DashboardPayload);
+    setPayloadDetail("full");
     setSelectedId((result as DashboardPayload).graph.root_id || "task:active");
     setSessions([]);
     setActiveSessionId("");
@@ -329,28 +362,22 @@ export function App() {
           </div>
         </div>
         <nav className="nav-list">
-          {views.map((item) => {
-            const Icon = item.icon;
-            return (
-              <button
-                key={item.id}
-                type="button"
-                className={view === item.id ? "nav-item active" : "nav-item"}
-                onClick={() => setView(item.id)}
-                aria-label={item.label}
-                title={item.label}
-              >
-                <Icon size={17} aria-hidden="true" />
-                <span>{item.label}</span>
-              </button>
-            );
-          })}
+          <span className="nav-group-label">Workspace</span>
+          {primaryViews.map(renderNavItem)}
+          <details className="advanced-nav" open={view !== "home" && view !== "tasks" && view !== "analytics"}>
+            <summary>Advanced</summary>
+            <div className="nav-list nav-list-nested">{advancedViews.map(renderNavItem)}</div>
+          </details>
         </nav>
       </aside>
 
       <main className="workspace">
         <TopBar snapshot={payload.snapshot} onSwitchProject={handleSwitchProject} />
         <section className="main-panel" aria-label={`${view} view`}>
+          {view === "home" && (
+            <ProjectHomeView snapshot={payload.snapshot} onRunAction={handleRunAction} onRefresh={refreshDashboard} onOpenGraph={() => { setView("graph"); loadFullDashboard(); }} />
+          )}
+          {view === "analytics" && <AnalyticsView snapshot={payload.snapshot} />}
           {view === "cockpit" && (
             <CockpitView payload={payload} onSelect={setSelectedId} onOpenGraph={() => setView("graph")} onRunCommand={handleRunCommand} onRunAction={handleRunAction} />
           )}
@@ -462,9 +489,9 @@ function ProjectDropdown({
       <button type="button" className="project-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
         <span>
           <strong>{current.name}</strong>
-          <small>{current.branch || "unknown branch"}{current.git_sha ? ` · ${current.git_sha}` : ""}</small>
+          <small>{snapshot.workspace?.branch || current.branch || "local workspace"}{current.git_sha ? ` · ${current.git_sha}` : ""}</small>
         </span>
-        <span className="badge neutral">Atlas</span>
+        <span className="badge neutral">Workspace</span>
       </button>
       {open ? (
         <div className="project-menu">
@@ -512,6 +539,311 @@ function ProjectDropdown({
       ) : null}
     </div>
   );
+}
+
+function ProjectHomeView({
+  snapshot,
+  onRunAction,
+  onRefresh,
+  onOpenGraph
+}: {
+  snapshot: DashboardSnapshot;
+  onRunAction: (action: string, body?: Record<string, unknown>) => void;
+  onRefresh: () => Promise<unknown>;
+  onOpenGraph: () => void;
+}) {
+  const tasks = snapshot.project_tasks || [];
+  const active = snapshot.active_task || tasks.find((item) => item.active) || tasks[0] || null;
+  const [selectedTaskId, setSelectedTaskId] = useState(active?.task_id || "");
+  const [newTask, setNewTask] = useState("");
+  const [taskError, setTaskError] = useState("");
+  const [feedbackSent, setFeedbackSent] = useState(false);
+  const [taskDetail, setTaskDetail] = useState<DashboardTaskDetail | null>(null);
+  const [taskDetailState, setTaskDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle");
+  const selected = tasks.find((item) => item.task_id === selectedTaskId) || active;
+  const analytics = snapshot.analytics;
+
+  useEffect(() => {
+    setSelectedTaskId(active?.task_id || "");
+  }, [active?.task_id]);
+
+  useEffect(() => {
+    const taskId = selected?.task_id;
+    if (!taskId) {
+      setTaskDetail(null);
+      setTaskDetailState("idle");
+      return;
+    }
+    let cancelled = false;
+    setTaskDetail(null);
+    setTaskDetailState("loading");
+    fetch(apiUrl(`/api/project/tasks/${encodeURIComponent(taskId)}`), { headers: authHeaders() })
+      .then(async (response) => {
+        if (!response.ok) throw new Error("Could not load task details.");
+        return response.json() as Promise<DashboardTaskDetail>;
+      })
+      .then((detail) => {
+        if (cancelled) return;
+        setTaskDetail(detail);
+        setTaskDetailState("ready");
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setTaskDetail(null);
+        setTaskDetailState("error");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected?.task_id]);
+
+  useEffect(() => {
+    setFeedbackSent(false);
+  }, [selected?.task_id]);
+
+  const createTask = async (event: FormEvent) => {
+    event.preventDefault();
+    const title = newTask.trim();
+    if (!title) return;
+    setTaskError("");
+    const response = await fetch(apiUrl("/api/project/tasks"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ title })
+    });
+    if (!response.ok) {
+      setTaskError("Could not start this task.");
+      return;
+    }
+    setNewTask("");
+    await onRefresh();
+  };
+
+  const updateStatus = async (status: string) => {
+    if (!selected) return;
+    await fetch(apiUrl("/api/project/tasks/update"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ task_id: selected.task_id, status })
+    });
+    await onRefresh();
+  };
+
+  const submitFeedback = async (value: "helped" | "partly_helped" | "missed_context" | "not_sure") => {
+    if (!selected) return;
+    const response = await fetch(apiUrl("/api/project/feedback"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ task_id: selected.task_id, run_id: taskDetail && taskDetail.runs.length ? taskDetail.runs[taskDetail.runs.length - 1].run_id : selected.last_run_id || "", value })
+    });
+    if (response.ok) setFeedbackSent(true);
+  };
+
+  const selectedDetail = taskDetail?.task.task_id === selected?.task_id ? taskDetail : null;
+  const latestRun = selectedDetail && selectedDetail.runs.length ? selectedDetail.runs[selectedDetail.runs.length - 1] : undefined;
+  const selectedFiles = latestRun?.selected_files || [];
+  const omittedFiles = latestRun?.omitted_files || [];
+
+  return (
+    <div className="view-stack project-home" data-testid="project-home">
+      <section className="project-home-hero">
+        <div>
+          <p className="eyebrow">{snapshot.project.name} workspace</p>
+          <h1>What are you working on?</h1>
+          <p className="muted">Keep your AI work focused on one project and one task at a time.</p>
+          <div className="workspace-context">
+            <span>{snapshot.workspace?.branch || snapshot.project.branch || "local workspace"}</span>
+            <code>{snapshot.workspace?.path || snapshot.project.path}</code>
+          </div>
+        </div>
+        <div className="hero-actions">
+          <button className="secondary-action" type="button" onClick={onOpenGraph}>
+            Impact map <ChevronRight size={16} aria-hidden="true" />
+          </button>
+        </div>
+      </section>
+
+      <div className="metric-grid home-metrics">
+        <Metric label="Open tasks" value={tasks.filter((item) => item.status !== "done").length} tone="neutral" />
+        <Metric label="Completed" value={analytics?.tasks_completed || 0} tone="good" />
+        <Metric label="AI context prepared" value={analytics?.context_packs || 0} tone="memory" />
+        <Metric label="Context reduced" value={`${analytics?.average_saving_pct || 0}%`} tone="good" />
+      </div>
+
+      <div className="home-grid">
+        <Panel title="Current task" icon={ClipboardList}>
+          {active ? (
+            <div className="task-focus-card">
+              <div className="task-card-heading">
+                <span className={`badge ${riskTone(active.status)}`}>{taskStatusLabel(active.status)}</span>
+                {active.imported ? <span className="badge neutral">from task files</span> : null}
+              </div>
+              <h2>{active.title}</h2>
+              <p className="muted">{snapshot.suggested_actions[0]?.label || "AgentPack is ready to prepare focused context for this task."}</p>
+              <div className="inline-actions">
+                <button type="button" className="primary-action" onClick={() => onRunAction("next")}>
+                  <PlayCircle size={16} aria-hidden="true" />
+                  Prepare next step
+                </button>
+                <button type="button" className="secondary-action" onClick={() => updateStatus(active.status === "done" ? "in_progress" : "done")}>
+                  {active.status === "done" ? "Reopen task" : "Mark done"}
+                </button>
+              </div>
+            </div>
+          ) : (
+            <div className="empty-state-block">
+              <strong>No task is active yet.</strong>
+              <p>Start with a plain-language goal and AgentPack will organize the context.</p>
+            </div>
+          )}
+        </Panel>
+
+        <Panel title="Tasks in this workspace" icon={FolderKanban}>
+          <div className="stack-sm">
+            {tasks.slice(0, 20).map((task) => (
+              <button key={task.task_id} type="button" className={task.task_id === selected?.task_id ? "task-list-row active" : "task-list-row"} onClick={() => setSelectedTaskId(task.task_id)}>
+                <span>
+                  <strong>{task.title}</strong>
+                  <small>{task.updated_at ? formatDashboardDate(task.updated_at) : "No activity yet"}</small>
+                </span>
+                <span className={`badge ${riskTone(task.status)}`}>{taskStatusLabel(task.status)}</span>
+              </button>
+            ))}
+            {!tasks.length ? <p className="empty">No tasks have been recorded for this workspace.</p> : null}
+          </div>
+          <form className="start-task-form" onSubmit={createTask}>
+            <input aria-label="New task" value={newTask} onChange={(event) => setNewTask(event.target.value)} placeholder="What do you want to build or fix?" />
+            <button type="submit" className="primary-action" disabled={!newTask.trim()}><PlayCircle size={16} aria-hidden="true" /> Start task</button>
+          </form>
+          {taskError ? <p className="error-text">{taskError}</p> : null}
+        </Panel>
+      </div>
+
+      {selected ? (
+        <Panel title="Task details" icon={FileText}>
+          <div className="task-detail-grid">
+            <div>
+              <p className="eyebrow">Selected task</p>
+              <h2>{selected.title}</h2>
+              <p className="muted">This task belongs to <strong>{snapshot.project.name}</strong> on <strong>{snapshot.workspace?.branch || "the current workspace"}</strong>.</p>
+            </div>
+            <div className="stack-sm">
+              <label className="field"><span>Status</span><select value={selected.status} onChange={(event) => updateStatus(event.target.value)}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="needs_attention">Needs attention</option><option value="done">Done</option></select></label>
+              <div className="detail-stat"><span>Files prepared</span><strong>{selectedDetail ? selectedFiles.length : taskDetailState === "loading" ? "Loading" : "Not run"}</strong></div>
+              <div className="detail-stat"><span>Evidence</span><strong>{selectedDetail ? selectedDetail.impact?.length || 0 : taskDetailState === "loading" ? "Loading" : "Not run"}</strong></div>
+            </div>
+          </div>
+          {taskDetailState === "loading" ? <p className="muted" data-testid="task-detail-loading">Loading this task&apos;s evidence...</p> : null}
+          {taskDetailState === "error" ? <p className="error-text" data-testid="task-detail-error">Task details could not be loaded.</p> : null}
+          {selectedDetail ? <div className="task-evidence-grid" data-testid="task-detail-evidence">
+            <div>
+              <p className="eyebrow">Files prepared</p>
+              {selectedFiles.length ? <ul className="compact-list">{selectedFiles.slice(0, 12).map((path) => <li key={`selected-${path}`}><code>{path}</code></li>)}</ul> : <p className="muted">No files were selected yet.</p>}
+            </div>
+            <div>
+              <p className="eyebrow">Files left out</p>
+              {omittedFiles.length ? <ul className="compact-list">{omittedFiles.slice(0, 12).map((path) => <li key={`omitted-${path}`}><code>{path}</code></li>)}</ul> : <p className="muted">No omitted-file evidence yet.</p>}
+            </div>
+            <div>
+              <p className="eyebrow">Checks</p>
+              {latestRun?.checks?.length ? <ul className="compact-list">{latestRun.checks.slice(0, 12).map((check) => <li key={check}>{check}</li>)}</ul> : <p className="muted">No checks recorded yet.</p>}
+            </div>
+            <div>
+              <p className="eyebrow">Impact evidence</p>
+              <p className="muted">{selectedDetail.impact_reason || "No impact evidence recorded yet."}</p>
+              {selectedDetail.github_references?.length ? <p className="muted">GitHub: {selectedDetail.github_references.join(", ")}</p> : null}
+            </div>
+          </div> : null}
+          <div className="feedback-box" data-testid="task-feedback">
+            <div><strong>Was this useful?</strong><small>Your answer improves future context selection.</small></div>
+            <div className="inline-actions">
+              {feedbackSent ? <span className="badge good">Thanks for the feedback</span> : <>
+                <button type="button" className="secondary-action" onClick={() => submitFeedback("helped")}>Yes</button>
+                <button type="button" className="secondary-action" onClick={() => submitFeedback("partly_helped")}>Partly</button>
+                <button type="button" className="secondary-action" onClick={() => submitFeedback("missed_context")}>Missed context</button>
+              </>}
+            </div>
+          </div>
+        </Panel>
+      ) : null}
+      {selected ? <Panel title="Work history" icon={Activity}>
+        {taskDetailState === "loading" && !selectedDetail ? <p className="muted">Loading work history...</p> : null}
+        {taskDetailState === "error" ? <p className="error-text">Work history could not be loaded.</p> : null}
+        {taskDetailState === "ready" && selectedDetail ? <TaskTimeline events={selectedDetail.timeline || []} /> : null}
+      </Panel> : null}
+    </div>
+  );
+}
+
+function TaskTimeline({ events }: { events: DashboardTimelineEvent[] }) {
+  if (!events.length) {
+    return <div className="empty-state-block" data-testid="task-timeline-empty"><strong>No work history yet.</strong><p>Start a task or prepare AI context to create the first evidence-backed update.</p></div>;
+  }
+  return <ol className="timeline" data-testid="task-timeline">
+    {events.slice().reverse().map((event) => (
+      <li key={event.event_id}>
+        <span className="timeline-dot good" />
+        <div>
+          <strong>{event.label || event.event_type || "Work update"}</strong>
+          <small>{event.occurred_at ? formatDashboardDate(event.occurred_at) : "Recorded locally"}{event.agent ? ` · ${event.agent}` : ""}</small>
+          {event.summary ? <p className="muted">{event.summary}</p> : null}
+          {event.context_path ? <code>{event.context_path}</code> : null}
+          {event.issue_references?.length ? <small>Linked: {event.issue_references.join(", ")}</small> : null}
+        </div>
+      </li>
+    ))}
+  </ol>;
+}
+
+function AnalyticsView({ snapshot }: { snapshot: DashboardSnapshot }) {
+  const [range, setRange] = useState<"7d" | "30d">("7d");
+  const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(snapshot.analytics || null);
+
+  useEffect(() => {
+    fetch(apiUrl(`/api/project/analytics?range=${range}`), { headers: authHeaders() })
+      .then((response) => response.json())
+      .then((payload) => setAnalytics(payload.analytics as DashboardAnalytics))
+      .catch(() => setAnalytics(snapshot.analytics || null));
+  }, [range, snapshot.analytics]);
+
+  const data = analytics;
+  return (
+    <div className="view-stack analytics-view" data-testid="analytics-view">
+      <SectionTitle title="How AgentPack helped" subtitle="Measured evidence from this project and workspace. No productivity guesses." />
+      <div className="analytics-toolbar" role="group" aria-label="Analytics range">
+        <span className="muted">Showing</span>
+        {(["7d", "30d"] as const).map((item) => <button key={item} type="button" className={range === item ? "toolbar-button active" : "toolbar-button"} onClick={() => setRange(item)}>{item === "7d" ? "Last 7 days" : "Last 30 days"}</button>)}
+      </div>
+      {!data?.available ? <div className="empty-state-block"><strong>Analytics will appear after your first task.</strong><p>{data?.unavailable_reason || "Start a task to create measurable AgentPack evidence."}</p></div> : null}
+      <div className="analytics-grid">
+        <ValueCard title="Work completed" value={`${data?.tasks_completed || 0} tasks`} detail={`${data?.runs_total || 0} recorded work sessions`} />
+        <ValueCard title="AI context prepared" value={`${data?.context_packs || 0} packs`} detail={`${data?.files_selected || 0} files selected for the agent`} />
+        <ValueCard title="Focus improved" value={`${data?.average_saving_pct || 0}%`} detail="Average context reduction from recorded packs" />
+        <ValueCard title="Checks completed" value={`${data?.checks_total || 0}`} detail="Validation hints captured from task runs" />
+        <ValueCard title="Impact understood" value={`${data?.unresolved_edges || 0} unresolved`} detail="Relationship gaps kept visible instead of hidden" />
+        <ValueCard title="Agent feedback" value={`${Object.values(data?.feedback_counts || {}).reduce((sum, count) => sum + count, 0)}`} detail="Optional feedback responses" />
+      </div>
+      <Panel title="Evidence behind these numbers" icon={BarChart3}>
+        <div className="evidence-list">
+          {(data?.evidence || []).map((item) => <code key={item}>{item}</code>)}
+          {!data?.evidence?.length ? <p className="empty">No evidence references have been recorded for this range.</p> : null}
+        </div>
+      </Panel>
+    </div>
+  );
+}
+
+function ValueCard({ title, value, detail }: { title: string; value: string | number; detail: string }) {
+  return <article className="value-card"><span className="eyebrow">{title}</span><strong>{value}</strong><p>{detail}</p></article>;
+}
+
+function taskStatusLabel(status: DashboardTaskRecord["status"]): string {
+  return { todo: "To do", in_progress: "In progress", needs_attention: "Needs attention", done: "Done" }[status];
+}
+
+function formatDashboardDate(value: string): string {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? "Recent activity" : parsed.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function CockpitView({
@@ -867,7 +1199,7 @@ function EvidenceReceipt({ snapshot }: { snapshot: DashboardSnapshot }) {
   );
 }
 
-type MapMode = "city" | "network" | "table";
+type MapMode = "city" | "network" | "semantic" | "table";
 
 function MapView({
   dashboardMap,
@@ -964,6 +1296,9 @@ function MapView({
           <button type="button" className={mode === "network" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("network")}>
             <Network size={14} aria-hidden="true" /> Network
           </button>
+          <button type="button" data-testid="semantic-mode-button" className={mode === "semantic" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("semantic")}>
+            <GitBranch size={14} aria-hidden="true" /> Semantic graph
+          </button>
           <button type="button" className={mode === "table" ? "toolbar-button active" : "toolbar-button"} onClick={() => setMode("table")}>
             <Table2 size={14} aria-hidden="true" /> Table
           </button>
@@ -1002,6 +1337,8 @@ function MapView({
             )
           ) : mode === "network" ? (
             <TaskGraph graph={graph} query={query} selectedId={selectedId} onSelect={onSelect} />
+          ) : mode === "semantic" ? (
+            <SemanticGraphNetwork graph={snapshot.semantic_graph} />
           ) : (
             <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
           )}
@@ -1160,6 +1497,111 @@ function roadMidpoint(road: MapRoad, points: Map<string, { x: number; z: number 
   const target = points.get(road.target);
   if (!source || !target) return [0, 2, 0];
   return [(source.x + target.x) / 2, 2, (source.z + target.z) / 2];
+}
+
+function SemanticGraphTable({ graph }: { graph: SemanticGraphSummary }) {
+  const [relationship, setRelationship] = useState("");
+  const [confidence, setConfidence] = useState("");
+  const entities = useMemo(() => new Map(graph.entities.map((entity) => [entity.entity_key, entity])), [graph.entities]);
+  const edges = graph.edges.filter((edge) => (!relationship || edge.relationship === relationship) && (!confidence || edge.confidence_tier === confidence));
+  return (
+    <div className="semantic-graph-table" data-testid="semantic-evidence-table">
+      <div className="semantic-graph-toolbar" data-testid="semantic-evidence-toolbar">
+        <label>Relationship <select data-testid="semantic-table-relationship-filter" value={relationship} onChange={(event) => setRelationship(event.target.value)}><option value="">All</option>{Object.keys(graph.relationship_counts).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Confidence <select data-testid="semantic-table-confidence-filter" value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="">All</option><option value="structured">Structured</option><option value="best_effort">Best effort</option><option value="file_level">File level</option></select></label>
+        <span className="muted">{graph.entity_count} entities · {graph.edge_count} edges · {graph.unresolved_count} unresolved · parsed {graph.cache_stats?.parsed_files ?? 0} · reused {graph.cache_stats?.reused_files ?? 0}</span>
+      </div>
+      <div className="semantic-graph-receipts">
+        {edges.slice(0, 200).map((edge) => {
+          const source = entities.get(edge.source);
+          const target = entities.get(edge.target);
+          const evidence = edge.evidence?.[0];
+          return <div className="semantic-edge-row" key={edge.edge_key}><strong>{source?.name || edge.source_name || edge.source}</strong><span className="semantic-edge-type">{edge.relationship}</span><strong>{target?.name || edge.target_name || edge.target}</strong><small>{evidence?.path || "unknown source"}{evidence?.start_line ? `:${evidence.start_line}` : ""}{evidence?.note ? ` · ${evidence.note}` : ""}</small></div>;
+        })}
+        {!edges.length ? <p className="empty">No semantic relationships match these filters.</p> : null}
+      </div>
+    </div>
+  );
+}
+
+function SemanticGraphNetwork({ graph }: { graph: SemanticGraphSummary }) {
+  const [relationship, setRelationship] = useState("");
+  const [confidence, setConfidence] = useState("");
+  const [language, setLanguage] = useState("");
+  const [evidenceSource, setEvidenceSource] = useState("");
+  const [showTable, setShowTable] = useState(false);
+  const [selectedEdge, setSelectedEdge] = useState<string>("");
+  const [remoteGraph, setRemoteGraph] = useState<SemanticGraphSummary | null>(null);
+  const activeGraph = remoteGraph || graph;
+  useEffect(() => {
+    if (window.location.protocol === "file:") return;
+    const params = new URLSearchParams({ limit: "200" });
+    if (relationship) params.set("relationship", relationship);
+    if (confidence) params.set("confidence", confidence);
+    if (language) params.set("language", language);
+    if (evidenceSource) params.set("evidence_source", evidenceSource);
+    fetch(apiUrl(`/api/graph?${params.toString()}`), { headers: authHeaders() })
+      .then((response) => response.ok ? response.json() as Promise<{ semantic_graph?: SemanticGraphSummary }> : Promise.reject(new Error("graph request failed")))
+      .then((payload) => setRemoteGraph(payload.semantic_graph || null))
+      .catch(() => setRemoteGraph(null));
+  }, [confidence, evidenceSource, language, relationship]);
+  const entities = useMemo(() => new Map(activeGraph.entities.map((entity) => [entity.entity_key, entity])), [activeGraph.entities]);
+  const languages = useMemo(() => Array.from(new Set(graph.entities.map((entity) => entity.language).filter(Boolean))).sort(), [graph.entities]);
+  const evidenceSources = useMemo(() => Array.from(new Set(graph.edges.flatMap((edge) => (edge.evidence || []).map((item) => item.source).filter(Boolean)))).sort(), [graph.edges]);
+  const edges = useMemo(
+    () => activeGraph.edges.filter((edge) => (!relationship || edge.relationship === relationship) && (!confidence || edge.confidence_tier === confidence) && (!language || entities.get(edge.source)?.language === language || entities.get(edge.target)?.language === language) && (!evidenceSource || (edge.evidence || []).some((item) => item.source === evidenceSource))).slice(0, 160),
+    [activeGraph.edges, confidence, entities, evidenceSource, language, relationship]
+  );
+  const visibleKeys = useMemo(() => new Set(edges.flatMap((edge) => [edge.source, edge.target])), [edges]);
+  const nodes = useMemo<Node[]>(() => Array.from(visibleKeys).map((key, index) => {
+    const entity = entities.get(key);
+    const unresolved = entity?.type === "unresolved" || entity?.type === "external";
+    return {
+      id: key,
+      position: { x: (index % 4) * 240, y: Math.floor(index / 4) * 120 },
+      data: { label: entity ? `${entity.name}\n${entity.path}${entity.line ? `:${entity.line}` : ""}` : key },
+      className: `semantic-node ${unresolved ? "unresolved" : ""}`
+    };
+  }), [entities, visibleKeys]);
+  const flowEdges = useMemo<Edge[]>(() => edges.map((edge) => ({
+    id: edge.edge_key,
+    source: edge.source,
+    target: edge.target,
+    label: edge.relationship,
+    animated: edge.confidence_tier === "structured",
+    className: `semantic-flow-edge ${edge.confidence_tier || "best_effort"}`,
+    style: { stroke: edge.edge_key === selectedEdge ? "#f6c453" : edge.confidence_tier === "structured" ? "#7dd3fc" : "#74839a" }
+  })), [edges, selectedEdge]);
+  const selected = activeGraph.edges.find((edge) => edge.edge_key === selectedEdge);
+  return (
+    <div className="semantic-graph-network">
+      <div className="semantic-network-toolbar" data-testid="semantic-network-toolbar">
+        <label>Relationship <select data-testid="semantic-relationship-filter" value={relationship} onChange={(event) => setRelationship(event.target.value)}><option value="">All</option>{Object.keys(graph.relationship_counts).map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Confidence <select data-testid="semantic-confidence-filter" value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="">All</option><option value="structured">Structured</option><option value="best_effort">Best effort</option><option value="file_level">File level</option></select></label>
+        <label>Language <select data-testid="semantic-language-filter" value={language} onChange={(event) => setLanguage(event.target.value)}><option value="">All</option>{languages.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <label>Evidence <select data-testid="semantic-evidence-filter" value={evidenceSource} onChange={(event) => setEvidenceSource(event.target.value)}><option value="">All</option>{evidenceSources.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+        <span className="muted">{nodes.length} nodes · {edges.length} edges of {activeGraph.edge_count} · unresolved {activeGraph.unresolved_count}</span>
+        <button type="button" data-testid="semantic-evidence-toggle" className={showTable ? "toolbar-button active" : "toolbar-button"} onClick={() => setShowTable((value) => !value)}><Table2 size={14} aria-hidden="true" /> {showTable ? "Hide evidence" : "Evidence table"}</button>
+      </div>
+      {showTable ? <SemanticGraphTable graph={activeGraph} /> : (
+        <div className="semantic-network-canvas" data-testid="semantic-network-canvas">
+          <ReactFlow nodes={nodes} edges={flowEdges} fitView nodesDraggable nodesConnectable={false} panOnScroll minZoom={0.2} zoomOnDoubleClick={false} onEdgeClick={(_event, edge) => setSelectedEdge(edge.id)} onlyRenderVisibleElements>
+            <Background />
+            <MiniMap pannable zoomable className="graph-minimap" />
+            <Controls />
+          </ReactFlow>
+        </div>
+      )}
+      <div className="semantic-network-receipt" data-testid="semantic-edge-receipt">
+        {selected ? (() => {
+          const source = entities.get(selected.source);
+          const target = entities.get(selected.target);
+          const evidence = selected.evidence?.[0];
+          return <><strong>{source?.name || selected.source} <span className="semantic-edge-type">{selected.relationship}</span> {target?.name || selected.target}</strong><small>{evidence?.path || "unknown source"}{evidence?.start_line ? `:${evidence.start_line}` : ""}{evidence?.end_line && evidence.end_line !== evidence.start_line ? `-${evidence.end_line}` : ""} · {evidence?.source || "unknown extractor"} · {selected.confidence_tier || "unknown confidence"}{evidence?.source_hash ? ` · ${evidence.source_hash}` : ""}</small><p>{evidence?.note || "No evidence note recorded."}</p></>;
+        })() : <span className="muted">Select an edge to inspect its source receipt.</span>}
+      </div>
+    </div>
+  );
 }
 
 function MapTable({ dashboardMap, onSelect }: { dashboardMap: DashboardMap; onSelect: (id: string) => void }) {

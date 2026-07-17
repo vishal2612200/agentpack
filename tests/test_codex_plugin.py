@@ -133,6 +133,8 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
         "agentpack-refresh.md",
         "agentpack-review.md",
         "agentpack-learn.md",
+        "agentpack-handoff.md",
+        "agentpack-resume.md",
     }
 
     assert {path.name for path in SKILLS_DIR.glob("*.md")} == expected
@@ -150,6 +152,8 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     assert "agentpack pack --task auto" in combined
     assert "agentpack guard --agent codex --repair-stale --refresh-context" not in combined
     assert "agentpack-learn" in combined
+    assert "agentpack handoff create" in combined
+    assert "agentpack handoff resume" in combined
     assert "current local AgentPack session context" in combined
     assert "agentpack status" in combined
     assert ".agentpack/learning.md" in combined
@@ -174,6 +178,8 @@ def test_codex_plugin_docs_keep_local_first_boundary() -> None:
     assert "@agentpack-pack" in docs
     assert "@agentpack-review" in docs
     assert "@agentpack-learn" in docs
+    assert "@agentpack-handoff" in docs
+    assert "@agentpack-resume" in docs
     assert "_understanding.toon" in docs
     assert "_findings.toon" in docs
 

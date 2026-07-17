@@ -2,10 +2,12 @@ from __future__ import annotations
 
 from collections import Counter
 from pathlib import PurePosixPath
-from typing import Literal
+from typing import Literal, Protocol
 
 from pydantic import BaseModel, Field
 
+from agentpack.architecture.compat import LegacyGraphQuery
+from agentpack.architecture.index import SemanticGraphIndex
 from agentpack.core.models import ContextPack, DependencyGraph, OmittedRelevantFile, SelectedFile
 from agentpack.core.pack_registry import PackRegistry
 
@@ -38,7 +40,24 @@ class TaskMap(BaseModel):
     high_risk_files: list[str] = Field(default_factory=list)
 
 
-def build_task_map(pack: ContextPack, dep_graph: DependencyGraph, registry: PackRegistry) -> TaskMap:
+class GraphQuery(Protocol):
+    def file_relations(self, path: str) -> dict[str, list[str]]: ...
+    def relationship_receipts(self, path: str, *, limit: int = 50) -> list[dict]: ...
+
+
+def build_task_map(pack: ContextPack, graph: SemanticGraphIndex, registry: PackRegistry) -> TaskMap:
+    """Build a task map from the canonical semantic graph."""
+    if isinstance(graph, DependencyGraph):
+        return build_task_map_legacy(pack, graph, registry)
+    return _build_task_map(pack, graph, registry)
+
+
+def build_task_map_legacy(pack: ContextPack, graph: DependencyGraph, registry: PackRegistry) -> TaskMap:
+    """Compatibility boundary for callers that still provide DependencyGraph."""
+    return _build_task_map(pack, LegacyGraphQuery(graph), registry)
+
+
+def _build_task_map(pack: ContextPack, graph: GraphQuery, registry: PackRegistry) -> TaskMap:
     records = {
         (record.kind, record.path): record
         for record in registry.records
@@ -47,8 +66,8 @@ def build_task_map(pack: ContextPack, dep_graph: DependencyGraph, registry: Pack
     files: list[TaskMapFile] = []
     for selected in pack.selected_files:
         record = records.get(("selected", selected.path))
-        risk_level, risk_reasons = _selected_risk(selected, dep_graph)
-        tests = _tests_for(selected.path, dep_graph)
+        risk_level, risk_reasons = _selected_risk(selected, graph)
+        tests = _tests_for(selected.path, graph)
         files.append(
             TaskMapFile(
                 path=selected.path,
@@ -60,7 +79,7 @@ def build_task_map(pack: ContextPack, dep_graph: DependencyGraph, registry: Pack
                 risk_level=risk_level,
                 risk_reasons=risk_reasons,
                 tests_to_run=tests,
-                may_break=_may_break(selected.path, dep_graph),
+                may_break=_may_break(selected.path, graph),
                 retrieve_ref=record.block_id if record else "",
             )
         )
@@ -76,8 +95,8 @@ def build_task_map(pack: ContextPack, dep_graph: DependencyGraph, registry: Pack
                 why_selected=_why(omitted.reasons or [omitted.omission_reason]),
                 risk_level=omitted.risk,
                 risk_reasons=_omitted_risk_reasons(omitted),
-                tests_to_run=_tests_for(omitted.path, dep_graph),
-                may_break=_may_break(omitted.path, dep_graph, omitted=True),
+                tests_to_run=_tests_for(omitted.path, graph),
+                may_break=_may_break(omitted.path, graph, omitted=True),
                 retrieve_ref=record.block_id if record else "",
             )
         )
@@ -107,13 +126,13 @@ def task_map_for_path(task_map: dict[str, object], path: str, kind: str | None =
     return {}
 
 
-def _selected_risk(selected: SelectedFile, dep_graph: DependencyGraph) -> tuple[RiskLevel, list[str]]:
+def _selected_risk(selected: SelectedFile, graph: GraphQuery) -> tuple[RiskLevel, list[str]]:
     score = 0
     reasons: list[str] = []
     path = selected.path
     reason_text = " ".join(selected.reasons).lower()
     path_text = path.lower()
-    node = dep_graph.get(path)
+    relations = _file_relations(graph, path)
 
     if any(marker in reason_text for marker in ("modified", "staged", "recently modified", "github pr file")):
         score += 2
@@ -121,13 +140,13 @@ def _selected_risk(selected: SelectedFile, dep_graph: DependencyGraph) -> tuple[
     if _critical_path(path_text) or _critical_reason(reason_text):
         score += 3
         reasons.append("touches contract, security, deploy, data, or API surface")
-    if len(node.imported_by) >= 5:
+    if len(relations["imported_by"]) >= 5:
         score += 3
-        reasons.append(f"{len(node.imported_by)} reverse dependents")
-    elif len(node.imported_by) >= 2:
+        reasons.append(_dependency_reason(graph, path, len(relations["imported_by"])))
+    elif len(relations["imported_by"]) >= 2:
         score += 2
-        reasons.append(f"{len(node.imported_by)} reverse dependents")
-    if _looks_like_source(path) and not _tests_for(path, dep_graph):
+        reasons.append(_dependency_reason(graph, path, len(relations["imported_by"])))
+    if _looks_like_source(path) and not _tests_for(path, graph):
         score += 1
         reasons.append("no related tests found in dependency map")
     if selected.include_mode == "summary":
@@ -153,25 +172,50 @@ def _omitted_risk_reasons(omitted: OmittedRelevantFile) -> list[str]:
     return reasons[:4] or ["omitted due to context budget"]
 
 
-def _tests_for(path: str, dep_graph: DependencyGraph) -> list[str]:
+def _tests_for(path: str, graph: GraphQuery) -> list[str]:
     if _looks_like_test(path):
         return [path]
-    tests = [test for test in dep_graph.get(path).tests if _looks_like_test(test)]
+    tests = [test for test in _file_relations(graph, path)["tests"] if _looks_like_test(test)]
     return sorted(dict.fromkeys(tests))[:5]
 
 
-def _may_break(path: str, dep_graph: DependencyGraph, *, omitted: bool = False) -> list[str]:
-    node = dep_graph.get(path)
+def _may_break(path: str, graph: GraphQuery, *, omitted: bool = False) -> list[str]:
+    relations = _file_relations(graph, path)
     impacts: list[str] = []
     if omitted:
         impacts.append("selected change may depend on this omitted file")
-    if node.imported_by:
-        shown = ", ".join(node.imported_by[:4])
-        suffix = f"; +{len(node.imported_by) - 4} more" if len(node.imported_by) > 4 else ""
+    if relations["imported_by"]:
+        shown = ", ".join(relations["imported_by"][:4])
+        suffix = f"; +{len(relations['imported_by']) - 4} more" if len(relations["imported_by"]) > 4 else ""
         impacts.append(f"reverse dependents: {shown}{suffix}")
     if _critical_path(path.lower()):
         impacts.append("shared contract/config/runtime path")
     return impacts[:4]
+
+
+def _file_relations(graph: GraphQuery, path: str) -> dict[str, list[str]]:
+    return graph.file_relations(path)
+
+
+def _dependency_reason(graph: GraphQuery, path: str, count: int) -> str:
+    receipts = [
+        row for row in graph.relationship_receipts(path, limit=20)
+        if row["relationship"] == "imports" and row["target"] == path
+    ]
+    evidence = next((item for row in receipts for item in row["evidence"] if item.get("path")), None)
+    if evidence:
+        location = evidence["path"]
+        if evidence.get("start_line"):
+            location += f":{evidence['start_line']}"
+        receipt = receipts[0]
+        return (
+            f"{count} reverse dependents ({receipt['relationship']} "
+            f"{receipt.get('source_entity_key', '')}->{receipt.get('target_entity_key', '')}; "
+            f"edge {receipt['edge_key']} at {location}; "
+            f"confidence {receipt.get('confidence_tier', 'unknown')}; "
+            f"evidence {receipt.get('evidence_reference', '')})"
+        )
+    return f"{count} reverse dependents"
 
 
 def _why(reasons: list[str]) -> list[str]:

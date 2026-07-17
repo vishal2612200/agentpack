@@ -293,7 +293,10 @@ def extract_symbols(path: Path, language: str | None) -> list[Symbol]:
                 extract_symbols_ts,
                 is_available,
             )
-            if language in TS_SYMBOL_LANGS and is_available():
+            # Go and Rust retain their first-class legacy summary extractors;
+            # the canonical semantic graph uses extract_semantic_facts directly
+            # and therefore still gets Tree-sitter relationships for both.
+            if language in TS_SYMBOL_LANGS - {"go", "rust"} and is_available():
                 ts_syms = extract_symbols_ts(path, language)
                 if ts_syms:
                     return ts_syms

@@ -6,7 +6,7 @@ from agentpack.core.config import LoopConfig
 from agentpack.core.loop_protocol import LoopCommandResult, initialize_loop, save_loop_state
 from agentpack.core.mcp_runtime import McpRuntimeCheck
 from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
-from agentpack.dashboard.collectors import build_project_dashboard_snapshot
+from agentpack.dashboard.collectors import build_project_dashboard_snapshot, semantic_graph_summary
 from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
@@ -106,6 +106,38 @@ def test_project_dashboard_missing_agentpack_has_empty_states(tmp_path, monkeypa
     assert snapshot.context.status == "missing"
     assert snapshot.mcp_health.status == "missing"
     assert any(action.command == "agentpack init --yes" for action in snapshot.suggested_actions)
+
+
+def test_semantic_graph_summary_supports_bounded_relationship_filters(tmp_path) -> None:
+    source = tmp_path / "src" / "auth.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def validate():\n    return missing_dependency()\n", encoding="utf-8")
+
+    summary = semantic_graph_summary(tmp_path, relationship="calls", limit=1)
+
+    assert len(summary.edges) <= 1
+    assert all(edge["relationship"] == "calls" for edge in summary.edges)
+    assert summary.edge_count >= len(summary.edges)
+
+
+def test_semantic_graph_summary_filters_language_confidence_and_evidence(tmp_path) -> None:
+    source = tmp_path / "src" / "auth.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("def validate():\n    return missing_dependency()\n", encoding="utf-8")
+
+    summary = semantic_graph_summary(
+        tmp_path,
+        relationship="calls",
+        confidence="structured",
+        language="python",
+        evidence_source="extractor:tree_sitter",
+    )
+
+    assert len(summary.edges) == 1
+    assert summary.edges[0]["relationship"] == "calls"
+    assert summary.edges[0]["evidence"][0]["source"] == "extractor:tree_sitter"
+    assert summary.edges[0]["evidence"][0]["path"] == "src/auth.py"
+    assert summary.unresolved_count >= 1
 
 
 def test_project_dashboard_reads_pack_metadata_and_metrics(tmp_path, monkeypatch) -> None:

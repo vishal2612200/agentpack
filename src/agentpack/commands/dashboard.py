@@ -23,8 +23,8 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Serve the local AgentPack dashboard."""
         root = _root()
-        snapshot = build_project_dashboard_snapshot(root)
         if json_output:
+            snapshot = build_project_dashboard_snapshot(root)
             typer.echo(json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True))
             return
         if output or legacy:

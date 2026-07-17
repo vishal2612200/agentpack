@@ -9,7 +9,7 @@ from typing import Any
 from agentpack.core import git
 from agentpack.core.thread_context import ThreadPaths
 
-_VALID_STATUSES = {"planned", "in_progress", "blocked", "done"}
+_VALID_STATUSES = {"planned", "in_progress", "blocked", "handed_off", "done"}
 _CHECKED_RE = re.compile(r"^\s*-\s*\[[xX]\]")
 _OPEN_RE = re.compile(r"^\s*-\s*\[\s\]")
 _BLOCKED_RE = re.compile(r"^\s*-\s*\[!\]")

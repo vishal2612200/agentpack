@@ -25,15 +25,26 @@ Tools exposed:
     refresh             — refresh using the current task.md
     explain_file        — show score breakdown + symbols for a specific file
     get_related_files   — return import-graph neighbours of a file
+    query_graph         — bounded semantic graph search
+    get_graph_node      — one graph node and its evidence
+    get_graph_neighbors — bounded semantic graph neighbours
+    shortest_path       — shortest semantic relationship path
+    explain_graph_edge  — relationship evidence receipt
     get_delta_context   — return selected-file delta since the previous pack
     validate_toon       — validate TOON syntax from content or a repo-relative path
     get_stats           — token/saving stats for the latest pack
+    create_handoff      — package a structured report and complete Git-visible patch
+    list_handoffs       — list pending or historical project handoffs
+    get_handoff         — inspect one handoff by memorable name
+    accept_handoff      — atomically claim, apply, and resume a handoff
+    release_handoff     — release the current session's claim
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from agentpack import __version__
 from agentpack.core import git
@@ -41,7 +52,7 @@ from agentpack.core.command_surface import available_cli_commands, fallback_agen
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.structured_format import StructuredFormat, to_llm
 from agentpack.core.task_freshness import read_task_md, task_freshness, write_task_md
-from agentpack.core.thread_context import resolve_session_thread_option, task_is_done, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, read_task_status, task_is_terminal, thread_paths
 from agentpack.core.token_estimator import estimate_tokens
 from agentpack.control_plane import build_control_plane_snapshot, plan_next_actions
 from agentpack.control_plane.renderer import token_hint
@@ -68,12 +79,22 @@ MCP_TOOL_NAMES = (
     "refresh",
     "explain_file",
     "get_related_files",
+    "query_graph",
+    "get_graph_node",
+    "get_graph_neighbors",
+    "shortest_path",
+    "explain_graph_edge",
     "get_delta_context",
     "get_task_map",
     "retrieve_context",
     "compress_output",
     "validate_toon",
     "get_stats",
+    "create_handoff",
+    "list_handoffs",
+    "get_handoff",
+    "accept_handoff",
+    "release_handoff",
 )
 
 
@@ -226,10 +247,12 @@ def _truncate_to_budget(text: str, max_tokens: int = 20000) -> str:
 def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
     """Read the latest context pack, blocking to refresh when task.md changed."""
     scoped = thread_paths(root, thread_id)
-    if task_is_done(root, scoped.thread_id if scoped else None):
+    if task_is_terminal(root, scoped.thread_id if scoped else None):
         label = f"AgentPack session {scoped.thread_id}" if scoped else "AgentPack task"
+        status = read_task_status(root, scoped.thread_id if scoped else None)
+        terminal_description = "Completed context" if status == "done" else "Handed-off context"
         return (
-            f"> {label} is marked done. Completed context will not be reused.\n\n"
+            f"> {label} is marked {status}. {terminal_description} will not be reused.\n\n"
             "Start a new task/session with `agentpack start \"describe the task\"` or MCP `start_task(...)`."
         )
     pack_path = None
@@ -512,6 +535,164 @@ def _get_related_files_impl(root: Path, path: str, depth: int = 1, thread_id: st
     for rel_path, rel_type in sorted(seen.items(), key=lambda x: x[1]):
         lines.append(f"- `{rel_path}` — {rel_type}")
     return "\n".join(lines)
+
+
+def _graph_index(root: Path):
+    from agentpack.architecture.index import SemanticGraphIndex
+    from agentpack.architecture.service import build_snapshot_for_ref
+
+    return SemanticGraphIndex(build_snapshot_for_ref(root))
+
+
+def _graph_output(root: Path, payload: dict, output_format: str = "toon") -> str:
+    requested = "toon" if output_format == "auto" else output_format
+    return to_llm(root, payload, requested=requested, root_name="agentpack_graph")
+
+
+def _graph_detail(detail: str) -> str:
+    if detail not in {"compact", "full"}:
+        raise ValueError("detail must be 'compact' or 'full'")
+    return detail
+
+
+_GRAPH_RELATIONSHIPS = {
+    "contains", "imports", "calls", "references", "inherits", "implements",
+    "tested_by", "documents", "configures", "reads_from", "writes_to",
+    "publishes", "consumes", "declared_dependency",
+}
+
+
+def _graph_limit(value: int, maximum: int, name: str) -> int:
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return min(value, maximum)
+
+
+def _graph_relationship(value: str) -> str:
+    if value and value not in _GRAPH_RELATIONSHIPS:
+        raise ValueError(f"unsupported graph relationship: {value}")
+    return value
+
+
+def _compact_graph_node(node: dict) -> dict:
+    locator = node.get("locator") or {}
+    evidence_refs = []
+    for evidence in (node.get("evidence") or [])[:2]:
+        evidence_refs.append({
+            "path": evidence.get("path"),
+            "start_line": evidence.get("start_line"),
+            "end_line": evidence.get("end_line"),
+            "source": evidence.get("source"),
+            "source_hash": evidence.get("source_hash"),
+        })
+    return {
+        "entity_key": node.get("entity_key"),
+        "type": node.get("entity_type"),
+        "name": node.get("qualified_name") or node.get("display_name"),
+        "path": locator.get("path"),
+        "line": locator.get("start_line"),
+        "language": node.get("language"),
+        "confidence_tier": node.get("confidence_tier"),
+        "evidence_refs": evidence_refs,
+    }
+
+
+def _compact_graph_edge(row: dict) -> dict:
+    node = row.get("node") or {}
+    return {
+        "edge_key": row.get("edge_key"),
+        "relationship": row.get("relationship"),
+        "confidence_tier": row.get("confidence_tier"),
+        "node": _compact_graph_node(node),
+        "evidence": (row.get("evidence") or [])[:1],
+    }
+
+
+def _query_graph_impl(root: Path, text: str, relationship: str = "", limit: int = 20, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not text.strip():
+        raise ValueError("text must not be empty")
+    relationship = _graph_relationship(relationship)
+    limit = _graph_limit(limit, 100, "limit")
+    index = _graph_index(root)
+    hits = index.query(text, limit=limit)
+    if relationship:
+        related_keys = {
+            key
+            for edge in index.snapshot.edges
+            if edge.edge_type == relationship
+            for key in (edge.source_entity_key, edge.target_entity_key)
+        }
+        hits = [hit for hit in hits if hit.entity.entity_key in related_keys]
+    rows = []
+    for hit in hits:
+        entity = hit.entity.model_dump(mode="json")
+        rows.append({"score": hit.score, "entity": entity if detail == "full" else _compact_graph_node(entity)})
+    return _graph_output(root, {"query": text, "relationship": relationship, "results": rows, "snapshot": {"schema_version": index.snapshot.schema_version, "commit_sha": index.snapshot.commit_sha, "unresolved_entities": sum(1 for entity in index.snapshot.entities if entity.entity_type in {"external", "unresolved"})}}, output_format)
+
+
+def _get_graph_node_impl(root: Path, name: str, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not name.strip():
+        raise ValueError("name must not be empty")
+    index = _graph_index(root)
+    rows = []
+    for entity in index.resolve(name)[:20]:
+        payload = entity.model_dump(mode="json")
+        if detail != "full":
+            payload = {"entity_key": payload["entity_key"], "type": payload["entity_type"], "qualified_name": payload["qualified_name"], "path": payload["locator"]["path"], "line": payload["locator"]["start_line"], "confidence_tier": payload["confidence_tier"], "evidence": payload["evidence"][:2]}
+        rows.append(payload)
+    return _graph_output(root, {"name": name, "nodes": rows}, output_format)
+
+
+def _get_graph_neighbors_impl(root: Path, name: str, relationship: str = "", direction: str = "both", limit: int = 50, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not name.strip():
+        raise ValueError("name must not be empty")
+    relationship = _graph_relationship(relationship)
+    limit = _graph_limit(limit, 100, "limit")
+    index = _graph_index(root)
+    rows = index.neighbors(name, relationship=relationship, direction=direction, limit=limit)
+    if detail != "full":
+        rows = [
+            {
+                "edge_key": row["edge_key"],
+                "relationship": row["relationship"],
+                "confidence_tier": row["confidence_tier"],
+                "node": _compact_graph_node(row["node"]),
+                "evidence": row["evidence"][:1],
+            }
+            for row in rows
+        ]
+    return _graph_output(root, {"name": name, "neighbors": rows}, output_format)
+
+
+def _shortest_path_impl(root: Path, source: str, target: str, max_hops: int = 8, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not source.strip() or not target.strip():
+        raise ValueError("source and target must not be empty")
+    max_hops = _graph_limit(max_hops, 32, "max_hops")
+    index = _graph_index(root)
+    rows = index.shortest_path(source, target, max_hops=max_hops)
+    if detail != "full":
+        rows = [_compact_graph_edge(row) for row in rows]
+    return _graph_output(root, {"source": source, "target": target, "path": rows}, output_format)
+
+
+def _explain_graph_edge_impl(root: Path, edge_key: str, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not edge_key.strip():
+        raise ValueError("edge_key must not be empty")
+    index = _graph_index(root)
+    explanation = index.explain_edge(edge_key)
+    if detail != "full" and explanation is not None:
+        explanation = {
+            "edge": _compact_graph_edge(explanation["edge"]),
+            "source": _compact_graph_node(explanation["source"]),
+            "target": _compact_graph_node(explanation["target"]),
+            "evidence": explanation["evidence"][:1],
+        }
+    return _graph_output(root, {"edge_key": edge_key, "explanation": explanation}, output_format)
 
 
 def _get_stats_impl(root: Path) -> str:
@@ -909,13 +1090,24 @@ def serve() -> None:
 
         This is the recommended MCP-first entry point at the start of a task.
         """
+        root = _repo_root()
+        resolved_thread = resolve_session_thread_option(thread_id) or ""
+        from agentpack.adapters.detect import detect_agent
+        from agentpack.session.events import record_event
+
+        record_event(
+            root,
+            "task_started",
+            {"task": task, "thread_id": resolved_thread, "agent": detect_agent(root)},
+            source="mcp",
+        )
         return _pack_context_impl(
-            _repo_root(),
+            root,
             task=task,
             mode=mode,
             budget=budget,
             max_tokens=max_tokens,
-            thread_id=resolve_session_thread_option(thread_id) or "",
+            thread_id=resolved_thread,
         )
 
     @mcp.tool()
@@ -938,6 +1130,91 @@ def serve() -> None:
             budget=budget,
             max_tokens=max_tokens,
             thread_id=resolve_session_thread_option(thread_id) or "",
+        )
+
+    @mcp.tool()
+    def create_handoff(report: dict[str, Any], name: str = "", target_provider: str = "", target_session_id: str = "") -> str:
+        """Create a single-consumer handoff with the complete Git-visible worktree patch."""
+        from agentpack.core.handoff import create_handoff as create
+
+        record = create(
+            _repo_root(),
+            report,
+            name=name,
+            target_provider=target_provider,
+            target_session_id=target_session_id,
+        )
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(_repo_root(), payload, requested="toon", root_name="handoff")
+
+    @mcp.tool()
+    def list_handoffs(status: str = "ready", format: str = "toon") -> str:
+        """List project handoffs without exposing internal UUIDs."""
+        from agentpack.core.handoff import HandoffStore
+
+        if format not in {"toon", "json"}:
+            raise ValueError("format must be toon or json")
+        statuses = None if status in {"", "all"} else {status}
+        records = []
+        for record in HandoffStore(_repo_root()).list(statuses):
+            records.append({
+                "name": record.name,
+                "status": record.status,
+                "created_at": record.created_at.isoformat(),
+                "source_provider": record.source.provider,
+                "task": record.report.task,
+                "summary": record.report.summary,
+                "next_action": record.report.next_action,
+            })
+        return to_llm(_repo_root(), records, requested=cast(StructuredFormat, format), root_name="handoffs")
+
+    @mcp.tool()
+    def get_handoff(name: str, format: str = "toon") -> str:
+        """Return one handoff by its memorable project-scoped name."""
+        from agentpack.core.handoff import HandoffStore, render_markdown
+
+        record = HandoffStore(_repo_root()).load(name)
+        if format == "markdown":
+            return render_markdown(record)
+        if format not in {"toon", "json"}:
+            raise ValueError("format must be toon, json, or markdown")
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(_repo_root(), payload, requested=cast(StructuredFormat, format), root_name="handoff")
+
+    @mcp.tool()
+    def accept_handoff(name: str = "", latest: bool = False, max_tokens: int = 20000) -> str:
+        """Atomically claim a handoff, apply its patch, and return bounded fresh context."""
+        from agentpack.core.handoff import accept_handoff as accept
+
+        record, warnings = accept(_repo_root(), name, latest=latest)
+        context = _pack_context_impl(
+            _repo_root(),
+            task=record.report.task,
+            max_tokens=max_tokens,
+            thread_id=record.claim.thread_id if record.claim else "",
+        )
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(
+            _repo_root(),
+            {"handoff": payload, "warnings": warnings, "context": context},
+            requested="toon",
+            root_name="handoff_resume",
+        )
+
+    @mcp.tool()
+    def release_handoff(name: str) -> str:
+        """Release the current session's claim so another session can resume it."""
+        from agentpack.core.handoff import release_handoff as release
+
+        record = release(_repo_root(), name)
+        return to_llm(
+            _repo_root(),
+            {"name": record.name, "status": record.status},
+            requested="toon",
+            root_name="handoff",
         )
 
     @mcp.tool()
@@ -1113,6 +1390,31 @@ def serve() -> None:
             return_canonical=return_canonical,
             output_format=format,
         )
+
+    @mcp.tool()
+    def query_graph(text: str, relationship: str = "", limit: int = 20, detail: str = "compact", format: str = "toon") -> str:
+        """Search canonical semantic graph entities with bounded output."""
+        return _query_graph_impl(_repo_root(), text, relationship, limit, detail, format)
+
+    @mcp.tool()
+    def get_graph_node(name: str, detail: str = "compact", format: str = "toon") -> str:
+        """Return a graph node and source evidence receipt."""
+        return _get_graph_node_impl(_repo_root(), name, detail, format)
+
+    @mcp.tool()
+    def get_graph_neighbors(name: str, relationship: str = "", direction: str = "both", limit: int = 50, detail: str = "compact", format: str = "toon") -> str:
+        """Return bounded graph neighbours and edge evidence."""
+        return _get_graph_neighbors_impl(_repo_root(), name, relationship, direction, limit, detail, format)
+
+    @mcp.tool()
+    def shortest_path(source: str, target: str, max_hops: int = 8, detail: str = "compact", format: str = "toon") -> str:
+        """Return a bounded shortest path between graph entities."""
+        return _shortest_path_impl(_repo_root(), source, target, max_hops, detail, format)
+
+    @mcp.tool()
+    def explain_graph_edge(edge_key: str, detail: str = "compact", format: str = "toon") -> str:
+        """Return the source-line evidence for one graph edge."""
+        return _explain_graph_edge_impl(_repo_root(), edge_key, detail, format)
 
     @mcp.tool()
     def get_stats() -> str:

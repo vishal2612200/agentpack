@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "javascript",
+  "entities": ["lookup", "validate"],
+  "relationships": [{"source": "validate", "relationship": "calls", "target": "lookup", "path": "source.js", "start_line": 2, "end_line": 2}],
+  "paths": [{"source": "validate", "target": "lookup", "relationships": ["calls"]}],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.js", "expected_absent": ["source.js"]}
+}

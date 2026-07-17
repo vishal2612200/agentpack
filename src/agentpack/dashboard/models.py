@@ -6,7 +6,8 @@ from pydantic import BaseModel, Field
 
 
 ContextStatus = Literal["fresh", "stale", "missing", "unknown"]
-TaskState = Literal["planned", "in_progress", "blocked", "done", "unknown"]
+TaskState = Literal["planned", "in_progress", "blocked", "handed_off", "done", "unknown"]
+DashboardTaskStatus = Literal["todo", "in_progress", "needs_attention", "done"]
 SkillFeedbackStatus = Literal[
     "none",
     "recommended_only",
@@ -35,6 +36,115 @@ class ProjectInfo(BaseModel):
     path: str
     branch: str = ""
     git_sha: str = ""
+
+
+class DashboardProjectRecord(BaseModel):
+    schema_version: int = 1
+    project_id: str
+    name: str
+    repository_path: str
+    created_at: str = ""
+    updated_at: str = ""
+
+
+class DashboardWorkspaceRecord(BaseModel):
+    schema_version: int = 1
+    workspace_id: str
+    project_id: str
+    path: str
+    branch: str = ""
+    git_sha: str = ""
+    is_current: bool = False
+    updated_at: str = ""
+
+
+class DashboardTaskRecord(BaseModel):
+    schema_version: int = 1
+    task_id: str
+    project_id: str
+    workspace_id: str
+    title: str
+    description: str = ""
+    status: DashboardTaskStatus = "todo"
+    status_source: str = "imported"
+    created_at: str = ""
+    updated_at: str = ""
+    thread_ids: list[str] = Field(default_factory=list)
+    source_paths: list[str] = Field(default_factory=list)
+    active: bool = False
+    imported: bool = False
+    last_run_id: str = ""
+
+
+class DashboardTaskRun(BaseModel):
+    schema_version: int = 1
+    run_id: str
+    task_id: str
+    session_id: str = ""
+    agent: str = ""
+    started_at: str = ""
+    ended_at: str = ""
+    status: str = ""
+    event_ids: list[str] = Field(default_factory=list)
+    context_path: str = ""
+    citation_manifest_path: str = ""
+    issue_references: list[str] = Field(default_factory=list)
+    issue_reference_details: list[dict[str, Any]] = Field(default_factory=list)
+    selected_files: list[str] = Field(default_factory=list)
+    omitted_files: list[str] = Field(default_factory=list)
+    checks: list[str] = Field(default_factory=list)
+    packed_tokens: int = 0
+    raw_tokens: int = 0
+    saving_pct: float = 0.0
+    unresolved_edges: int = 0
+    evidence_refs: list[str] = Field(default_factory=list)
+
+
+class DashboardTimelineEvent(BaseModel):
+    schema_version: int = 1
+    event_id: str
+    event_type: str = ""
+    label: str = ""
+    occurred_at: str = ""
+    project_id: str = ""
+    workspace_id: str = ""
+    task_id: str = ""
+    session_id: str = ""
+    agent: str = ""
+    source: str = ""
+    summary: str = ""
+    context_path: str = ""
+    issue_references: list[str] = Field(default_factory=list)
+    evidence: list[dict[str, Any]] = Field(default_factory=list)
+
+
+class DashboardFeedback(BaseModel):
+    schema_version: int = 1
+    feedback_id: str
+    task_id: str
+    run_id: str = ""
+    value: Literal["helped", "partly_helped", "missed_context", "not_sure"]
+    note: str = ""
+    created_at: str = ""
+
+
+class DashboardAnalytics(BaseModel):
+    range: Literal["7d", "30d"] = "7d"
+    available: bool = False
+    tasks_total: int = 0
+    tasks_completed: int = 0
+    runs_total: int = 0
+    context_packs: int = 0
+    files_selected: int = 0
+    files_omitted: int = 0
+    packed_tokens: int = 0
+    raw_tokens: int = 0
+    average_saving_pct: float = 0.0
+    checks_total: int = 0
+    unresolved_edges: int = 0
+    feedback_counts: dict[str, int] = Field(default_factory=dict)
+    evidence: list[str] = Field(default_factory=list)
+    unavailable_reason: str = ""
 
 
 class TaskInfo(BaseModel):
@@ -525,10 +635,32 @@ class ActionHistoryRow(BaseModel):
     follow_up_actions: list[str] = Field(default_factory=list)
 
 
+class SemanticGraphSummary(BaseModel):
+    schema_version: int = 0
+    commit_sha: str = ""
+    entity_count: int = 0
+    edge_count: int = 0
+    unresolved_count: int = 0
+    capabilities: dict[str, str] = Field(default_factory=dict)
+    cache_stats: dict[str, Any] = Field(default_factory=dict)
+    relationship_counts: dict[str, int] = Field(default_factory=dict)
+    entities: list[dict[str, Any]] = Field(default_factory=list)
+    edges: list[dict[str, Any]] = Field(default_factory=list)
+
+
 class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""
     project: ProjectInfo
+    project_record: DashboardProjectRecord | None = None
+    workspace: DashboardWorkspaceRecord | None = None
+    project_tasks: list[DashboardTaskRecord] = Field(default_factory=list)
+    active_task: DashboardTaskRecord | None = None
+    task_runs: list[DashboardTaskRun] = Field(default_factory=list)
+    task_timeline: list[DashboardTimelineEvent] = Field(default_factory=list)
+    dashboard_feedback: list[DashboardFeedback] = Field(default_factory=list)
+    analytics: DashboardAnalytics = Field(default_factory=DashboardAnalytics)
+    unassigned_history_count: int = 0
     task: TaskInfo = Field(default_factory=TaskInfo)
     context: ContextHealth = Field(default_factory=ContextHealth)
     selected_files: list[SelectedFileRow] = Field(default_factory=list)
@@ -553,3 +685,4 @@ class DashboardSnapshot(BaseModel):
     artifacts: list[ArtifactRow] = Field(default_factory=list)
     projects: list[ProjectCandidate] = Field(default_factory=list)
     task_history: list[TaskHistoryRow] = Field(default_factory=list)
+    semantic_graph: SemanticGraphSummary = Field(default_factory=SemanticGraphSummary)

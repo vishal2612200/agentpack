@@ -59,6 +59,16 @@ def main(argv: list[str]) -> int:
         if b is not None and not b.get("ok", True):
             print(f"_before run failed: {b.get('error')}_\n")
 
+        metadata_mismatches = []
+        for key in ("fixture_version", "extractor_profile_hash"):
+            before_value = b.get(key) if b else None
+            after_value = a.get(key)
+            if before_value is not None and after_value is not None and before_value != after_value:
+                metadata_mismatches.append(f"{key}: {before_value} -> {after_value}")
+        if metadata_mismatches:
+            print("_comparison unavailable because benchmark metadata changed: " + "; ".join(metadata_mismatches) + "_\n")
+            continue
+
         repo = a.get("repo", b.get("repo") if b else "?")
         print(f"Repo: `{repo}`\n")
 

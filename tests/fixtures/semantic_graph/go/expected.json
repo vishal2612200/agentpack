@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "go",
+  "entities": ["TokenStore", "Lookup", "Validate"],
+  "relationships": [{"source": "Validate", "relationship": "calls", "target": "Lookup", "path": "source.go", "start_line": 5, "end_line": 5}],
+  "paths": [{"source": "Validate", "target": "Lookup", "relationships": ["calls"]}],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.go", "expected_absent": ["source.go"]}
+}

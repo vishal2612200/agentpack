@@ -3,7 +3,9 @@ from __future__ import annotations
 from collections import defaultdict
 from typing import Any
 
+from agentpack.architecture.compat import LegacyGraphQuery
 from agentpack.core.models import DependencyGraph, FileInfo
+from agentpack.architecture.index import SemanticGraphIndex
 from agentpack.core.token_estimator import estimate_tokens
 
 
@@ -12,13 +14,15 @@ def build_repo_map(
     files: list[FileInfo],
     scored: list[tuple[FileInfo, float, list[str]]],
     summaries: dict[str, Any],
-    dep_graph: DependencyGraph,
+    dep_graph: DependencyGraph | None = None,
+    semantic_graph: SemanticGraphIndex | None = None,
     changed_paths: set[str],
     budget_tokens: int = 600,
 ) -> str:
     """Return a compact semantic map of the repo around the current task."""
     if budget_tokens <= 0 or not files:
         return ""
+    legacy_query = LegacyGraphQuery(dep_graph) if semantic_graph is None and dep_graph is not None else None
 
     file_scores = {fi.path: score for fi, score, _reasons in scored}
     groups: dict[str, list[FileInfo]] = defaultdict(list)
@@ -45,10 +49,19 @@ def build_repo_map(
         for member in top_members:
             summary = summaries.get(member.path) or {}
             label = _member_label(summary)
-            deps = dep_graph.get(member.path)
             rel = ""
-            if deps.imports or deps.imported_by:
-                rel = f" deps:{len(deps.imports)}/{len(deps.imported_by)}"
+            if semantic_graph is not None:
+                relationships = semantic_graph.neighbors(member.path, limit=100)
+                if relationships:
+                    counts: dict[str, int] = {}
+                    for relationship in relationships:
+                        label = str(relationship["relationship"])
+                        counts[label] = counts.get(label, 0) + 1
+                    rel += " graph:" + ",".join(f"{key}={counts[key]}" for key in sorted(counts)[:4])
+            elif legacy_query is not None:
+                relations = legacy_query.file_relations(member.path)
+                if relations["imports"] or relations["imported_by"]:
+                    rel = f" deps:{len(relations['imports'])}/{len(relations['imported_by'])}"
             mark = " changed" if member.path in changed_paths else ""
             candidate = f"  - {member.path}: {label or 'source file'}{rel}{mark}"
             if not _fits(lines, candidate, budget_tokens):

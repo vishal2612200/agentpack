@@ -58,7 +58,11 @@ def test_root_help_groups_advanced_commands_without_hiding_them() -> None:
     assert "Core loop" in result.output
     assert "Advanced, diagnostics, and release" in result.output
     assert "release-check" in result.output
-    assert "Usage: root release-check" in CliRunner().invoke(app, ["release-check", "--help"]).output
+    release_command = typer.main.get_command(app).commands["release-check"]
+    assert release_command.name == "release-check"
+    release_help = CliRunner().invoke(app, ["release-check", "--help"]).output
+    assert "release-check" in release_help
+    assert "--skip-benchmark" in release_help
 
 
 def test_commands_from_help_handles_rich_table_rows() -> None:

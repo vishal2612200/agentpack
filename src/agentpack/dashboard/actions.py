@@ -15,7 +15,7 @@ from agentpack.dashboard.collectors import EDITABLE_CONFIG_FIELDS, _config_summa
 from agentpack.dashboard.models import DashboardConfigSummary
 
 
-VALID_TASK_STATES = {"planned", "in_progress", "blocked", "done"}
+VALID_TASK_STATES = {"planned", "in_progress", "blocked", "handed_off", "done"}
 VALID_AGENTS = {"all", "auto", "claude", "codex", "cursor", "windsurf", "vscode", "gemini"}
 INSTALL_AGENTS = {"auto", "claude", "codex", "cursor", "windsurf", "vscode", "gemini"}
 

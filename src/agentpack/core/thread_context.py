@@ -149,6 +149,10 @@ def task_is_done(root: Path, thread_id: str | None = None) -> bool:
     return read_task_status(root, thread_id) == "done"
 
 
+def task_is_terminal(root: Path, thread_id: str | None = None) -> bool:
+    return read_task_status(root, thread_id) in {"done", "handed_off"}
+
+
 def detect_conflicts(root: Path, current: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
     active = _active_rows(root, now=now)
     current_thread = current.get("thread_id")
@@ -220,7 +224,7 @@ def _active_rows(root: Path, now: datetime | None = None) -> list[dict[str, Any]
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if row.get("status") == "done":
+        if row.get("status") in {"done", "handed_off"}:
             continue
         updated_at = _parse_datetime(row.get("updated_at"))
         if updated_at is None or updated_at < cutoff:

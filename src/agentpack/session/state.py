@@ -1,10 +1,13 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
+from dataclasses import dataclass, asdict, field
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 import json
+import uuid
+
+from agentpack.session.identity import session_id as migrated_session_id
 
 AGENTPACK_DIR = ".agentpack"
 SESSION_FILE = ".agentpack/session.json"
@@ -28,6 +31,8 @@ class SessionState:
     started_at: Optional[str]
     agent: str = "generic"
     mode: str = "balanced"
+    session_id: str = ""
+    external_thread_ids: list[str] = field(default_factory=list)
     context_file: str = CONTEXT_FILE
     compact_context_file: str = COMPACT_FILE
     task_file: str = TASK_FILE
@@ -43,11 +48,15 @@ def load_session(root: Path) -> Optional[SessionState]:
     session_path = root / SESSION_FILE
     try:
         data = json.loads(session_path.read_text(encoding="utf-8"))
-        return SessionState(
+        state = SessionState(
             active=data.get("active", False),
             started_at=data.get("started_at"),
             agent=data.get("agent", "generic"),
             mode=data.get("mode", "balanced"),
+            session_id=data.get("session_id", ""),
+            external_thread_ids=[str(item) for item in data.get("external_thread_ids", []) if item]
+            if isinstance(data.get("external_thread_ids", []), list)
+            else [],
             context_file=data.get("context_file", CONTEXT_FILE),
             compact_context_file=data.get("compact_context_file", COMPACT_FILE),
             task_file=data.get("task_file", TASK_FILE),
@@ -57,6 +66,11 @@ def load_session(root: Path) -> Optional[SessionState]:
             last_resolved_agent=data.get("last_resolved_agent", ""),
             refresh_count=data.get("refresh_count", 0),
         )
+        if not state.session_id:
+            state.session_id = migrated_session_id(root)
+            if state.session_id:
+                save_session(root, state)
+        return state
     except FileNotFoundError:
         return None
 
@@ -84,8 +98,13 @@ def create_session(root: Path, agent: str, mode: str) -> SessionState:
         started_at=datetime.now(timezone.utc).isoformat(),
         agent=agent,
         mode=mode,
+        session_id="session-" + uuid.uuid4().hex[:20],
+        external_thread_ids=[],
     )
     save_session(root, state)
+    from agentpack.session.events import record_event
+
+    record_event(root, "session_started", {"agent": agent}, source="session")
     return state
 
 
@@ -96,6 +115,9 @@ def stop_session(root: Path) -> None:
         return
     state.active = False
     save_session(root, state)
+    from agentpack.session.events import record_event
+
+    record_event(root, "session_stopped", {"agent": state.agent}, source="session")
 
 
 def log_activity(root: Path, message: str) -> None:

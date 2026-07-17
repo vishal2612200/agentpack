@@ -2,16 +2,33 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, PrivateAttr
 
 
 CapabilityTier = Literal["structured", "best_effort", "file_level", "unavailable"]
-EntityType = Literal["domain", "module", "symbol", "api", "schema", "queue", "config", "test"]
+EntityType = Literal[
+    "domain",
+    "module",
+    "symbol",
+    "api",
+    "schema",
+    "queue",
+    "config",
+    "test",
+    "comment",
+    "document",
+    "external",
+    "unresolved",
+]
 EdgeType = Literal[
     "contains",
     "imports",
     "calls",
+    "references",
+    "inherits",
+    "implements",
     "tested_by",
+    "documents",
     "configures",
     "reads_from",
     "writes_to",
@@ -103,6 +120,13 @@ class ArchitectureSnapshot(BaseModel):
     capabilities: dict[str, CapabilityTier]
     entities: list[ArchitectureEntity]
     edges: list[ArchitectureEdge]
+    file_hashes: dict[str, str] = Field(default_factory=dict)
+    _cache_stats: dict[str, Any] = PrivateAttr(default_factory=dict)
+
+    @property
+    def cache_stats(self) -> dict[str, Any]:
+        """Runtime extraction counters; excluded from canonical serialization."""
+        return self._cache_stats
 
 
 class ArchitectureDiff(BaseModel):

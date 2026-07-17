@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "rust",
+  "entities": ["TokenStore", "lookup", "validate"],
+  "relationships": [{"source": "validate", "relationship": "calls", "target": "lookup", "path": "source.rs", "start_line": 3, "end_line": 3}],
+  "paths": [{"source": "validate", "target": "lookup", "relationships": ["calls"]}],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.rs", "expected_absent": ["source.rs"]}
+}
