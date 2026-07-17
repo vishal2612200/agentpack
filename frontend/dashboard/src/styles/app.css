@@ -2899,9 +2899,57 @@ pre {
   font-size: 11px;
 }
 
-.app-shell[data-presentation-mode="explain"] .technical-detail {
-  display: none;
+.technical-disclosure {
+  border-top: 1px solid var(--border);
+  padding-top: 8px;
 }
+
+.technical-disclosure summary {
+  cursor: pointer;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.technical-disclosure .technical-detail { margin-top: 8px; }
+
+.section-title-heading {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.mode-context {
+  padding: 2px 7px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--accent);
+  font-size: 10px;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.mode-guidance { color: var(--text-muted); }
+
+.state-surface {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-md);
+  background: var(--surface-soft);
+}
+
+.state-surface > span {
+  display: grid;
+  flex: 1;
+  gap: 2px;
+}
+
+.state-surface small { color: var(--text-muted); }
+.state-surface.error, .state-surface.conflict, .state-surface.forbidden { border-color: var(--danger); }
 
 @media (max-width: 980px) {
   .topbar {
