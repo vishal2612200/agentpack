@@ -57,6 +57,12 @@ export async function loadDashboardPayload(detail: "home" | "full" = "home"): Pr
   return (await response.json()) as DashboardPayload;
 }
 
+export async function loadDashboardImpact(params: URLSearchParams = new URLSearchParams()): Promise<DashboardImpactPayload> {
+  const response = await fetch(apiUrl(`/api/dashboard/v2/impact?${params.toString()}`), { headers: authHeaders() });
+  if (!response.ok) throw new Error(`Impact API failed: ${response.status}`);
+  return await response.json() as DashboardImpactPayload;
+}
+
 export function authHeaders(): HeadersInit {
   const token = window.__AGENTPACK_DASHBOARD_TOKEN__;
   return token && !token.startsWith("__AGENTPACK_") ? { "X-AgentPack-Token": token } : {};

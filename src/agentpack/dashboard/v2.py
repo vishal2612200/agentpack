@@ -19,11 +19,16 @@ from agentpack.dashboard.contracts import (
     DashboardV2ActionInspection,
     DashboardV2Actions,
     DashboardV2AgentSession,
+    DashboardV2AgentsResponse,
     DashboardV2Agents,
+    DashboardV2EvidenceItem,
     DashboardV2Evidence,
     DashboardV2Handoff,
     DashboardV2Impact,
+    DashboardV2ImpactEntity,
+    DashboardV2ImpactRelationship,
     DashboardV2ImpactResponse,
+    DashboardV2ImpactScene,
     DashboardV2Payload,
 )
 
@@ -82,6 +87,10 @@ def build_dashboard_v2_impact(
         for entity in summary.entities
         if entity.get("type") == "test"
     ]
+    snapshot = build_project_dashboard_snapshot(root)
+    graph = build_dashboard_graph(snapshot, root)
+    dashboard_map = build_dashboard_map(snapshot, graph)
+    scene = _impact_scene(snapshot, dashboard_map, summary.model_dump(mode="json"))
     return DashboardV2ImpactResponse(
         query=query,
         relationship=relationship,
@@ -90,13 +99,16 @@ def build_dashboard_v2_impact(
         available=not summary.capabilities.get("error"),
         summary=summary.model_dump(mode="json"),
         affected_tests=tests,
+        entities=scene.entities,
+        relationships=scene.relationships,
+        scene=scene,
     ).model_dump(mode="json")
 
 
 def build_dashboard_v2_agents(root: Path) -> dict[str, Any]:
     """Return handoffs and local session surfaces without exposing UUIDs."""
     snapshot = build_project_dashboard_snapshot(root)
-    return {"schema_version": DASHBOARD_V2_SCHEMA_VERSION, "agents": _agent_summary(root, snapshot).model_dump(mode="json")}
+    return DashboardV2AgentsResponse(agents=_agent_summary(root, snapshot)).model_dump(mode="json")
 
 
 def build_dashboard_v2_evidence(root: Path) -> dict[str, Any]:
@@ -166,6 +178,149 @@ def _expected_effect(action_id: str) -> str:
     return effects.get(action_id, "Run the selected AgentPack action and stream its result.")
 
 
+def _impact_scene(snapshot, dashboard_map, semantic: dict[str, Any]) -> DashboardV2ImpactScene:
+    selected_paths = {row.path for row in snapshot.selected_files}
+    task_rows = {row.path: row for row in snapshot.task_map}
+    buildings = {building.path: building for building in dashboard_map.buildings}
+    entities: list[DashboardV2ImpactEntity] = []
+    semantic_ids: dict[str, str] = {}
+
+    for building in dashboard_map.buildings:
+        row = task_rows.get(building.path)
+        entities.append(
+            DashboardV2ImpactEntity(
+                id=f"file:{building.path}",
+                kind="file",
+                label=building.label,
+                path=building.path,
+                confidence_tier=building.confidence_source,
+                task_relevant=building.path in selected_paths or bool(row and row.kind == "selected"),
+                risk=building.risk,
+                reasons=list(building.reasons),
+                actions=list(building.action_refs),
+                x=building.x,
+                y=max(1.0, building.height),
+                z=building.z,
+            )
+        )
+
+    semantic_paths = sorted({str(item.get("path") or "") for item in semantic.get("entities", []) if item.get("path")})
+    for index, path in enumerate(path for path in semantic_paths if path not in buildings):
+        row = task_rows.get(path)
+        x = float((index % 8) * 8)
+        z = float(48 + (index // 8) * 8)
+        entities.append(
+            DashboardV2ImpactEntity(
+                id=f"file:{path}",
+                kind="file",
+                label=Path(path).name,
+                path=path,
+                confidence_tier="structured",
+                task_relevant=path in selected_paths or path in task_rows,
+                risk=row.risk_level if row else "unknown",
+                reasons=list(row.reasons) if row else ["Contains indexed semantic entities."],
+                actions=["retrieve", "dev_check"],
+                x=x,
+                y=2.0,
+                z=z,
+            )
+        )
+
+    per_file_index: dict[str, int] = {}
+    for item in semantic.get("entities", []):
+        key = str(item.get("entity_key") or "")
+        path = str(item.get("path") or "")
+        entity_type = str(item.get("type") or "external")
+        kind = "test" if entity_type == "test" or "test" in path.lower() else "symbol"
+        if entity_type in {"external", "unresolved"}:
+            kind = "external"
+        entity_id = f"semantic:{key}"
+        semantic_ids[key] = entity_id
+        building = buildings.get(path)
+        index = per_file_index.get(path, 0)
+        per_file_index[path] = index + 1
+        x = building.x + ((index % 3) - 1) * 1.4 if building else 96.0 + (index % 5) * 4.0
+        z = building.z + (index // 3) * 1.3 if building else 96.0 + (index // 5) * 4.0
+        y = max(2.0, building.height + 1.5) if building else 2.0
+        entities.append(
+            DashboardV2ImpactEntity(
+                id=entity_id,
+                kind=kind,
+                label=str(item.get("name") or key),
+                path=path,
+                line=int(item.get("line") or 0),
+                parent_id=f"file:{path}" if path else "",
+                confidence_tier=str(item.get("confidence_tier") or ""),
+                task_relevant=path in selected_paths or path in task_rows,
+                risk=task_rows[path].risk_level if path in task_rows else "unknown",
+                actions=["retrieve", "dev_check"] if path else [],
+                x=x,
+                y=y,
+                z=z,
+            )
+        )
+
+    relationships: list[DashboardV2ImpactRelationship] = []
+    related: dict[str, set[str]] = {}
+    for edge in semantic.get("edges", []):
+        source_id = semantic_ids.get(str(edge.get("source") or ""), f"semantic:{edge.get('source') or ''}")
+        target_id = semantic_ids.get(str(edge.get("target") or ""), f"semantic:{edge.get('target') or ''}")
+        evidence = [
+            DashboardV2EvidenceItem(
+                kind="source",
+                path=str(item.get("path") or ""),
+                start_line=int(item.get("start_line") or 0),
+                end_line=int(item.get("end_line") or 0),
+                source=str(item.get("source") or ""),
+                source_hash=str(item.get("source_hash") or ""),
+                note=str(item.get("note") or ""),
+            )
+            for item in edge.get("evidence", [])[:3]
+        ]
+        tier = str(edge.get("confidence_tier") or "best_effort")
+        relevant = any(item.path in selected_paths or item.path in task_rows for item in evidence)
+        relationship = DashboardV2ImpactRelationship(
+            id=f"relationship:{edge.get('edge_key') or ''}",
+            source_id=source_id,
+            target_id=target_id,
+            relationship=str(edge.get("relationship") or "related"),
+            confidence_tier=tier,
+            strength={"structured": 1.0, "best_effort": 0.65, "file_level": 0.4}.get(tier, 0.35),
+            task_relevant=relevant,
+            evidence=evidence,
+        )
+        relationships.append(relationship)
+        related.setdefault(source_id, set()).add(target_id)
+        related.setdefault(target_id, set()).add(source_id)
+
+    for action_index, action in enumerate(snapshot.command_catalog[:8]):
+        entities.append(
+            DashboardV2ImpactEntity(
+                id=f"action:{action.id}",
+                kind="action",
+                label=action.label,
+                confidence_tier="catalog",
+                task_relevant=bool(action.primary),
+                risk=action.risk,
+                actions=[action.id],
+                x=10.0 + action_index * 7.0,
+                y=2.0,
+                z=-18.0,
+            )
+        )
+
+    entities = [entity.model_copy(update={"related_ids": sorted(related.get(entity.id, set()))}) for entity in entities]
+    entities.sort(key=lambda item: (not item.task_relevant, item.kind, item.path, item.label))
+    relationships.sort(key=lambda item: (not item.task_relevant, -item.strength, item.id))
+    unavailable_reason = str(semantic.get("capabilities", {}).get("error") or "")
+    return DashboardV2ImpactScene(
+        available=not unavailable_reason and bool(entities),
+        unavailable_reason=unavailable_reason,
+        entities=entities[:500],
+        relationships=relationships[:500],
+    )
+
+
 def _empty_graph() -> dict[str, Any]:
     return {"schema_version": 1, "root_id": "task:active", "summary": {}, "nodes": [], "edges": []}
 
@@ -212,13 +367,14 @@ def _agent_summary(root: Path, snapshot) -> DashboardV2Agents:
         handoffs = []
     sessions = [
         DashboardV2AgentSession(
-            provider=row.agent or "generic",
+            provider="agentpack",
             session_id=row.thread_id,
             thread_id=row.thread_id,
             task=row.task,
             status=row.status or "unknown",
             context_status=snapshot.context.status,
             updated_at=row.updated_at,
+            worktree=row.worktree,
         )
         for row in snapshot.thread_rows
     ]

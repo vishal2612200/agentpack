@@ -1,4 +1,7 @@
+import type { ImpactEntity, ImpactRelationship, ImpactScene } from "./dashboard-v2.generated";
+
 export type ContextStatus = "fresh" | "stale" | "missing" | "unknown";
+export type { ImpactEntity as DashboardV2ImpactEntity, ImpactRelationship as DashboardV2ImpactRelationship, ImpactScene as DashboardV2ImpactScene } from "./dashboard-v2.generated";
 export type PresentationMode = "explain" | "build";
 export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "action";
 export type EdgeType =
@@ -184,6 +187,9 @@ export interface DashboardV2ImpactResponse {
   available: boolean;
   summary: SemanticGraphSummary;
   affected_tests: Array<{ entity_key: string; type: string; name: string; path: string; line?: number; language?: string; confidence_tier?: string }>;
+  entities: ImpactEntity[];
+  relationships: ImpactRelationship[];
+  scene: ImpactScene;
 }
 
 export interface DashboardV2ActionInspection {
@@ -208,6 +214,7 @@ export interface DashboardV2AgentSession {
   status?: string;
   context_status?: string;
   updated_at?: string;
+  worktree?: string;
 }
 
 export interface DashboardV2Handoff {

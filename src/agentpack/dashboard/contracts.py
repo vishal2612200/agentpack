@@ -43,6 +43,56 @@ class DashboardV2ImpactResponse(BaseModel):
     available: bool = False
     summary: dict[str, Any] = Field(default_factory=dict)
     affected_tests: list[dict[str, Any]] = Field(default_factory=list)
+    entities: list["DashboardV2ImpactEntity"] = Field(default_factory=list)
+    relationships: list["DashboardV2ImpactRelationship"] = Field(default_factory=list)
+    scene: "DashboardV2ImpactScene" = Field(default_factory=lambda: DashboardV2ImpactScene())
+
+
+class DashboardV2EvidenceItem(BaseModel):
+    kind: str
+    path: str = ""
+    start_line: int = 0
+    end_line: int = 0
+    source: str = ""
+    source_hash: str = ""
+    note: str = ""
+
+
+class DashboardV2ImpactEntity(BaseModel):
+    id: str
+    kind: Literal["file", "symbol", "test", "action", "external"]
+    label: str
+    path: str = ""
+    line: int = 0
+    parent_id: str = ""
+    confidence_tier: str = ""
+    task_relevant: bool = False
+    risk: str = "unknown"
+    reasons: list[str] = Field(default_factory=list)
+    related_ids: list[str] = Field(default_factory=list)
+    evidence: list[DashboardV2EvidenceItem] = Field(default_factory=list)
+    actions: list[str] = Field(default_factory=list)
+    x: float = 0.0
+    y: float = 0.0
+    z: float = 0.0
+
+
+class DashboardV2ImpactRelationship(BaseModel):
+    id: str
+    source_id: str
+    target_id: str
+    relationship: str
+    confidence_tier: str = ""
+    strength: float = 0.0
+    task_relevant: bool = False
+    evidence: list[DashboardV2EvidenceItem] = Field(default_factory=list)
+
+
+class DashboardV2ImpactScene(BaseModel):
+    available: bool = False
+    unavailable_reason: str = ""
+    entities: list[DashboardV2ImpactEntity] = Field(default_factory=list)
+    relationships: list[DashboardV2ImpactRelationship] = Field(default_factory=list)
 
 
 class DashboardV2Handoff(BaseModel):
@@ -71,6 +121,7 @@ class DashboardV2AgentSession(BaseModel):
     status: str = "unknown"
     context_status: str = "unknown"
     updated_at: str = ""
+    worktree: str = ""
 
 
 class DashboardV2Agents(BaseModel):
@@ -79,6 +130,68 @@ class DashboardV2Agents(BaseModel):
     threads: list[dict[str, Any]] = Field(default_factory=list)
     integrations: list[dict[str, Any]] = Field(default_factory=list)
     mcp_health: dict[str, Any] = Field(default_factory=dict)
+
+
+class DashboardV2AgentsResponse(BaseModel):
+    schema_version: Literal[2] = 2
+    agents: DashboardV2Agents
+
+
+class DashboardV2ActionRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    action: str = Field(min_length=1)
+    cwd: str = ""
+    agent: str = ""
+    thread: str = ""
+    task: str = ""
+    target: str = ""
+    path: str = ""
+    mode: str = ""
+    budget: int | None = Field(default=None, ge=1)
+    status: str = ""
+    summary: str = ""
+    thread_id: str = ""
+    older_than: str = ""
+    refresh: bool = False
+    guard: bool = False
+    global_: bool = Field(default=False, alias="global")
+    confirmed: bool = False
+
+
+class DashboardV2HandoffOperationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    name: str = Field(min_length=1, max_length=48)
+
+
+class DashboardV2AgentOperationResponse(BaseModel):
+    schema_version: Literal[2] = 2
+    handoff: DashboardV2Handoff
+    warnings: list[str] = Field(default_factory=list)
+
+
+class DashboardV2ActionRunResponse(BaseModel):
+    schema_version: Literal[2] = 2
+    session: dict[str, Any]
+    command: str
+
+
+class DashboardV2UnavailableState(BaseModel):
+    kind: Literal[
+        "stale_context",
+        "tree_sitter_unavailable",
+        "mcp_unavailable",
+        "permission_denied",
+        "repository_mismatch",
+        "action_conflict",
+        "webgl_unavailable",
+        "server_error",
+    ]
+    title: str
+    detail: str = ""
+    next_action: str = ""
+    retryable: bool = False
 
 
 class DashboardV2Evidence(BaseModel):
@@ -117,6 +230,11 @@ class DashboardV2ActionInspection(BaseModel):
     expected_effect: str = ""
     confirm_required: bool = False
     allowed: bool = True
+
+
+class DashboardV2ActionInspectionResponse(BaseModel):
+    schema_version: Literal[2] = 2
+    inspection: DashboardV2ActionInspection
 
 
 class DashboardV2Error(BaseModel):
