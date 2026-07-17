@@ -1,4 +1,5 @@
 export type ContextStatus = "fresh" | "stale" | "missing" | "unknown";
+export type PresentationMode = "explain" | "build";
 export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "action";
 export type EdgeType =
   | "selected_because"
@@ -172,6 +173,57 @@ export interface SemanticGraphSummary {
   relationship_counts: Record<string, number>;
   entities: Array<{ entity_key: string; type: string; name: string; path: string; line?: number; language?: string; confidence_tier?: string }>;
   edges: Array<{ edge_key: string; relationship: string; source: string; target: string; source_name?: string; target_name?: string; confidence_tier?: string; evidence?: Array<{ path?: string; start_line?: number; end_line?: number; source?: string; source_hash?: string; note?: string }> }>;
+}
+
+export interface DashboardV2ImpactResponse {
+  schema_version: 2;
+  query: string;
+  relationship: string;
+  language: string;
+  confidence: string;
+  available: boolean;
+  summary: SemanticGraphSummary;
+  affected_tests: Array<{ entity_key: string; type: string; name: string; path: string; line?: number; language?: string; confidence_tier?: string }>;
+}
+
+export interface DashboardV2ActionInspection {
+  schema_version: 2;
+  action: string;
+  command: string;
+  cwd: string;
+  purpose: string;
+  risk: string;
+  risk_reasons: string[];
+  affected_paths: string[];
+  expected_effect: string;
+  confirm_required: boolean;
+  allowed: boolean;
+}
+
+export interface DashboardV2AgentSession {
+  provider: string;
+  session_id: string;
+  thread_id?: string;
+  task?: string;
+  status?: string;
+  context_status?: string;
+  updated_at?: string;
+}
+
+export interface DashboardV2Handoff {
+  name: string;
+  status: string;
+  created_at?: string;
+  updated_at?: string;
+  source_provider?: string;
+  source_session_id?: string;
+  target_provider?: string;
+  target_session_id?: string;
+  task?: string;
+  summary?: string;
+  next_action?: string;
+  claim_provider?: string;
+  claim_session_id?: string;
 }
 
 export interface ActionHistoryRow {

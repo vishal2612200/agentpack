@@ -7,6 +7,7 @@ import { buildingHoverInfo, roadHoverInfo, routeVisual, type MapHoverInfo } from
 
 export function ContextCityMap({
   dashboardMap,
+  impactPaths,
   selectedId,
   hoverInfo,
   cameraSignal,
@@ -15,6 +16,7 @@ export function ContextCityMap({
   onHover
 }: {
   dashboardMap: DashboardMap;
+  impactPaths: Set<string>;
   selectedId: string;
   hoverInfo: MapHoverInfo | null;
   cameraSignal: number;
@@ -41,7 +43,7 @@ export function ContextCityMap({
         <color attach="background" args={["#08111f"]} />
         <ambientLight intensity={0.62} />
         <directionalLight castShadow position={[34, 54, 34]} intensity={1.18} />
-        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} reducedMotion={reducedMotion} demoMode={demoMode && !tourPaused} onSelect={onSelect} onHover={onHover} />
+        <CityScene dashboardMap={dashboardMap} impactPaths={impactPaths} selectedId={selectedId} hoverInfo={hoverInfo} reducedMotion={reducedMotion} demoMode={demoMode && !tourPaused} onSelect={onSelect} onHover={onHover} />
         <OrbitControls ref={controlsRef} makeDefault target={[32, 5, 22]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={24} maxDistance={360} maxPolarAngle={Math.PI / 2.08} />
       </Canvas>
     </div>
@@ -50,6 +52,7 @@ export function ContextCityMap({
 
 function CityScene({
   dashboardMap,
+  impactPaths,
   selectedId,
   hoverInfo,
   reducedMotion,
@@ -58,6 +61,7 @@ function CityScene({
   onHover
 }: {
   dashboardMap: DashboardMap;
+  impactPaths: Set<string>;
   selectedId: string;
   hoverInfo: MapHoverInfo | null;
   reducedMotion: boolean;
@@ -110,7 +114,7 @@ function CityScene({
       ))}
       {hoverInfo ? <MapSceneTooltip info={hoverInfo} /> : null}
       {dashboardMap.buildings.map((building) => (
-        <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
+        <BuildingMesh key={building.id} building={building} impacted={impactPaths.has(building.path)} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
       ))}
     </group>
   );
@@ -118,12 +122,14 @@ function CityScene({
 
 function BuildingMesh({
   building,
+  impacted,
   selected,
   reducedMotion,
   onSelect,
   onHover
 }: {
   building: MapBuilding;
+  impacted: boolean;
   selected: boolean;
   reducedMotion: boolean;
   onSelect: (id: string) => void;
@@ -139,7 +145,7 @@ function BuildingMesh({
   const upperHeight = building.building_tier === "tower" ? towerHeight * 0.34 : 0;
   const floors = Math.min(8, Math.max(3, Math.round(towerHeight / 2.45)));
   const windowColumns = Math.min(4, Math.max(2, Math.round(width / 2.15)));
-  const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : "#d9e7ff";
+  const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : impacted ? "#b7f38e" : "#d9e7ff";
   const roofColor = selected ? "#dbe8ff" : building.memory_linked ? "#b8f7f3" : "#d6e1ef";
   const plazaRadius = Math.max(width, depth) * 0.86;
   const facadeColor = building.color;
@@ -164,7 +170,7 @@ function BuildingMesh({
       }}
     >
       {selected ? <GlowDisk x={building.x} z={building.z} radius={plazaRadius * 1.08} color="#80a9ff" opacity={0.32} /> : null}
-      {building.selected ? <GlowDisk x={building.x} z={building.z} radius={plazaRadius * 0.9} color={accentColor} opacity={0.22} /> : null}
+      {building.selected || impacted ? <GlowDisk x={building.x} z={building.z} radius={plazaRadius * (impacted ? 0.76 : 0.9)} color={accentColor} opacity={impacted ? 0.15 : 0.22} /> : null}
       <mesh position={[building.x, 0.11, building.z]} rotation={[0, Math.PI / 8, 0]} castShadow receiveShadow>
         <cylinderGeometry args={[plazaRadius, plazaRadius * 1.08, 0.22, 8]} />
         <meshStandardMaterial color="#17263b" roughness={0.82} metalness={0.08} />

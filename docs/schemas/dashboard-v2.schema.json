@@ -1,0 +1,167 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://agentpack.dev/schemas/dashboard-v2.schema.json",
+  "title": "AgentPack Dashboard v2",
+  "$comment": "The top-level schema validates GET /api/dashboard/v2. Endpoint response schemas are available under $defs.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "detail",
+    "snapshot",
+    "graph",
+    "map",
+    "action_history",
+    "workspace",
+    "agents",
+    "impact"
+  ],
+  "properties": {
+    "schema_version": { "const": 2 },
+    "detail": { "enum": ["home", "full"] },
+    "snapshot": { "type": "object" },
+    "graph": { "$ref": "#/$defs/objectEnvelope" },
+    "map": { "$ref": "#/$defs/objectEnvelope" },
+    "action_history": { "type": "array", "items": { "type": "object" } },
+    "workspace": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project", "workspace", "task", "context"],
+      "properties": {
+        "project": { "type": "object" },
+        "workspace": { "type": ["object", "null"] },
+        "task": { "type": "object" },
+        "context": { "type": "object" }
+      }
+    },
+    "agents": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["handoffs", "sessions", "threads", "integrations", "mcp_health"],
+      "properties": {
+        "handoffs": { "type": "array", "items": { "$ref": "#/$defs/handoff" } },
+        "sessions": { "type": "array", "items": { "$ref": "#/$defs/session" } },
+        "threads": { "type": "array", "items": { "type": "object" } },
+        "integrations": { "type": "array", "items": { "type": "object" } },
+        "mcp_health": { "type": "object" }
+      }
+    },
+    "impact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "available", "entity_count", "edge_count", "unresolved_count", "capabilities"],
+      "properties": {
+        "schema_version": { "type": "integer" },
+        "available": { "type": "boolean" },
+        "entity_count": { "type": "integer", "minimum": 0 },
+        "edge_count": { "type": "integer", "minimum": 0 },
+        "unresolved_count": { "type": "integer", "minimum": 0 },
+        "capabilities": { "type": "object", "additionalProperties": { "type": "string" } }
+      }
+    }
+  },
+  "$defs": {
+    "objectEnvelope": { "type": "object" },
+    "handoff": {
+      "type": "object",
+      "required": ["name", "status"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "status": { "type": "string" },
+        "created_at": { "type": "string" },
+        "updated_at": { "type": "string" },
+        "source_provider": { "type": "string" },
+        "source_session_id": { "type": "string" },
+        "target_provider": { "type": "string" },
+        "target_session_id": { "type": "string" },
+        "task": { "type": "string" },
+        "summary": { "type": "string" },
+        "next_action": { "type": "string" },
+        "claim_provider": { "type": "string" },
+        "claim_session_id": { "type": "string" }
+      },
+      "not": { "required": ["handoff_id"] }
+    },
+    "session": {
+      "type": "object",
+      "required": ["provider", "session_id"],
+      "properties": {
+        "provider": { "type": "string" },
+        "session_id": { "type": "string" },
+        "thread_id": { "type": "string" },
+        "task": { "type": "string" },
+        "status": { "type": "string" },
+        "context_status": { "type": "string" },
+        "updated_at": { "type": "string" }
+      }
+    },
+    "impactResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "query", "relationship", "language", "confidence", "available", "summary", "affected_tests"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "query": { "type": "string" },
+        "relationship": { "type": "string" },
+        "language": { "type": "string" },
+        "confidence": { "type": "string" },
+        "available": { "type": "boolean" },
+        "summary": { "type": "object" },
+        "affected_tests": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "actionInspection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "action", "command", "cwd", "purpose", "risk", "risk_reasons", "affected_paths", "expected_effect", "confirm_required", "allowed"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "action": { "type": "string", "minLength": 1 },
+        "command": { "type": "string" },
+        "cwd": { "type": "string" },
+        "purpose": { "type": "string" },
+        "risk": { "type": "string" },
+        "risk_reasons": { "type": "array", "items": { "type": "string" } },
+        "affected_paths": { "type": "array", "items": { "type": "string" } },
+        "expected_effect": { "type": "string" },
+        "confirm_required": { "type": "boolean" },
+        "allowed": { "type": "boolean" }
+      }
+    },
+    "evidenceResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "context", "selected_files", "task_map", "observer", "timeline"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "context": { "type": "object" },
+        "selected_files": { "type": "array", "items": { "type": "object" } },
+        "task_map": { "type": "array", "items": { "type": "object" } },
+        "observer": { "type": "object" },
+        "timeline": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "actionsResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "suggested", "catalog"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "suggested": { "type": "array", "items": { "type": "object" } },
+        "catalog": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "errorResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "error", "kind", "retryable", "detail"],
+      "properties": {
+        "schema_version": { "const": 2 },
+        "error": { "type": "string" },
+        "kind": { "type": "string" },
+        "retryable": { "type": "boolean" },
+        "detail": { "type": "string" }
+      }
+    }
+  }
+}

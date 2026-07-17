@@ -43,24 +43,15 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
-import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, SemanticGraphSummary } from "./data/schema";
+import { apiUrl, authHeaders, dashboardToken, loadDashboardPayload, type DashboardActionInspectionPayload, type DashboardPayload } from "./data/loadDashboard";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, PresentationMode, SemanticGraphSummary } from "./data/schema";
+import { AgentWorkbench } from "./components/dashboard/agent-workbench";
+import { ConfirmCommandDialog, ErrorState, LoadingState, Metric, Panel, StatusPill, type CommandInspection, type PendingCommand } from "./components/dashboard/shared";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 
 const ContextCityMap = lazy(() => import("./MapCity").then((module) => ({ default: module.ContextCityMap })));
 
 type View = "home" | "analytics" | "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
-
-interface CommandInspection {
-  command: string;
-  cwd: string;
-  allowed: boolean;
-  reason: string;
-  risky: boolean;
-  risk_reasons: string[];
-  confirm_required: boolean;
-}
-
 interface TerminalSessionState {
   id: string;
   command: string;
@@ -70,15 +61,10 @@ interface TerminalSessionState {
   output: string;
 }
 
-interface PendingCommand {
-  command: string;
-  inspection: CommandInspection;
-}
-
 const primaryViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "home", label: "Project home", icon: Building2 },
-  { id: "tasks", label: "Tasks", icon: ClipboardList },
-  { id: "analytics", label: "How AgentPack helped", icon: BarChart3 }
+  { id: "home", label: "Overview", icon: Building2 },
+  { id: "tasks", label: "Work queue", icon: ClipboardList },
+  { id: "analytics", label: "Proof", icon: BarChart3 }
 ];
 
 const advancedViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
@@ -105,6 +91,10 @@ export function App() {
   const [sessions, setSessions] = useState<TerminalSessionState[]>([]);
   const [activeSessionId, setActiveSessionId] = useState<string>("");
   const [pendingCommand, setPendingCommand] = useState<PendingCommand | null>(null);
+  const [presentationMode, setPresentationMode] = useState<PresentationMode>(() => {
+    if (typeof window === "undefined") return "explain";
+    return window.localStorage.getItem("agentpack.dashboard.presentation_mode") === "build" ? "build" : "explain";
+  });
   const streams = useRef<Map<string, EventSource>>(new Map());
 
   const refreshDashboard = async (detail: "home" | "full" = payloadDetail) => {
@@ -123,6 +113,10 @@ export function App() {
     refreshDashboard("home")
       .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
   }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem("agentpack.dashboard.presentation_mode", presentationMode);
+  }, [presentationMode]);
 
   useEffect(() => {
     return () => {
@@ -181,7 +175,33 @@ export function App() {
   };
 
   const handleRunAction = async (action: string, body: Record<string, unknown> = {}) => {
-    const response = await fetch(apiUrl("/api/action/run"), {
+    const inspectionResponse = await fetch(apiUrl("/api/dashboard/v2/actions/inspect"), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ action, ...body })
+    });
+    const inspectionPayload = await inspectionResponse.json() as { inspection?: DashboardActionInspectionPayload; error?: string };
+    if (!inspectionResponse.ok || !inspectionPayload.inspection) {
+      openLocalError(action, inspectionPayload.error || `Could not inspect action: ${inspectionResponse.status}`);
+      return;
+    }
+    const inspected = inspectionPayload.inspection;
+    if (!inspected.allowed) {
+      openLocalError(action, inspected.purpose || "This action is not allowed from the dashboard.");
+      return;
+    }
+    if (inspected.confirm_required) {
+      setPendingCommand({
+        command: inspected.command,
+        inspection: {
+          ...inspected,
+          risky: inspected.risk !== "low",
+          reason: inspected.purpose || "Confirmation required before this action."
+        }
+      });
+      return;
+    }
+    const response = await fetch(apiUrl("/api/dashboard/v2/actions/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
       body: JSON.stringify({ action, ...body })
@@ -210,6 +230,20 @@ export function App() {
     setActiveSessionId(session.id);
     setTerminalOpen(true);
     attachEventStream(session.id);
+  };
+
+  const handleHandoffAction = async (action: "resume" | "release", name: string) => {
+    const response = await fetch(apiUrl(`/api/dashboard/v2/agents/${action}`), {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...authHeaders() },
+      body: JSON.stringify({ name })
+    });
+    const result = await response.json() as { error?: string };
+    if (!response.ok) {
+      openLocalError(name, result.error || `Could not ${action} handoff.`);
+      return;
+    }
+    await refreshDashboard("home");
   };
 
   const handleSaveConfig = async (updates: Record<string, unknown>) => {
@@ -350,7 +384,7 @@ export function App() {
   };
 
   return (
-    <div className="app-shell">
+    <div className="app-shell" data-presentation-mode={presentationMode} data-testid="dashboard-workspace">
       <aside className="sidebar" aria-label="Dashboard navigation">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
@@ -358,24 +392,42 @@ export function App() {
           </div>
           <div className="brand-copy">
             <strong>AgentPack</strong>
-            <span>Context cockpit</span>
+            <span>Local control plane</span>
           </div>
         </div>
         <nav className="nav-list">
-          <span className="nav-group-label">Workspace</span>
+          <span className="nav-group-label">Control</span>
           {primaryViews.map(renderNavItem)}
           <details className="advanced-nav" open={view !== "home" && view !== "tasks" && view !== "analytics"}>
-            <summary>Advanced</summary>
+            <summary>Observe</summary>
             <div className="nav-list nav-list-nested">{advancedViews.map(renderNavItem)}</div>
           </details>
         </nav>
+        <div className="sidebar-footer">
+          <span><CircleDot size={12} aria-hidden="true" /> Runtime nominal</span>
+          <code>{payload.snapshot.workspace?.branch || payload.snapshot.project.branch || "local workspace"}</code>
+        </div>
       </aside>
 
       <main className="workspace">
-        <TopBar snapshot={payload.snapshot} onSwitchProject={handleSwitchProject} />
+        <TopBar
+          snapshot={payload.snapshot}
+          mode={presentationMode}
+          onModeChange={setPresentationMode}
+          onSwitchProject={handleSwitchProject}
+          onOpenSearch={() => { setView("graph"); loadFullDashboard(); }}
+        />
         <section className="main-panel" aria-label={`${view} view`}>
           {view === "home" && (
-            <ProjectHomeView snapshot={payload.snapshot} onRunAction={handleRunAction} onRefresh={refreshDashboard} onOpenGraph={() => { setView("graph"); loadFullDashboard(); }} />
+            <ProjectHomeView
+              snapshot={payload.snapshot}
+              agents={payload.agents}
+              mode={presentationMode}
+              onRunAction={handleRunAction}
+              onHandoffAction={handleHandoffAction}
+              onRefresh={refreshDashboard}
+              onOpenGraph={() => { setView("graph"); loadFullDashboard(); }}
+            />
           )}
           {view === "analytics" && <AnalyticsView snapshot={payload.snapshot} />}
           {view === "cockpit" && (
@@ -447,15 +499,34 @@ async function inspectCommand(command: string): Promise<CommandInspection> {
 
 function TopBar({
   snapshot,
-  onSwitchProject
+  mode,
+  onModeChange,
+  onSwitchProject,
+  onOpenSearch
 }: {
   snapshot: DashboardSnapshot;
+  mode: PresentationMode;
+  onModeChange: (mode: PresentationMode) => void;
   onSwitchProject: (path: string) => void;
+  onOpenSearch: () => void;
 }) {
   return (
     <header className="topbar">
-      <ProjectDropdown snapshot={snapshot} onSwitchProject={onSwitchProject} />
+      <div className="topbar-leading">
+        <span className="system-kicker"><CircleDot size={12} aria-hidden="true" /> Local control plane</span>
+        <ProjectDropdown snapshot={snapshot} onSwitchProject={onSwitchProject} />
+      </div>
+      <button type="button" className="command-trigger" onClick={onOpenSearch} aria-label="Search AgentPack context">
+        <Search size={16} aria-hidden="true" />
+        <span>Search paths, memory, tests</span>
+        <kbd>⌘ K</kbd>
+      </button>
+      <div className="mode-switch" role="group" aria-label="Workspace detail mode">
+        <button type="button" className={mode === "explain" ? "active" : ""} onClick={() => onModeChange("explain")}>Explain</button>
+        <button type="button" className={mode === "build" ? "active" : ""} onClick={() => onModeChange("build")}>Build</button>
+      </div>
       <div className="topbar-status" aria-label="Dashboard health">
+        <span className="topbar-meta">{snapshot.workspace?.branch || snapshot.project.branch || "local"}</span>
         <StatusPill label="Context" status={snapshot.context.status} />
         <StatusPill label="MCP" status={snapshot.mcp_health?.status || "unknown"} />
       </div>
@@ -543,12 +614,18 @@ function ProjectDropdown({
 
 function ProjectHomeView({
   snapshot,
+  agents,
+  mode,
   onRunAction,
+  onHandoffAction,
   onRefresh,
   onOpenGraph
 }: {
   snapshot: DashboardSnapshot;
+  agents?: DashboardPayload["agents"];
+  mode: PresentationMode;
   onRunAction: (action: string, body?: Record<string, unknown>) => void;
+  onHandoffAction: (action: "resume" | "release", name: string) => void;
   onRefresh: () => Promise<unknown>;
   onOpenGraph: () => void;
 }) {
@@ -648,15 +725,19 @@ function ProjectHomeView({
     <div className="view-stack project-home" data-testid="project-home">
       <section className="project-home-hero">
         <div>
-          <p className="eyebrow">{snapshot.project.name} workspace</p>
-          <h1>What are you working on?</h1>
-          <p className="muted">Keep your AI work focused on one project and one task at a time.</p>
+          <div className="hero-mode"><span className="signal-dot" /> {mode === "explain" ? "Workspace briefing" : "Build workspace"} <code>{active?.task_id || "ready"}</code></div>
+          <h1>{active?.title || "Start your next task"}</h1>
+          <p className="muted">{active ? (mode === "explain" ? "AgentPack has organized the evidence behind your next useful action." : "Inspect the exact files, symbols, commands, and checks behind this task.") : "Start with a task and AgentPack will stage the workspace around it."}</p>
           <div className="workspace-context">
-            <span>{snapshot.workspace?.branch || snapshot.project.branch || "local workspace"}</span>
+            <span><GitBranch size={13} aria-hidden="true" /> {snapshot.workspace?.branch || snapshot.project.branch || "local workspace"}</span>
             <code>{snapshot.workspace?.path || snapshot.project.path}</code>
           </div>
         </div>
         <div className="hero-actions">
+          <span className="hero-state"><CircleDot size={13} aria-hidden="true" /> Ready for direction</span>
+          <button className="primary-action" type="button" onClick={() => onRunAction("next")}>
+            <PlayCircle size={16} aria-hidden="true" /> Prepare next step
+          </button>
           <button className="secondary-action" type="button" onClick={onOpenGraph}>
             Impact map <ChevronRight size={16} aria-hidden="true" />
           </button>
@@ -718,6 +799,8 @@ function ProjectHomeView({
           {taskError ? <p className="error-text">{taskError}</p> : null}
         </Panel>
       </div>
+
+      <AgentWorkbench agents={agents} mode={mode} onRunAction={onRunAction} onHandoffAction={onHandoffAction} />
 
       {selected ? (
         <Panel title="Task details" icon={FileText}>
@@ -1250,6 +1333,10 @@ function MapView({
   const payloadRequiredActions = new Set(["work", "route_task", "retrieve"]);
   const primaryCatalog = (snapshot.command_catalog || []).filter((item) => item.primary && !payloadRequiredActions.has(item.id)).slice(0, 8);
   const weather = dashboardMap.weather || [];
+  const impactPaths = useMemo(() => new Set([
+    ...(snapshot.selected_files || []).map((row) => row.path),
+    ...(snapshot.task_map || []).map((row) => row.path)
+  ].filter(Boolean)), [snapshot.selected_files, snapshot.task_map]);
   const showSide = !demoMode && !sideCollapsed;
   useEffect(() => {
     const handleFullscreenChange = () => {
@@ -1258,6 +1345,9 @@ function MapView({
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
   }, []);
+  useEffect(() => {
+    if (!dashboardMap.buildings.length && !dashboardMap.roads.length) setMode("table");
+  }, [dashboardMap.buildings.length, dashboardMap.roads.length]);
   const toggleFullscreen = async () => {
     const element = mapRootRef.current;
     if (!element) return;
@@ -1314,6 +1404,7 @@ function MapView({
         <Metric label="Selected" value={dashboardMap.summary.selected_buildings} tone="good" />
         <Metric label="High risk" value={dashboardMap.summary.high_risk_buildings} tone={dashboardMap.summary.high_risk_buildings ? "risk" : "good"} />
         <Metric label="Max score" value={formatNumber(Math.round(dashboardMap.summary.max_score || 0))} tone="memory" />
+        <Metric label="Task impact" value={impactPaths.size} tone="memory" />
       </div>
       {mode === "network" ? (
         <label className="search-box map-search">
@@ -1329,7 +1420,7 @@ function MapView({
             hasWebGLSupport() ? (
               <MapErrorBoundary resetKey={`${dashboardMap.generated_at}:${cameraSignal}`} onError={() => setMode("table")} fallback={<MapTable dashboardMap={dashboardMap} onSelect={onSelect} />}>
                 <Suspense fallback={<div className="city-loading">Loading 3D city map...</div>}>
-                  <ContextCityMap dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
+                  <ContextCityMap dashboardMap={dashboardMap} impactPaths={impactPaths} selectedId={selectedId} hoverInfo={hoverInfo} cameraSignal={cameraSignal} demoMode={demoMode} onSelect={onSelect} onHover={setHoverInfo} />
                 </Suspense>
               </MapErrorBoundary>
             ) : (
@@ -1338,7 +1429,7 @@ function MapView({
           ) : mode === "network" ? (
             <TaskGraph graph={graph} query={query} selectedId={selectedId} onSelect={onSelect} />
           ) : mode === "semantic" ? (
-            <SemanticGraphNetwork graph={snapshot.semantic_graph} />
+            <SemanticGraphNetwork graph={snapshot.semantic_graph} onSelect={onSelect} />
           ) : (
             <MapTable dashboardMap={dashboardMap} onSelect={onSelect} />
           )}
@@ -1371,6 +1462,7 @@ function MapView({
                 <span><i className="legend-selected" /> Glow = selected context</span>
                 <span><i className="legend-risk" /> Red = high risk</span>
                 <span><i className="legend-memory" /> Cyan = memory linked</span>
+                <span><i className="legend-impact" /> Lime = task impact</span>
                 <span><i className="legend-expressway" /> Expressway = high confidence route</span>
                 <span><i className="legend-highway" /> Highway = medium confidence route</span>
                 <span><i className="legend-county" /> County road = low confidence route</span>
@@ -1524,13 +1616,14 @@ function SemanticGraphTable({ graph }: { graph: SemanticGraphSummary }) {
   );
 }
 
-function SemanticGraphNetwork({ graph }: { graph: SemanticGraphSummary }) {
+function SemanticGraphNetwork({ graph, onSelect }: { graph: SemanticGraphSummary; onSelect: (id: string) => void }) {
   const [relationship, setRelationship] = useState("");
   const [confidence, setConfidence] = useState("");
   const [language, setLanguage] = useState("");
   const [evidenceSource, setEvidenceSource] = useState("");
   const [showTable, setShowTable] = useState(false);
   const [selectedEdge, setSelectedEdge] = useState<string>("");
+  const [selectedEntity, setSelectedEntity] = useState<string>("");
   const [remoteGraph, setRemoteGraph] = useState<SemanticGraphSummary | null>(null);
   const activeGraph = remoteGraph || graph;
   useEffect(() => {
@@ -1540,9 +1633,9 @@ function SemanticGraphNetwork({ graph }: { graph: SemanticGraphSummary }) {
     if (confidence) params.set("confidence", confidence);
     if (language) params.set("language", language);
     if (evidenceSource) params.set("evidence_source", evidenceSource);
-    fetch(apiUrl(`/api/graph?${params.toString()}`), { headers: authHeaders() })
-      .then((response) => response.ok ? response.json() as Promise<{ semantic_graph?: SemanticGraphSummary }> : Promise.reject(new Error("graph request failed")))
-      .then((payload) => setRemoteGraph(payload.semantic_graph || null))
+    fetch(apiUrl(`/api/dashboard/v2/impact?${params.toString()}`), { headers: authHeaders() })
+      .then((response) => response.ok ? response.json() as Promise<{ summary?: SemanticGraphSummary }> : Promise.reject(new Error("impact request failed")))
+      .then((payload) => setRemoteGraph(payload.summary || null))
       .catch(() => setRemoteGraph(null));
   }, [confidence, evidenceSource, language, relationship]);
   const entities = useMemo(() => new Map(activeGraph.entities.map((entity) => [entity.entity_key, entity])), [activeGraph.entities]);
@@ -1585,7 +1678,7 @@ function SemanticGraphNetwork({ graph }: { graph: SemanticGraphSummary }) {
       </div>
       {showTable ? <SemanticGraphTable graph={activeGraph} /> : (
         <div className="semantic-network-canvas" data-testid="semantic-network-canvas">
-          <ReactFlow nodes={nodes} edges={flowEdges} fitView nodesDraggable nodesConnectable={false} panOnScroll minZoom={0.2} zoomOnDoubleClick={false} onEdgeClick={(_event, edge) => setSelectedEdge(edge.id)} onlyRenderVisibleElements>
+          <ReactFlow nodes={nodes} edges={flowEdges} fitView nodesDraggable nodesConnectable={false} panOnScroll minZoom={0.2} zoomOnDoubleClick={false} onNodeClick={(_event, node) => { setSelectedEntity(node.id); onSelect(node.id); }} onEdgeClick={(_event, edge) => { setSelectedEdge(edge.id); onSelect(edge.id); }} onlyRenderVisibleElements>
             <Background />
             <MiniMap pannable zoomable className="graph-minimap" />
             <Controls />
@@ -1593,7 +1686,10 @@ function SemanticGraphNetwork({ graph }: { graph: SemanticGraphSummary }) {
         </div>
       )}
       <div className="semantic-network-receipt" data-testid="semantic-edge-receipt">
-        {selected ? (() => {
+        {selectedEntity && entities.get(selectedEntity) ? (() => {
+          const entity = entities.get(selectedEntity)!;
+          return <><strong>{entity.name}</strong><small>{entity.path}{entity.line ? `:${entity.line}` : ""} · {entity.type} · {entity.confidence_tier || "unknown confidence"}</small><p>Select a related edge to inspect its source evidence.</p></>;
+        })() : selected ? (() => {
           const source = entities.get(selected.source);
           const target = entities.get(selected.target);
           const evidence = selected.evidence?.[0];
@@ -2339,16 +2435,16 @@ function RawDataView({ payload }: { payload: DashboardPayload }) {
   return (
     <div className="raw-grid">
       <Panel title="Snapshot JSON" icon={Code2}>
-        <pre>{JSON.stringify(payload.snapshot, null, 2)}</pre>
+        <pre className="technical-detail">{JSON.stringify(payload.snapshot, null, 2)}</pre>
       </Panel>
       <Panel title="Map JSON" icon={MapIcon}>
-        <pre>{JSON.stringify(payload.map, null, 2)}</pre>
+        <pre className="technical-detail">{JSON.stringify(payload.map, null, 2)}</pre>
       </Panel>
       <Panel title="Graph JSON" icon={Network}>
-        <pre>{JSON.stringify(payload.graph, null, 2)}</pre>
+        <pre className="technical-detail">{JSON.stringify(payload.graph, null, 2)}</pre>
       </Panel>
       <Panel title="Action History JSON" icon={Activity}>
-        <pre>{JSON.stringify(payload.action_history, null, 2)}</pre>
+        <pre className="technical-detail">{JSON.stringify(payload.action_history, null, 2)}</pre>
       </Panel>
     </div>
   );
@@ -2562,72 +2658,11 @@ function TerminalPanel({
   );
 }
 
-function ConfirmCommandDialog({
-  pending,
-  onCancel,
-  onConfirm
-}: {
-  pending: PendingCommand;
-  onCancel: () => void;
-  onConfirm: () => void;
-}) {
-  return (
-    <div className="modal-backdrop" role="presentation">
-      <section className="confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-command-title">
-        <div>
-          <p className="eyebrow">Confirm command</p>
-          <h1 id="confirm-command-title">This command can change local state</h1>
-        </div>
-        <code>{pending.command}</code>
-        <div className="stack-sm">
-          {pending.inspection.risk_reasons.map((reason) => (
-            <div key={reason} className="list-row passive">
-              <span>
-                <strong>Risk</strong>
-                <small>{reason}</small>
-              </span>
-            </div>
-          ))}
-        </div>
-        <small>cwd: {pending.inspection.cwd}</small>
-        <div className="modal-actions">
-          <button type="button" className="secondary-action" onClick={onCancel}>Cancel</button>
-          <button type="button" className="primary-action" onClick={onConfirm}>
-            <PlayCircle size={16} aria-hidden="true" />
-            Run command
-          </button>
-        </div>
-      </section>
-    </div>
-  );
-}
-
-function Panel({ title, icon: Icon, children }: { title: string; icon: typeof Activity; children: ReactNode }) {
-  return (
-    <section className="panel">
-      <div className="panel-header">
-        <Icon size={17} aria-hidden="true" />
-        <h2>{title}</h2>
-      </div>
-      {children}
-    </section>
-  );
-}
-
 function SectionTitle({ title, subtitle }: { title: string; subtitle: string }) {
   return (
     <div className="section-title">
       <h1>{title}</h1>
       <p>{subtitle}</p>
-    </div>
-  );
-}
-
-function Metric({ label, value, tone }: { label: string; value: string | number; tone: string }) {
-  return (
-    <div className={`metric ${tone}`}>
-      <span>{label}</span>
-      <strong>{value}</strong>
     </div>
   );
 }
@@ -2655,34 +2690,6 @@ function ItemList({
           <span className={`badge ${riskTone(item.tone)}`}>{item.tone || "view"}</span>
         </button>
       ))}
-    </div>
-  );
-}
-
-function StatusPill({ status, label }: { status: string; label?: string }) {
-  return <span role="status" className={`status-pill ${status}`}>{label ? `${label}: ${status || "unknown"}` : status || "unknown"}</span>;
-}
-
-function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
-  return (
-    <div className="center-state">
-      <AlertTriangle size={28} aria-hidden="true" />
-      <h1>Dashboard failed to load</h1>
-      <p>{message}</p>
-      <button type="button" className="primary-action" onClick={onRetry}>
-        <RefreshCcw size={16} aria-hidden="true" />
-        Retry
-      </button>
-    </div>
-  );
-}
-
-function LoadingState() {
-  return (
-    <div className="center-state">
-      <Activity size={28} aria-hidden="true" />
-      <h1>Loading AgentPack cockpit</h1>
-      <p>Reading local dashboard data.</p>
     </div>
   );
 }

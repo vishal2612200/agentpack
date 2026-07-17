@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 from agentpack.core.project_index import register_project
+from agentpack.core.handoff import HandoffError, accept_handoff, release_handoff
 from agentpack.core.task_freshness import write_task_md
 from agentpack.dashboard.action_history import read_action_history, record_dashboard_action
 from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
@@ -26,10 +27,36 @@ from agentpack.dashboard.models import DashboardFeedback
 from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
 from agentpack.session.events import record_event
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
+from agentpack.dashboard.v2 import (
+    build_dashboard_v2_actions,
+    build_dashboard_v2_action_inspection,
+    build_dashboard_v2_agents,
+    build_dashboard_v2_evidence,
+    build_dashboard_v2_impact,
+    build_dashboard_v2_payload,
+)
+from agentpack.dashboard.contracts import DashboardV2Error
 
 
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8765
+
+
+def _bounded_query_int(query: dict[str, list[str]], key: str, default: int, maximum: int) -> int:
+    try:
+        return max(1, min(maximum, int(query.get(key, [str(default)])[0] or default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _public_handoff(record) -> dict[str, Any]:
+    payload = record.model_dump(mode="json")
+    payload.pop("handoff_id", None)
+    return payload
+
+
+def _dashboard_v2_error(message: str, *, kind: str = "server_error", retryable: bool = False, detail: str = "") -> dict[str, Any]:
+    return DashboardV2Error(error=message, kind=kind, retryable=retryable, detail=detail).model_dump(mode="json")
 
 
 @dataclass
@@ -143,6 +170,48 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             detail = urllib.parse.parse_qs(parsed.query).get("detail", ["full"])[0]
             self._send_json(self.server.state.home_payload() if detail == "home" else self.server.state.payload())
             return
+        if parsed.path == "/api/dashboard/v2":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            detail = urllib.parse.parse_qs(parsed.query).get("detail", ["home"])[0]
+            payload = build_dashboard_v2_payload(self.server.state.root, detail=detail)
+            payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]
+            self._send_json(payload)
+            return
+        if parsed.path == "/api/dashboard/v2/impact":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            payload = build_dashboard_v2_impact(
+                self.server.state.root,
+                query=query.get("query", [""])[0],
+                relationship=query.get("relationship", [""])[0],
+                language=query.get("language", [""])[0],
+                confidence=query.get("confidence", [""])[0],
+                limit=_bounded_query_int(query, "limit", 200, 500),
+            )
+            self._send_json(payload)
+            return
+        if parsed.path == "/api/dashboard/v2/agents":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            self._send_json(build_dashboard_v2_agents(self.server.state.root))
+            return
+        if parsed.path == "/api/dashboard/v2/evidence":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            self._send_json(build_dashboard_v2_evidence(self.server.state.root))
+            return
+        if parsed.path == "/api/dashboard/v2/actions":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            self._send_json(build_dashboard_v2_actions(self.server.state.root))
+            return
         if parsed.path in {"/api/map", "/api/graph", "/api/actions/history"}:
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
@@ -189,6 +258,40 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             cwd = str(payload.get("cwd") or "") or None
             inspection = self.server.state.terminal.inspect(command, cwd)
             self._send_json({"inspection": inspection.model_dump()})
+            return
+        if parsed.path == "/api/dashboard/v2/actions/run":
+            payload = self._read_json()
+            self._run_typed_action(payload)
+            return
+        if parsed.path == "/api/dashboard/v2/actions/inspect":
+            payload = self._read_json()
+            action_id = str(payload.get("action") or payload.get("action_id") or "").strip()
+            if not action_id:
+                self._send_json(_dashboard_v2_error("action is required", kind="invalid_request"), status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                inspection = build_dashboard_v2_action_inspection(self.server.state.root, action_id, payload)
+            except (DashboardActionError, ValueError) as exc:
+                self._send_json(_dashboard_v2_error(str(exc), kind="invalid_action"), status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"inspection": inspection})
+            return
+        if parsed.path in {"/api/dashboard/v2/agents/resume", "/api/dashboard/v2/agents/release"}:
+            payload = self._read_json()
+            name = str(payload.get("name") or "").strip()
+            if not name:
+                self._send_json(_dashboard_v2_error("handoff name is required", kind="invalid_request"), status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                if parsed.path.endswith("/resume"):
+                    record, warnings = accept_handoff(self.server.state.root, name)
+                    result = {"handoff": _public_handoff(record), "warnings": warnings}
+                else:
+                    result = {"handoff": _public_handoff(release_handoff(self.server.state.root, name))}
+            except HandoffError as exc:
+                self._send_json(_dashboard_v2_error(str(exc), kind="handoff_conflict"), status=HTTPStatus.CONFLICT)
+                return
+            self._send_json(result)
             return
         if parsed.path == "/api/terminal/start":
             payload = self._read_json()
