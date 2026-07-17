@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import gzip
 import json
 import subprocess
 import zipfile
@@ -11,6 +12,7 @@ import pytest
 from pydantic import ValidationError
 from typer.testing import CliRunner
 
+from agentpack.core import handoff as handoff_module
 from agentpack.cli import app
 from agentpack.core.handoff import (
     HandoffError,
@@ -190,6 +192,27 @@ def test_create_generates_memorable_collision_names_and_blocks_secrets(tmp_path:
     assert after == before
 
 
+def test_concurrent_same_name_create_cannot_overwrite_a_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = repo(tmp_path)
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home"))
+    (root / "tracked.txt").write_text("changed\n", encoding="utf-8")
+
+    def create() -> str:
+        try:
+            return f"created:{create_handoff(root, report(), name='same-name', env={'CODEX_THREAD_ID': 'source'}).name}"
+        except HandoffError as exc:
+            return f"error:{exc}"
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        outcomes = list(executor.map(lambda _index: create(), range(2)))
+
+    assert sum(item.startswith("created:") for item in outcomes) == 1
+    assert sum("already exists" in item for item in outcomes) == 1
+    stored = HandoffStore(root).load("same-name")
+    patch_path = HandoffStore(root).path("same-name") / "changes.patch.gz"
+    assert stored.patch.sha256 == handoff_module._sha256(gzip.decompress(patch_path.read_bytes()))
+
+
 def test_same_worktree_claim_is_atomic_idempotent_and_releasable(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     root = repo(tmp_path)
     monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home"))
@@ -361,6 +384,31 @@ def test_post_image_failure_rolls_back_and_leaves_handoff_ready(tmp_path: Path, 
 
     assert (destination / "tracked.txt").read_text(encoding="utf-8") == "base\n"
     assert HandoffStore(destination).load(created.name).status == "ready"
+
+
+def test_rollback_failure_surfaces_both_errors_and_leaves_handoff_ready(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    root = repo(tmp_path)
+    destination = tmp_path / "destination"
+    git(root, "worktree", "add", "-q", str(destination), "-b", "destination")
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home"))
+    (root / "tracked.txt").write_text("source change\n", encoding="utf-8")
+    created = create_handoff(root, report(), name="rollback-failure", env={"CODEX_THREAD_ID": "source"})
+    monkeypatch.setattr(handoff_module, "file_fingerprint", lambda _root, _path: "wrong")
+    original_apply = handoff_module._apply_patch
+
+    def fail_rollback(root_arg: Path, patch: bytes, *, check: bool = False, reverse: bool = False) -> None:
+        if reverse:
+            raise HandoffError("rollback refused")
+        original_apply(root_arg, patch, check=check, reverse=reverse)
+
+    monkeypatch.setattr(handoff_module, "_apply_patch", fail_rollback)
+
+    with pytest.raises(HandoffError, match="rollback refused") as error:
+        accept_handoff(destination, created.name, env={"CLAUDE_SESSION_ID": "destination"})
+
+    assert "post-image verification failed" in str(error.value)
+    assert HandoffStore(destination).load(created.name).status == "ready"
+    assert (destination / "tracked.txt").read_text(encoding="utf-8") == "source change\n"
 
 
 def test_export_import_checksums_portability_and_collision(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

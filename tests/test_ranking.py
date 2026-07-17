@@ -1,4 +1,5 @@
 from pathlib import Path
+from agentpack.application.pack_service import _boost_semantic_graph_neighbors
 from agentpack.analysis.ranking import (
     ambiguous_task_terms,
     build_keyword_plan,
@@ -27,6 +28,33 @@ def _fi(path: str, tokens: int = 100, language: str = "python") -> FileInfo:
         estimated_tokens=tokens,
         language=language,
     )
+
+
+def test_semantic_graph_neighbor_boost_reads_nested_locators_and_evidence() -> None:
+    changed = _fi("src/changed.py")
+    related = _fi("src/related.py")
+
+    class Graph:
+        def neighbors(self, _path: str, *, limit: int) -> list[dict]:
+            assert limit == 200
+            return [
+                {
+                    "node": {"locator": {"path": "src/related.py"}},
+                    "relationship": "imports",
+                    "edge_key": "edge-1",
+                    "evidence": [{"locator": {"path": "src/imports.py"}, "start_line": 12}],
+                }
+            ]
+
+    scored = _boost_semantic_graph_neighbors(
+        [(changed, 1.0, []), (related, 1.0, [])],
+        Graph(),
+        {"src/changed.py"},
+    )
+
+    scores = {file_info.path: (score, reasons) for file_info, score, reasons in scored}
+    assert scores["src/related.py"][0] > scores["src/changed.py"][0]
+    assert "src/imports.py:12" in scores["src/related.py"][1][0]
 
 
 def test_extract_keywords_basic():

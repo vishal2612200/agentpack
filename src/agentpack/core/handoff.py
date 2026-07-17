@@ -324,7 +324,10 @@ def create_handoff(
         ),
         recent_checks=_recent_checks(root),
     )
-    store.write_new(record, compressed)
+    # Serialize the final existence check and directory replacement. Without
+    # this lock, concurrent default-named creates can both pass next_name().
+    with store.lock(resolved_name):
+        store.write_new(record, compressed)
     _mark_task_status(root, thread_id, "handed_off", f"Handed off as {resolved_name}.", parsed.task, list(paths))
     record_event(root, "handoff_created", {"task": parsed.task, "thread_id": thread_id, "handoff": resolved_name})
     return record
@@ -384,8 +387,25 @@ def accept_handoff(
                 try:
                     actual = {path: file_fingerprint(root, path) for path in record.patch.affected_paths}
                     _verify_hashes(root, record.patch.post_image_hashes, actual)
-                except Exception:
-                    _apply_patch(root, patch, reverse=True)
+                except Exception as verification_error:
+                    try:
+                        _apply_patch(root, patch, reverse=True)
+                    except Exception as rollback_error:
+                        record_event(
+                            root,
+                            "handoff_rollback_failed",
+                            {
+                                "handoff": record.name,
+                                "error": str(verification_error),
+                                "rollback_error": str(rollback_error),
+                            },
+                            source="handoff",
+                        )
+                        raise HandoffError(
+                            "post-image verification failed ("
+                            f"{verification_error}) and automatic rollback failed ("
+                            f"{rollback_error})"
+                        ) from rollback_error
                     record_event(root, "handoff_apply_failed", {"handoff": record.name}, source="handoff")
                     raise
 
