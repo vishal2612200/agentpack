@@ -355,7 +355,7 @@ def _boost_semantic_graph_neighbors(
             target = (row["node"].get("locator") or {}).get("path")
             if target and target != path:
                 evidence = (row.get("evidence") or [{}])[0]
-                location = str((evidence.get("locator") or {}).get("path") or path)
+                location = str(evidence.get("path") or path)
                 if evidence.get("start_line"):
                     location += f":{evidence['start_line']}"
                 related.setdefault(target, []).append((row["relationship"], row["edge_key"], location))

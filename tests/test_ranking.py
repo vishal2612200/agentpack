@@ -42,7 +42,7 @@ def test_semantic_graph_neighbor_boost_reads_nested_locators_and_evidence() -> N
                     "node": {"locator": {"path": "src/related.py"}},
                     "relationship": "imports",
                     "edge_key": "edge-1",
-                    "evidence": [{"locator": {"path": "src/imports.py"}, "start_line": 12}],
+                    "evidence": [{"path": "src/imports.py", "start_line": 12}],
                 }
             ]
 
