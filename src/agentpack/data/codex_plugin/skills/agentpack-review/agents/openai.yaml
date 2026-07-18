@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Review"
+  short_description: "Run an evidence-backed PR review"
+  default_prompt: "Use $agentpack-review to review the current pull request and report grounded findings."

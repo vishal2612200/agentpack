@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Resolve"
+  short_description: "Resolve cited PR review comments"
+  default_prompt: "Use $agentpack-resolve PR #123 to validate, fix, verify, and reply to review comments."

@@ -3,9 +3,9 @@ name: agentpack-resolve
 description: Resolve all actionable PR review comments with cited fixes, validation, and replies.
 ---
 
-Use when the user invokes `@agentpack-resolve`.
+Use when the user invokes `$agentpack-resolve`.
 
-Examples: `@agentpack-resolve pr 123` or `@agentpack-resolve PR #123 focus on backward compatibility`.
+Examples: `$agentpack-resolve pr 123` or `$agentpack-resolve PR #123 focus on backward compatibility`.
 
 The skill invocation owns the full loop; the internal `--check` and `--reply` commands are agent steps, not extra user commands.
 

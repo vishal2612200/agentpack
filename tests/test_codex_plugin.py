@@ -41,7 +41,8 @@ def test_codex_plugin_manifest_points_to_skills() -> None:
     assert "local context engine" in description
     assert "not a coding agent" in description
     prompts = manifest["interface"]["defaultPrompt"]
-    assert "@agentpack-learn retry handling in this repo" in prompts
+    assert "Use $agentpack-review to review the current PR." in prompts
+    assert "Use $agentpack-resolve to address all PR comments." in prompts
 
 
 def test_codex_plugin_has_distribution_icon() -> None:
@@ -145,10 +146,10 @@ def test_codex_plugin_docs_keep_local_first_boundary() -> None:
     assert "local context engine, not a coding agent" in docs
     assert "does not upload code" in docs
     assert "does not reimplement ranking, scanning, packing, mcp, or benchmarking" in docs
-    assert "@agentpack-route" in docs
-    assert "@agentpack-pack" in docs
-    assert "@agentpack-review" in docs
-    assert "@agentpack-learn" in docs
+    assert "$agentpack-route" in docs
+    assert "$agentpack-pack" in docs
+    assert "$agentpack-review" in docs
+    assert "$agentpack-learn" in docs
     assert "_understanding.toon" in docs
     assert "_findings.toon" in docs
 
@@ -183,11 +184,21 @@ def test_agentpack_learn_slash_command_keeps_user_statement_last() -> None:
         assert ".agentpack/agent-lessons.md" in text
 
     for text in (codex_skill, packaged_codex_skill):
-        assert "@agentpack-learn <statement>" in text
+        assert "$agentpack-learn <statement>" in text
         assert "/agentpack-learn <statement>" in text
         assert "Learning Curve Destroyer" in text
         assert "Reveal answer only after at least two tries" in text
         assert ".agentpack/session-events.jsonl" in text
+
+
+def test_codex_plugin_exposes_skill_picker_metadata() -> None:
+    for skill_name in ("agentpack", "agentpack-review", "agentpack-resolve"):
+        metadata = PACKAGED_SKILLS_DIR / skill_name / "agents" / "openai.yaml"
+        assert metadata.exists()
+        text = metadata.read_text(encoding="utf-8")
+        assert "interface:" in text
+        assert f"$${skill_name}" not in text
+        assert f"${skill_name}" in text
 
 
 def test_agentpack_review_slash_command_matches_tracked_copy() -> None:

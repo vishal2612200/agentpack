@@ -22,13 +22,13 @@ Codex setup installs this package under
 `agentpack@local`, and disables older enabled AgentPack marketplace copies so
 the exposed skills match the installed CLI.
 
-Use `@agentpack-review <reviewer context>` to prepare and run the local
+Use `$agentpack-review <reviewer context>` to prepare and run the local
 two-stage PR review workflow. It writes preflight metadata, a runbook, stage
 prompts, and branch-scoped understanding/findings TOON files. The reviewer
 context is only a lens; the review still depends on direct `gh pr view`,
 `git diff`, code reads, and validation.
 
-Use `@agentpack-resolve PR #123` to snapshot PR comments and run the cited
+Use `$agentpack-resolve PR #123` to snapshot PR comments and run the cited
 validate, plan, fix, verify, and reply loop. Replies are posted only after
 `agentpack resolve --check` passes and the PR head remains unchanged.
 
