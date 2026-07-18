@@ -106,11 +106,13 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     }
 
     assert {path.name for path in SKILLS_DIR.glob("*.md")} == expected
-    assert {path.name for path in PACKAGED_SKILLS_DIR.glob("*.md")} == expected
+    assert {path.name for path in PACKAGED_SKILLS_DIR.iterdir() if path.is_dir()} == {
+        name.removesuffix(".md") for name in expected
+    }
 
     for skill_name in expected:
         assert (SKILLS_DIR / skill_name).read_text(encoding="utf-8") == (
-            PACKAGED_SKILLS_DIR / skill_name
+            PACKAGED_SKILLS_DIR / skill_name.removesuffix(".md") / "SKILL.md"
         ).read_text(encoding="utf-8")
 
     combined = "\n".join(path.read_text(encoding="utf-8") for path in SKILLS_DIR.glob("*.md"))
@@ -156,7 +158,14 @@ def test_agentpack_learn_slash_command_keeps_user_statement_last() -> None:
     local = (ROOT / ".claude" / "commands" / "agentpack-learn.md").read_text(encoding="utf-8")
     codex_skill = (ROOT / "skills" / "agentpack-learn.md").read_text(encoding="utf-8")
     packaged_codex_skill = (
-        ROOT / "src" / "agentpack" / "data" / "codex_plugin" / "skills" / "agentpack-learn.md"
+        ROOT
+        / "src"
+        / "agentpack"
+        / "data"
+        / "codex_plugin"
+        / "skills"
+        / "agentpack-learn"
+        / "SKILL.md"
     ).read_text(encoding="utf-8")
 
     assert command == local

@@ -22,13 +22,13 @@ from agentpack.installers.windsurf import _windsurf_rule
 
 
 GENERATED_INSTRUCTION_FILES = [
-    "src/agentpack/data/codex_plugin/skills/agentpack.md",
-    "src/agentpack/data/codex_plugin/skills/agentpack-pack.md",
-    "src/agentpack/data/codex_plugin/skills/agentpack-refresh.md",
-    "src/agentpack/data/codex_plugin/skills/agentpack-review.md",
-    "src/agentpack/data/codex_plugin/skills/agentpack-resolve.md",
-    "src/agentpack/data/codex_plugin/skills/agentpack-route.md",
-    "src/agentpack/data/codex_plugin/skills/agentpack-learn.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-pack/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-refresh/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-review/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-resolve/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-route/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-learn/SKILL.md",
     "agent-rules/agentpack.md",
 ]
 REPO_ROOT = Path(__file__).resolve().parents[1]
