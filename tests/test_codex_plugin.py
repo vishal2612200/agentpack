@@ -104,6 +104,7 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
         "agentpack-review.md",
         "agentpack-resolve.md",
         "agentpack-learn.md",
+        "agentpack-skill-review.md",
     }
 
     assert {path.name for path in SKILLS_DIR.glob("*.md")} == expected
@@ -123,6 +124,7 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     assert "agentpack pack --task auto" in combined
     assert "agentpack guard --agent codex --repair-stale --refresh-context" not in combined
     assert "agentpack-learn" in combined
+    assert "agentpack-skill-review" in combined
     assert "current local AgentPack session context" in combined
     assert "agentpack status" in combined
     assert ".agentpack/learning.md" in combined
@@ -192,7 +194,7 @@ def test_agentpack_learn_slash_command_keeps_user_statement_last() -> None:
 
 
 def test_codex_plugin_exposes_skill_picker_metadata() -> None:
-    for skill_name in ("agentpack", "agentpack-review", "agentpack-resolve"):
+    for skill_name in ("agentpack", "agentpack-review", "agentpack-resolve", "agentpack-skill-review"):
         metadata = PACKAGED_SKILLS_DIR / skill_name / "agents" / "openai.yaml"
         assert metadata.exists()
         text = metadata.read_text(encoding="utf-8")
@@ -228,6 +230,17 @@ def test_agentpack_resolve_command_is_distributed() -> None:
     assert "agentpack resolve --check" in command.lower()
     assert "do not silently defer actionable comments" in command.lower()
     assert "agentpack resolve --reply" in skill.lower()
+
+
+def test_agentpack_skill_review_command_is_distributed() -> None:
+    command = (ROOT / "src" / "agentpack" / "data" / "agentpack-skill-review.md").read_text(encoding="utf-8")
+    local = (ROOT / ".claude" / "commands" / "agentpack-skill-review.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills" / "agentpack-skill-review.md").read_text(encoding="utf-8")
+
+    assert command == local
+    assert "/agentpack-skill-review" in command
+    assert "agentpack skill-review --skill" in command
+    assert "candidate eval" in skill.lower()
 
 
 def test_agent_plugin_distribution_docs_cover_supported_hosts() -> None:

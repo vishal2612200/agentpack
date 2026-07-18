@@ -143,7 +143,7 @@ Configures:
 
 Optional plugin packaging lives in `.codex-plugin/plugin.json` and `skills/`.
 It adds `$agentpack-route`, `$agentpack-pack`, `$agentpack-refresh`,
-`$agentpack-review`, and `$agentpack-learn` as thin Codex-facing skills that call the same local
+`$agentpack-review`, `$agentpack-skill-review`, and `$agentpack-learn` as thin Codex-facing skills that call the same local
 AgentPack CLI/MCP behavior. `agentpack init --agent codex`, `agentpack repair
 --agent codex`, and `agentpack upgrade --agent codex` install or refresh the
 local plugin package under Codex's plugin cache. They also disable older enabled

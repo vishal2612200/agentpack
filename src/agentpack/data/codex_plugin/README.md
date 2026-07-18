@@ -32,4 +32,9 @@ Use `$agentpack-resolve PR #123` to snapshot PR comments and run the cited
 validate, plan, fix, verify, and reply loop. Replies are posted only after
 `agentpack resolve --check` passes and the PR head remains unchanged.
 
+Use `$agentpack-skill-review path/to/SKILL.md` to audit a skill and generate a
+balanced trigger/non-trigger eval workspace. The generated runbook leaves model
+execution and human review with the host agent, while keeping local manifests,
+findings, and candidate evals reproducible.
+
 The plugin delegates to local AgentPack CLI and MCP behavior. It does not upload source code or call hosted model APIs.

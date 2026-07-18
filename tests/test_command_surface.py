@@ -29,6 +29,7 @@ GENERATED_INSTRUCTION_FILES = [
     "src/agentpack/data/codex_plugin/skills/agentpack-resolve/SKILL.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-route/SKILL.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-learn/SKILL.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-skill-review/SKILL.md",
     "agent-rules/agentpack.md",
 ]
 REPO_ROOT = Path(__file__).resolve().parents[1]
