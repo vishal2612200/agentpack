@@ -2,7 +2,7 @@
 
 Thin Codex plugin for AgentPack ranked repo context.
 
-AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, and learning from current local session context.
+AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, resolving cited PR comments, and learning from current local session context.
 
 Install AgentPack first:
 
@@ -27,5 +27,9 @@ two-stage PR review workflow. It writes preflight metadata, a runbook, stage
 prompts, and branch-scoped understanding/findings TOON files. The reviewer
 context is only a lens; the review still depends on direct `gh pr view`,
 `git diff`, code reads, and validation.
+
+Use `@agentpack-resolve PR #123` to snapshot PR comments and run the cited
+validate, plan, fix, verify, and reply loop. Replies are posted only after
+`agentpack resolve --check` passes and the PR head remains unchanged.
 
 The plugin delegates to local AgentPack CLI and MCP behavior. It does not upload source code or call hosted model APIs.

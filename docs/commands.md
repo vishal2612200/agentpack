@@ -37,6 +37,7 @@ Advanced command map:
 | `agentpack work --run` | Advanced optional proof harness around a configured external runner |
 | `agentpack start` | Write a task and run the default guard/refresh workflow |
 | `agentpack review` | Prepare the full two-stage PR review bundle for the current branch or PR |
+| `agentpack resolve` | Validate, fix, verify, and reply to PR review comments with citations |
 | `agentpack finish` | Run finish checks, capture benchmark evidence, and mark state done |
 | `agentpack learn` | Generate developer learning notes, skill progress, and future-agent lessons from task context and git changes |
 | `agentpack task` | Show, set, or clear global/thread-scoped task files |
@@ -977,6 +978,26 @@ The positional argument is optional reviewer context. It shapes prioritization
 only; it must not replace code evidence.
 Fresh runs are the default. Interrupted work is resumed only when
 `--resume <run_id>` is passed explicitly.
+
+---
+
+### `agentpack resolve`
+
+Prepare and gate a cited loop for resolving inline and top-level PR review comments.
+
+```bash
+agentpack resolve --pr 123
+agentpack resolve --pr 123 --inline-only
+agentpack resolve --check
+agentpack resolve --reply
+```
+
+The command snapshots the latest PR head and comments into `.agentpack/`, then
+renders a host-agent prompt. The agent writes a disposition for every comment,
+`--check` gates the plan before edits, and `--reply` validates cited responses
+and the unchanged PR head before posting them through `gh`. Start a fresh run
+after posting to resnapshot remaining comments; the loop does not mark GitHub
+threads resolved automatically.
 
 ---
 

@@ -10,7 +10,7 @@ AgentPack remains a local context engine, not a coding agent.
 
 | Host | Current path | What it does |
 |---|---|---|
-| Codex | `.codex-plugin/` and `skills/` | Adds `@agentpack-*` commands for local routing, packing, refresh, review, and learning |
+| Codex | `.codex-plugin/` and `skills/` | Adds `@agentpack-*` commands for local routing, packing, refresh, review, comment resolution, and learning |
 | Codex repo setup | `agentpack init --agent auto` or `agentpack init --agent codex` | Auto-detects Codex or explicitly writes `AGENTS.md`, `.codex/hooks.json`, git hooks, MCP config, enables `agentpack@local`, and refreshes the local plugin cache package |
 | Claude Code | `agentpack init --agent claude` | Writes `CLAUDE.md`, Claude hooks, and MCP config |
 | Cursor | `.cursorrules`, `.cursor/rules/agentpack.mdc`, and `native-integrations/cursor-extension/` | Portable Cursor rules, repo installer, VS Code task, git hooks, and extension skeleton |
@@ -42,6 +42,7 @@ Use these local commands from any agent or IDE:
 ```bash
 agentpack route --task "<task>"
 agentpack review "<review context>"
+agentpack resolve --pr <number>
 agentpack task set "<task>"
 agentpack pack --task auto
 agentpack upgrade --agent auto

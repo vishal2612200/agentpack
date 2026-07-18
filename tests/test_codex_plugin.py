@@ -101,6 +101,7 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
         "agentpack-pack.md",
         "agentpack-refresh.md",
         "agentpack-review.md",
+        "agentpack-resolve.md",
         "agentpack-learn.md",
     }
 
@@ -130,6 +131,7 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     assert "read that understanding toon from disk" in combined.lower()
     assert "report every validated finding in one pass" in combined.lower()
     assert "suggested fix" in combined.lower()
+    assert "agentpack resolve --reply" in combined.lower()
     assert "Reveal answer only after at least two tries" in combined
     assert "not a coding agent" in combined.lower()
     assert "map, not proof" in combined.lower()
@@ -196,6 +198,18 @@ def test_agentpack_review_slash_command_matches_tracked_copy() -> None:
     assert "suggested fix" in command.lower()
 
 
+def test_agentpack_resolve_command_is_distributed() -> None:
+    command = (ROOT / "src" / "agentpack" / "data" / "agentpack-resolve.md").read_text(encoding="utf-8")
+    local = (ROOT / ".claude" / "commands" / "agentpack-resolve.md").read_text(encoding="utf-8")
+    skill = (ROOT / "skills" / "agentpack-resolve.md").read_text(encoding="utf-8")
+
+    assert command == local
+    assert "agentpack resolve --reply" in command.lower()
+    assert "agentpack resolve --check" in command.lower()
+    assert "do not silently defer actionable comments" in command.lower()
+    assert "agentpack resolve --reply" in skill.lower()
+
+
 def test_agent_plugin_distribution_docs_cover_supported_hosts() -> None:
     docs = (ROOT / "docs" / "agent-plugins.md").read_text(encoding="utf-8").lower()
 
@@ -215,7 +229,7 @@ def test_agent_plugin_distribution_docs_cover_supported_hosts() -> None:
 
     assert "does not reimplement ranking, scanning, packing, mcp, or benchmarking" in docs
     assert "local context engine, not a coding agent" in docs
-    assert "review, and learning" in docs
+    assert "comment resolution, and learning" in docs
     assert "agentpack doctor --agent <agent>" in docs
     assert "native-integrations/cursor-extension/" in docs
     assert "native-integrations/windsurf-extension/" in docs

@@ -15,6 +15,7 @@ This is the first concrete packaged plugin. The broader plugin and IDE distribut
 - `@agentpack-pack <task>` writes the task and builds `.agentpack/context.md`.
 - `@agentpack-refresh [task]` refreshes stale context through the Codex guard path.
 - `@agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged understanding and judge prompts to inspect the current PR or diff.
+- `@agentpack-resolve [PR and context]` runs the local `agentpack resolve` wrapper, then validates, fixes, verifies, and posts cited replies for PR comments.
 - `@agentpack-learn <statement>` turns current local AgentPack session context into an interactive learning prompt.
 
 ## Install

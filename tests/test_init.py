@@ -280,7 +280,7 @@ def test_init_force_backs_up_existing_files(tmp_path, monkeypatch) -> None:
 @pytest.mark.parametrize(
     ("agent", "expected_files", "expected_git_hooks"),
     [
-        ("claude", ("CLAUDE.md", ".claude/settings.json", ".mcp.json", ".claude/commands/agentpack-review.md"), False),
+        ("claude", ("CLAUDE.md", ".claude/settings.json", ".mcp.json", ".claude/commands/agentpack-review.md", ".claude/commands/agentpack-resolve.md"), False),
         ("cursor", (".cursorrules", ".cursor/rules/agentpack.mdc", ".vscode/tasks.json"), True),
         ("windsurf", (".windsurfrules", ".vscode/tasks.json"), True),
         ("codex", ("AGENTS.md", ".codex/hooks.json"), True),

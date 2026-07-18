@@ -26,6 +26,7 @@ GENERATED_INSTRUCTION_FILES = [
     "src/agentpack/data/codex_plugin/skills/agentpack-pack.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-refresh.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-review.md",
+    "src/agentpack/data/codex_plugin/skills/agentpack-resolve.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-route.md",
     "src/agentpack/data/codex_plugin/skills/agentpack-learn.md",
     "agent-rules/agentpack.md",
