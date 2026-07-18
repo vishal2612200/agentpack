@@ -1557,6 +1557,13 @@ sessions. Missing artifacts render empty states with suggested commands such as
 risk, tests, memory influence, observer signals from
 `.agentpack/observer-events.jsonl`, MCP health, and loop/action state.
 
+The current workspace is backed by `/api/dashboard/v2`. It provides a typed
+workspace envelope, Tree-sitter impact inspection, agent-session continuity,
+and action inspection before execution. The Explain/Build preference is stored
+in the browser as `agentpack.dashboard.presentation_mode`; v1 routes remain
+available for existing integrations. See [`docs/dashboard-v2.md`](dashboard-v2.md)
+for request and response examples.
+
 Command rows in the cockpit run through the local PTY runner instead of asking
 you to copy/paste. The server only allows AgentPack-related commands, runs them
 from the project folder, rejects shell operators, and requires confirmation for

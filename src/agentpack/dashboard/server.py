@@ -14,7 +14,10 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
 
+from pydantic import BaseModel, ValidationError
+
 from agentpack.core.project_index import register_project
+from agentpack.core.handoff import HandoffError, accept_handoff, release_handoff
 from agentpack.core.task_freshness import write_task_md
 from agentpack.dashboard.action_history import read_action_history, record_dashboard_action
 from agentpack.dashboard.actions import DashboardActionError, build_dashboard_action_command, update_dashboard_config
@@ -26,10 +29,75 @@ from agentpack.dashboard.models import DashboardFeedback
 from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
 from agentpack.session.events import record_event
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
+from agentpack.dashboard.v2 import (
+    build_dashboard_v2_actions,
+    build_dashboard_v2_action_inspection,
+    build_dashboard_v2_agents,
+    build_dashboard_v2_evidence,
+    build_dashboard_v2_impact,
+    build_dashboard_v2_payload,
+)
+from agentpack.dashboard.contracts import (
+    DashboardV2ActionInspectionResponse,
+    DashboardV2ActionRequest,
+    DashboardV2ActionRunResponse,
+    DashboardV2AgentOperationResponse,
+    DashboardV2Error,
+    DashboardV2Handoff,
+    DashboardV2HandoffOperationRequest,
+)
 
 
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8765
+
+
+def _bounded_query_int(query: dict[str, list[str]], key: str, default: int, maximum: int) -> int:
+    try:
+        return max(1, min(maximum, int(query.get(key, [str(default)])[0] or default)))
+    except (TypeError, ValueError):
+        return default
+
+
+def _public_handoff(record) -> dict[str, Any]:
+    payload = record.model_dump(mode="json")
+    payload.pop("handoff_id", None)
+    return payload
+
+
+def _dashboard_v2_handoff(record) -> DashboardV2Handoff:
+    return DashboardV2Handoff(
+        name=record.name,
+        status=record.status,
+        created_at=record.created_at.isoformat(),
+        updated_at=record.updated_at.isoformat(),
+        source_provider=record.source.provider,
+        source_session_id=record.source.session_id,
+        target_provider=record.target_provider,
+        target_session_id=record.target_session_id,
+        task=record.report.task,
+        summary=record.report.summary,
+        next_action=record.report.next_action,
+        claim_provider=record.claim.provider if record.claim else "",
+        claim_session_id=record.claim.session_id if record.claim else "",
+    )
+
+
+def _dashboard_v2_error(message: str, *, kind: str = "server_error", retryable: bool = False, detail: str = "") -> dict[str, Any]:
+    return DashboardV2Error(error=message, kind=kind, retryable=retryable, detail=detail).model_dump(mode="json")
+
+
+def _handoff_error_kind(message: str) -> tuple[str, HTTPStatus, bool]:
+    lowered = message.lower()
+    if "different repository" in lowered or "diverge" in lowered or "source commit" in lowered:
+        return "repository_mismatch", HTTPStatus.CONFLICT, False
+    if "another session" in lowered or "already claimed" in lowered or "busy" in lowered:
+        return "handoff_conflict", HTTPStatus.CONFLICT, True
+    if "source worktree changed" in lowered or "stale" in lowered:
+        return "stale_handoff", HTTPStatus.CONFLICT, True
+    if "restricted to provider" in lowered or "restricted to a different" in lowered:
+        return "permission_denied", HTTPStatus.FORBIDDEN, False
+    return "handoff_conflict", HTTPStatus.CONFLICT, True
 
 
 @dataclass
@@ -143,6 +211,48 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             detail = urllib.parse.parse_qs(parsed.query).get("detail", ["full"])[0]
             self._send_json(self.server.state.home_payload() if detail == "home" else self.server.state.payload())
             return
+        if parsed.path == "/api/dashboard/v2":
+            if not self._authorized(parsed):
+                self._send_v2_auth_error()
+                return
+            detail = urllib.parse.parse_qs(parsed.query).get("detail", ["home"])[0]
+            payload = build_dashboard_v2_payload(self.server.state.root, detail=detail)
+            payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]
+            self._send_json(payload)
+            return
+        if parsed.path == "/api/dashboard/v2/impact":
+            if not self._authorized(parsed):
+                self._send_v2_auth_error()
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            payload = build_dashboard_v2_impact(
+                self.server.state.root,
+                query=query.get("query", [""])[0],
+                relationship=query.get("relationship", [""])[0],
+                language=query.get("language", [""])[0],
+                confidence=query.get("confidence", [""])[0],
+                limit=_bounded_query_int(query, "limit", 200, 500),
+            )
+            self._send_json(payload)
+            return
+        if parsed.path == "/api/dashboard/v2/agents":
+            if not self._authorized(parsed):
+                self._send_v2_auth_error()
+                return
+            self._send_json(build_dashboard_v2_agents(self.server.state.root))
+            return
+        if parsed.path == "/api/dashboard/v2/evidence":
+            if not self._authorized(parsed):
+                self._send_v2_auth_error()
+                return
+            self._send_json(build_dashboard_v2_evidence(self.server.state.root))
+            return
+        if parsed.path == "/api/dashboard/v2/actions":
+            if not self._authorized(parsed):
+                self._send_v2_auth_error()
+                return
+            self._send_json(build_dashboard_v2_actions(self.server.state.root))
+            return
         if parsed.path in {"/api/map", "/api/graph", "/api/actions/history"}:
             if not self._authorized(parsed):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
@@ -181,7 +291,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_POST(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if not self._authorized(parsed):
-            self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+            if parsed.path.startswith("/api/dashboard/v2/"):
+                self._send_v2_auth_error()
+            else:
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
             return
         if parsed.path == "/api/commands/inspect":
             payload = self._read_json()
@@ -189,6 +302,45 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             cwd = str(payload.get("cwd") or "") or None
             inspection = self.server.state.terminal.inspect(command, cwd)
             self._send_json({"inspection": inspection.model_dump()})
+            return
+        if parsed.path == "/api/dashboard/v2/actions/run":
+            request = self._read_v2_model(DashboardV2ActionRequest)
+            if request is not None:
+                self._run_typed_action(request.model_dump(mode="json", by_alias=True), v2=True)
+            return
+        if parsed.path == "/api/dashboard/v2/actions/inspect":
+            request = self._read_v2_model(DashboardV2ActionRequest)
+            if request is None:
+                return
+            payload = request.model_dump(mode="json", by_alias=True)
+            action_id = request.action.strip()
+            try:
+                inspection = build_dashboard_v2_action_inspection(self.server.state.root, action_id, payload)
+            except (DashboardActionError, ValueError) as exc:
+                self._send_json(_dashboard_v2_error(str(exc), kind="invalid_action"), status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(DashboardV2ActionInspectionResponse(inspection=inspection).model_dump(mode="json"))
+            return
+        if parsed.path in {"/api/dashboard/v2/agents/resume", "/api/dashboard/v2/agents/release"}:
+            request = self._read_v2_model(DashboardV2HandoffOperationRequest)
+            if request is None:
+                return
+            name = request.name.strip()
+            try:
+                if parsed.path.endswith("/resume"):
+                    record, warnings = accept_handoff(self.server.state.root, name)
+                    result = DashboardV2AgentOperationResponse(
+                        handoff=_dashboard_v2_handoff(record), warnings=warnings
+                    ).model_dump(mode="json")
+                else:
+                    result = DashboardV2AgentOperationResponse(
+                        handoff=_dashboard_v2_handoff(release_handoff(self.server.state.root, name))
+                    ).model_dump(mode="json")
+            except HandoffError as exc:
+                kind, status, retryable = _handoff_error_kind(str(exc))
+                self._send_json(_dashboard_v2_error(str(exc), kind=kind, retryable=retryable), status=status)
+                return
+            self._send_json(result)
             return
         if parsed.path == "/api/terminal/start":
             payload = self._read_json()
@@ -326,6 +478,26 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return {}
         return payload if isinstance(payload, dict) else {}
 
+    def _read_v2_model(self, model: type[BaseModel]) -> BaseModel | None:
+        length = int(self.headers.get("Content-Length", "0") or "0")
+        if length <= 0:
+            self._send_json(_dashboard_v2_error("request body is required", kind="invalid_request"), status=HTTPStatus.BAD_REQUEST)
+            return None
+        try:
+            raw = json.loads(self.rfile.read(length).decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            self._send_json(_dashboard_v2_error("request body must be valid JSON", kind="malformed_json"), status=HTTPStatus.BAD_REQUEST)
+            return None
+        if not isinstance(raw, dict):
+            self._send_json(_dashboard_v2_error("request body must be an object", kind="invalid_request"), status=HTTPStatus.BAD_REQUEST)
+            return None
+        try:
+            return model.model_validate(raw)
+        except ValidationError as exc:
+            detail = "; ".join(error["msg"] for error in exc.errors()[:5])
+            self._send_json(_dashboard_v2_error("request validation failed", kind="invalid_request", detail=detail), status=HTTPStatus.BAD_REQUEST)
+            return None
+
     def _section_payload(self, path: str, query_string: str = "") -> dict[str, Any]:
         project_path = path == "/api/project" or path.startswith("/api/project/")
         snapshot = build_project_home_snapshot(self.server.state.root) if project_path else build_project_dashboard_snapshot(self.server.state.root)
@@ -406,29 +578,35 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             return detail
         return {}
 
-    def _run_typed_action(self, payload: dict[str, Any]) -> None:
+    def _run_typed_action(self, payload: dict[str, Any], *, v2: bool = False) -> None:
         action_id = str(payload.get("action") or payload.get("action_id") or "")
         try:
             command = build_dashboard_action_command(action_id, payload)
         except DashboardActionError as exc:
-            self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+            if v2:
+                self._send_json(_dashboard_v2_error(str(exc), kind="invalid_action"), status=HTTPStatus.BAD_REQUEST)
+            else:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
-        self._start_terminal_command(command, confirmed=bool(payload.get("confirmed")))
+        self._start_terminal_command(command, cwd=str(payload.get("cwd") or "") or None, confirmed=bool(payload.get("confirmed")), v2=v2)
 
-    def _start_terminal_command(self, command: str, *, cwd: str | None = None, confirmed: bool = False) -> None:
+    def _start_terminal_command(self, command: str, *, cwd: str | None = None, confirmed: bool = False, v2: bool = False) -> None:
         try:
             session = self.server.state.terminal.start(command, cwd=cwd, confirmed=confirmed)
         except PermissionError:
             inspection = self.server.state.terminal.inspect(command, cwd)
-            self._send_json(
-                {"error": "confirmation required", "command": command, "inspection": inspection.model_dump()},
-                status=HTTPStatus.CONFLICT,
-            )
+            payload = _dashboard_v2_error("confirmation required", kind="action_conflict") if v2 else {"error": "confirmation required", "command": command, "inspection": inspection.model_dump()}
+            self._send_json(payload, status=HTTPStatus.CONFLICT)
             return
         except ValueError as exc:
-            self._send_json({"error": str(exc), "command": command}, status=HTTPStatus.BAD_REQUEST)
+            payload = _dashboard_v2_error(str(exc), kind="invalid_action") if v2 else {"error": str(exc), "command": command}
+            self._send_json(payload, status=HTTPStatus.BAD_REQUEST)
             return
-        self._send_json({"session": session.summary(), "command": command})
+        payload = DashboardV2ActionRunResponse(session=session.summary(), command=command).model_dump(mode="json") if v2 else {"session": session.summary(), "command": command}
+        self._send_json(payload)
+
+    def _send_v2_auth_error(self) -> None:
+        self._send_json(_dashboard_v2_error("invalid dashboard token", kind="unauthorized"), status=HTTPStatus.UNAUTHORIZED)
 
     def _send_html(self, html: str) -> None:
         body = html.encode("utf-8")

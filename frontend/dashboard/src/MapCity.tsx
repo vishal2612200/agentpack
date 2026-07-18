@@ -1,12 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Canvas, useFrame } from "@react-three/fiber";
-import { Html, OrbitControls, RoundedBox } from "@react-three/drei";
+import { Canvas, useFrame, useThree } from "@react-three/fiber";
+import { Html, Line, OrbitControls, RoundedBox } from "@react-three/drei";
 import type { OrbitControls as OrbitControlsImpl } from "three-stdlib";
-import type { DashboardMap, MapBuilding, MapRoad } from "./data/schema";
+import { Vector3 } from "three";
+import type { DashboardMap, DashboardV2ImpactScene, MapBuilding, MapRoad } from "./data/schema";
 import { buildingHoverInfo, roadHoverInfo, routeVisual, type MapHoverInfo } from "./mapInfo";
 
 export function ContextCityMap({
   dashboardMap,
+  impactScene,
+  impactPaths,
   selectedId,
   hoverInfo,
   cameraSignal,
@@ -15,6 +18,8 @@ export function ContextCityMap({
   onHover
 }: {
   dashboardMap: DashboardMap;
+  impactScene: DashboardV2ImpactScene | null;
+  impactPaths: Set<string>;
   selectedId: string;
   hoverInfo: MapHoverInfo | null;
   cameraSignal: number;
@@ -37,11 +42,11 @@ export function ContextCityMap({
           {tourPaused ? "Resume tour" : "Pause tour"}
         </button>
       ) : null}
-      <Canvas shadows camera={{ position: [122, 118, 172], fov: 34 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true }}>
+      <Canvas shadows camera={{ position: [122, 118, 172], fov: 34 }} dpr={[1, 1.6]} gl={{ antialias: true, alpha: true, preserveDrawingBuffer: true }}>
         <color attach="background" args={["#08111f"]} />
         <ambientLight intensity={0.62} />
         <directionalLight castShadow position={[34, 54, 34]} intensity={1.18} />
-        <CityScene dashboardMap={dashboardMap} selectedId={selectedId} hoverInfo={hoverInfo} reducedMotion={reducedMotion} demoMode={demoMode && !tourPaused} onSelect={onSelect} onHover={onHover} />
+        <CityScene dashboardMap={dashboardMap} impactScene={impactScene} impactPaths={impactPaths} selectedId={selectedId} hoverInfo={hoverInfo} reducedMotion={reducedMotion} demoMode={demoMode && !tourPaused} onSelect={onSelect} onHover={onHover} />
         <OrbitControls ref={controlsRef} makeDefault target={[32, 5, 22]} enableDamping={!reducedMotion} dampingFactor={0.08} minDistance={24} maxDistance={360} maxPolarAngle={Math.PI / 2.08} />
       </Canvas>
     </div>
@@ -50,6 +55,8 @@ export function ContextCityMap({
 
 function CityScene({
   dashboardMap,
+  impactScene,
+  impactPaths,
   selectedId,
   hoverInfo,
   reducedMotion,
@@ -58,6 +65,8 @@ function CityScene({
   onHover
 }: {
   dashboardMap: DashboardMap;
+  impactScene: DashboardV2ImpactScene | null;
+  impactPaths: Set<string>;
   selectedId: string;
   hoverInfo: MapHoverInfo | null;
   reducedMotion: boolean;
@@ -68,6 +77,14 @@ function CityScene({
   const center = useMemo(() => mapCenter(dashboardMap), [dashboardMap]);
   const points = useMemo(() => mapPoints(dashboardMap), [dashboardMap]);
   const tourRef = useRef<any>(null);
+  const { camera, controls } = useThree();
+  const sceneEntities = useMemo(() => new Map((impactScene?.entities || []).map((entity) => [entity.id, entity])), [impactScene]);
+  useEffect(() => {
+    const entity = sceneEntities.get(selectedId);
+    if (!entity) return;
+    const target = { x: entity.x - center.x, y: Math.max(1, entity.y), z: entity.z - center.z };
+    controlsTarget(camera, controls as OrbitControlsImpl | undefined, target, reducedMotion);
+  }, [camera, center.x, center.z, controls, reducedMotion, sceneEntities, selectedId]);
   useFrame(({ clock }) => {
     if (!tourRef.current || reducedMotion || !demoMode) return;
     const radius = Math.max(center.width, center.depth, 90) * 0.72;
@@ -95,6 +112,12 @@ function CityScene({
       {dashboardMap.roads.slice(0, 100).map((road) => (
         <RoadMesh key={road.id} road={road} points={points} onSelect={onSelect} onHover={onHover} />
       ))}
+      {(impactScene?.relationships || []).filter((relationship) => relationship.task_relevant).slice(0, 120).map((relationship) => {
+        const source = sceneEntities.get(relationship.source_id);
+        const target = sceneEntities.get(relationship.target_id);
+        if (!source || !target) return null;
+        return <Line key={relationship.id} points={[[source.x, source.y, source.z], [target.x, target.y, target.z]]} color={relationship.id === selectedId ? "#c5f36b" : "#5d8e91"} lineWidth={relationship.id === selectedId ? 3 : Math.max(1, relationship.strength * 2)} transparent opacity={relationship.task_relevant ? 0.75 : 0.3} onClick={(event) => { event.stopPropagation(); onSelect(relationship.id); }} />;
+      })}
       {dashboardMap.landmarks.map((landmark) => (
         <group key={landmark.id} position={[landmark.x, 0, landmark.z]}>
           <mesh>
@@ -110,20 +133,45 @@ function CityScene({
       ))}
       {hoverInfo ? <MapSceneTooltip info={hoverInfo} /> : null}
       {dashboardMap.buildings.map((building) => (
-        <BuildingMesh key={building.id} building={building} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
+        <BuildingMesh key={building.id} building={building} impacted={impactPaths.has(building.path)} selected={building.node_id === selectedId} reducedMotion={reducedMotion} onSelect={onSelect} onHover={onHover} />
+      ))}
+      {(impactScene?.entities || []).filter((entity) => entity.kind !== "file").slice(0, 240).map((entity) => (
+        <group key={entity.id} position={[entity.x, entity.y, entity.z]} onClick={(event) => { event.stopPropagation(); onSelect(entity.id); }}>
+          <mesh castShadow>
+            {entity.kind === "test" ? <octahedronGeometry args={[1.05, 0]} /> : entity.kind === "action" ? <cylinderGeometry args={[0.7, 0.9, 1.6, 8]} /> : <sphereGeometry args={[entity.task_relevant ? 0.72 : 0.48, 12, 10]} />}
+            <meshStandardMaterial color={entity.id === selectedId ? "#c5f36b" : entity.kind === "test" ? "#ffbd6e" : entity.kind === "action" ? "#8be7d5" : "#b9d5ff"} emissive={entity.task_relevant ? "#315f59" : "#13262c"} emissiveIntensity={entity.task_relevant ? 0.7 : 0.25} />
+          </mesh>
+          {entity.id === selectedId ? <Html position={[0, 1.7, 0]} center className="district-label">{entity.label}</Html> : null}
+        </group>
       ))}
     </group>
   );
 }
 
+function controlsTarget(camera: any, controls: OrbitControlsImpl | undefined, target: { x: number; y: number; z: number }, reducedMotion: boolean) {
+  const distance = Math.max(18, camera.position.distanceTo(new Vector3(target.x, target.y, target.z)));
+  const next = [target.x + distance * 0.45, target.y + distance * 0.35, target.z + distance * 0.55];
+  if (reducedMotion) camera.position.set(...next);
+  else {
+    camera.position.x += (next[0] - camera.position.x) * 0.65;
+    camera.position.y += (next[1] - camera.position.y) * 0.65;
+    camera.position.z += (next[2] - camera.position.z) * 0.65;
+  }
+  controls?.target.set(target.x, target.y, target.z);
+  controls?.update();
+  camera.lookAt(target.x, target.y, target.z);
+}
+
 function BuildingMesh({
   building,
+  impacted,
   selected,
   reducedMotion,
   onSelect,
   onHover
 }: {
   building: MapBuilding;
+  impacted: boolean;
   selected: boolean;
   reducedMotion: boolean;
   onSelect: (id: string) => void;
@@ -139,7 +187,7 @@ function BuildingMesh({
   const upperHeight = building.building_tier === "tower" ? towerHeight * 0.34 : 0;
   const floors = Math.min(8, Math.max(3, Math.round(towerHeight / 2.45)));
   const windowColumns = Math.min(4, Math.max(2, Math.round(width / 2.15)));
-  const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : "#d9e7ff";
+  const accentColor = building.memory_linked ? "#38cfd3" : selected ? "#80a9ff" : impacted ? "#b7f38e" : "#d9e7ff";
   const roofColor = selected ? "#dbe8ff" : building.memory_linked ? "#b8f7f3" : "#d6e1ef";
   const plazaRadius = Math.max(width, depth) * 0.86;
   const facadeColor = building.color;
@@ -164,7 +212,7 @@ function BuildingMesh({
       }}
     >
       {selected ? <GlowDisk x={building.x} z={building.z} radius={plazaRadius * 1.08} color="#80a9ff" opacity={0.32} /> : null}
-      {building.selected ? <GlowDisk x={building.x} z={building.z} radius={plazaRadius * 0.9} color={accentColor} opacity={0.22} /> : null}
+      {building.selected || impacted ? <GlowDisk x={building.x} z={building.z} radius={plazaRadius * (impacted ? 0.76 : 0.9)} color={accentColor} opacity={impacted ? 0.15 : 0.22} /> : null}
       <mesh position={[building.x, 0.11, building.z]} rotation={[0, Math.PI / 8, 0]} castShadow receiveShadow>
         <cylinderGeometry args={[plazaRadius, plazaRadius * 1.08, 0.22, 8]} />
         <meshStandardMaterial color="#17263b" roughness={0.82} metalness={0.08} />

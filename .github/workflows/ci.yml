@@ -44,6 +44,29 @@ jobs:
           cd npm
           npm pack --dry-run
 
+  dashboard-browser:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e
+        with:
+          node-version: "20"
+      - name: Install dashboard dependencies
+        run: |
+          pip install -e ".[dev]" playwright
+          npm ci --prefix frontend/dashboard
+          python -m playwright install --with-deps chromium
+      - name: Verify generated contracts and build dashboard
+        run: |
+          npm run check:contracts --prefix frontend/dashboard
+          npm run typecheck --prefix frontend/dashboard
+          npm run build --prefix frontend/dashboard
+      - name: Run dashboard browser tests
+        run: pytest tests/test_dashboard_browser_smoke.py tests/test_dashboard_semantic_browser.py -q
+
   agent-integration-matrix:
     runs-on: ubuntu-latest
     steps:

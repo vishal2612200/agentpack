@@ -6,10 +6,13 @@
   "scripts": {
     "build": "vite build",
     "dev": "vite --host 127.0.0.1",
+    "generate:contracts": "json2ts -i ../../docs/schemas/dashboard-v2.schema.json -o src/data/dashboard-v2.generated.ts --unreachableDefinitions --bannerComment '/* Generated from docs/schemas/dashboard-v2.schema.json. Do not edit. */'",
+    "check:contracts": "npm run generate:contracts && git diff --exit-code -- src/data/dashboard-v2.generated.ts",
     "lint": "tsc --noEmit",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@fontsource-variable/manrope": "^5.2.8",
     "@radix-ui/react-dialog": "^1.1.19",
     "@radix-ui/react-select": "^2.3.3",
     "@radix-ui/react-tabs": "^1.1.17",
@@ -30,6 +33,7 @@
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "json-schema-to-typescript": "^15.0.4",
     "typescript": "^5.7.2",
     "vite": "^6.0.5"
   }
