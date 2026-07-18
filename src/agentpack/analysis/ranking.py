@@ -8,9 +8,12 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
+from agentpack.architecture.compat import LegacyGraphQuery
+from agentpack.architecture.index import SemanticGraphIndex
 from agentpack.core.models import DependencyGraph, FileInfo
 from agentpack.core.config import ScoringWeights
 from agentpack.analysis.monorepo import workspace_for_path, workspace_tokens
+from agentpack.analysis.task_classifier import classify_task
 
 _STOPWORDS = {
     "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for",
@@ -238,6 +241,7 @@ class KeywordPlan:
     workspace_roots: tuple[str, ...] = ()
     task_kind: str = ""
     task_scope_terms: tuple[str, ...] = ()
+    task_class: str = "general"
 
 _IMPLEMENTATION_ROLE_TOKENS = {
     "api", "apis", "route", "routes", "router", "endpoint", "endpoints",
@@ -475,7 +479,7 @@ def _load_metric_rows(root: Path | None, window: int = 40) -> list[dict[str, Any
 
 def _task_signal_stats(root: Path | None, *, window: int = 40) -> dict[str, dict[str, dict[str, int]]]:
     rows = _load_metric_rows(root, window=window)
-    stats = {
+    stats: dict[str, dict[str, dict[str, int]]] = {
         "terms": {"good": {}, "bad": {}},
         "phrases": {"good": {}, "bad": {}},
     }
@@ -746,6 +750,14 @@ def build_keyword_plan(
         workspace_roots=tuple(workspace_roots or ()),
         task_kind=task_kind,
         task_scope_terms=task_scope_terms,
+        # Note: classify_task(task) is also called independently in
+        # FileRanker.rank() (application/pack_service.py) to populate
+        # RankResult/PackPlan/ContextPack.task_class for telemetry. The two
+        # calls are guaranteed to agree only because both are pure functions
+        # of the same `task` string — kept separate so KeywordPlan stays
+        # self-contained and callable without pack_service.py's telemetry
+        # plumbing.
+        task_class=classify_task(task).kind,
     )
 
 
@@ -1100,20 +1112,33 @@ def _direct_content_evidence_bonus(reasons: list[str], content_hits: int) -> flo
         return 0.0
     if "filename keyword match" in reasons or "symbol keyword match" in reasons:
         return 0.0
-    has_direct_evidence = any(
+    strong_evidence = any(
         reason.startswith((
             "matched call:",
             "matched define:",
             "literal definition match:",
             "multi-token defines match",
             "matched entrypoint:",
-            "keyword phrase match:",
         ))
         for reason in reasons
     )
-    if not has_direct_evidence:
+    phrase_only_evidence = not strong_evidence and any(
+        reason.startswith("keyword phrase match:") for reason in reasons
+    )
+    if not strong_evidence and not phrase_only_evidence:
         return 0.0
     bonus = 120.0 + (50.0 * min(3, content_hits - 2))
+    if phrase_only_evidence:
+        # A bare phrase match (e.g. a generic tech-stack term like "spring
+        # boot") is much weaker evidence than an actual call/define/entrypoint
+        # match sourced from the file's own summary — it fires on any file
+        # that happens to mention the phrase, which build/config files do
+        # reliably regardless of what the task is actually about (a
+        # build.gradle for a Spring project always mentions "spring boot").
+        # Cap it low enough that phrase-only evidence can still contribute
+        # but can't alone push a generic file above real candidates that
+        # have symbol/filename/structural evidence.
+        bonus = min(bonus, 45.0)
     return min(270.0, bonus)
 
 
@@ -1132,7 +1157,25 @@ def _path_concrete_term_bonus(path: str, plan: KeywordPlan | None) -> float:
         return 0.0
     bonus = 70.0 + (35.0 * min(2, len(concrete_matches) - 2))
     if _is_config_file(path):
-        bonus += 105.0
+        # Config/build files (build.gradle, pom.xml, package.json, ...) get a
+        # large addon here because their path often legitimately matches
+        # concrete task terms (e.g. a task about "database migration" makes
+        # a config file's path terms line up). But on repos where a generic
+        # tech-stack phrase match is common in every build file (e.g. "spring
+        # boot" appearing in every Spring project's build.gradle), this addon
+        # let build files systematically outscore real source/test files even
+        # when the task has nothing to do with the build itself. Full addon
+        # is reserved for tasks that plausibly ARE about config/build/release;
+        # for everything else it's reduced so a config file only wins when it
+        # has genuinely strong evidence beyond the config-file bonus alone.
+        # Note: task_class is a coarse task-INTENT proxy (bugfix/feature/
+        # infra/...), not a config-file-relevance signal — a task like "Fix
+        # broken config parsing in webpack.config.js" classifies as
+        # "bugfix" and still gets the reduced addon even though it is
+        # genuinely about the config file. Accepted tradeoff; see
+        # benchmarks/results/opt-diagnosis.md for the measured effect.
+        config_addon = 105.0 if plan.task_class in ("infra", "release") else 20.0
+        bonus += config_addon
     return min(210.0 if _is_config_file(path) else 150.0, bonus)
 
 
@@ -1318,12 +1361,103 @@ def _keyword_only_false_positive(path: str, reasons: list[str], content_hits: in
     return True
 
 
+def _is_go_file(path: str) -> bool:
+    return Path(path).suffix.lower() == ".go"
+
+
+def _is_root_go_source_file(path: str) -> bool:
+    path_obj = Path(path)
+    return _is_go_file(path) and len(path_obj.parts) == 1 and not _is_test_file(path)
+
+
+def _has_go_symbol_carrier_signal(reasons: list[str]) -> bool:
+    return "symbol keyword match" in reasons or any(
+        reason.startswith(("matched define:", "matched ranking keyword:", "matched role keyword:"))
+        for reason in reasons
+    )
+
+
+def _has_go_action_owner_signal(path: str, reasons: list[str], content_hits: int) -> bool:
+    if content_hits >= 5:
+        return True
+    if any(
+        reason.startswith((
+            "conventional scope path match",
+            "direct content evidence",
+            "keyword phrase match:",
+            "literal definition match:",
+            "multi-term path match",
+            "quoted literal match:",
+            "test for ",
+        ))
+        or reason == "explicit test task file"
+        for reason in reasons
+    ):
+        return True
+    if _is_root_go_source_file(path) and "filename keyword match" in reasons and any(
+        reason.startswith("matched role keyword:")
+        for reason in reasons
+    ):
+        return True
+    return False
+
+
+def _should_dampen_go_symbol_carrier(path: str, reasons: list[str], content_hits: int) -> bool:
+    if not _is_go_file(path) or not _has_go_symbol_carrier_signal(reasons):
+        return False
+    if _has_go_action_owner_signal(path, reasons, content_hits):
+        return False
+    if _is_root_go_source_file(path):
+        return True
+    if _is_test_file(path) and content_hits <= 2:
+        return True
+    return False
+
+
+def _relations_for_path(
+    dep_graph: object | None,
+    path: str,
+    semantic_graph: SemanticGraphIndex | None = None,
+) -> dict[str, list[str]]:
+    if semantic_graph is not None:
+        return semantic_graph.file_relations(path)
+    if dep_graph is None:
+        return {"imports": [], "imported_by": [], "tests": []}
+    if isinstance(dep_graph, DependencyGraph):
+        return LegacyGraphQuery(dep_graph).file_relations(path)
+    node = dep_graph.get(path) if isinstance(dep_graph, dict) else None
+    if node is None:
+        return {"imports": [], "imported_by": [], "tests": []}
+    return {"imports": list(node.imports), "imported_by": list(node.imported_by), "tests": list(node.tests)}
+
+
+def _first_relationship_receipt(graph: SemanticGraphIndex, path: str, relationship: str) -> dict[str, Any] | None:
+    return next(
+        (row for row in graph.relationship_receipts(path, limit=20) if row.get("relationship") == relationship),
+        None,
+    )
+
+
+def _receipt_reason(receipt: dict[str, Any]) -> str:
+    evidence: dict[str, Any] = next((item for item in receipt.get("evidence", []) if item.get("path")), {})
+    location = str(evidence.get("path") or "unknown")
+    if evidence.get("start_line"):
+        location += f":{evidence['start_line']}"
+    return (
+        f"graph edge {receipt.get('edge_key', '')} "
+        f"({receipt.get('relationship', 'relationship')} "
+        f"{receipt.get('source_entity_key', '')}->{receipt.get('target_entity_key', '')}) "
+        f"at {location}; confidence {receipt.get('confidence_tier', 'unknown')}; "
+        f"evidence {receipt.get('evidence_reference', '')}"
+    )
+
+
 def score_files(
     files: list[FileInfo],
     changed_paths: set[str],
     staged_paths: set[str],
     recently_modified: list[str],
-    dep_graph: "DependencyGraph | dict",
+    dep_graph: object | None,
     keywords: set[str] | dict[str, float] | KeywordPlan,
     include_tests: bool = True,
     include_configs: bool = True,
@@ -1331,9 +1465,10 @@ def score_files(
     summaries: dict | None = None,
     churn_counts: dict[str, int] | None = None,
     co_changed_paths: dict[str, int] | None = None,
+    semantic_graph: SemanticGraphIndex | None = None,
 ) -> list[tuple[FileInfo, float, list[str]]]:
     from agentpack.core.models import DependencyGraph as _DG
-    if not isinstance(dep_graph, _DG):
+    if semantic_graph is None and not isinstance(dep_graph, _DG):
         dep_graph = _DG()
     w = weights or _DEFAULT_WEIGHTS
     all_paths = {f.path for f in files}
@@ -1392,7 +1527,7 @@ def score_files(
             score += path_term_bonus
             reasons.append(f"multi-term path match +{path_term_bonus:.0f}")
 
-        node = dep_graph.get(fi.path)
+        relations = _relations_for_path(dep_graph, fi.path, semantic_graph)
         sym_names: list[str] = []
         summary_data = summaries.get(fi.path) if summaries and fi.path in summaries else None
         if summary_data:
@@ -1546,20 +1681,26 @@ def score_files(
                 score = max(0.0, score * 0.72)
                 reasons.append("explicit test task non-test dampening")
 
-        for dep_path in node.imports:
+        for dep_path in relations["imports"]:
             if dep_path in changed_paths or _path_matches_keywords(dep_path, keywords) > 0:
                 score += w.direct_dep
                 reasons.append("direct dependency of changed file")
+                if semantic_graph is not None:
+                    receipt = _first_relationship_receipt(semantic_graph, fi.path, "imports")
+                    if receipt:
+                        reasons.append(_receipt_reason(receipt))
                 break
 
-        for other_path, other_node in dep_graph.items():
-            if fi.path in other_node.imports and other_path in changed_paths:
-                score += w.reverse_dep
-                reasons.append("reverse dependency")
-                break
+        if any(other_path in changed_paths for other_path in relations["imported_by"]):
+            score += w.reverse_dep
+            reasons.append("reverse dependency")
+            if semantic_graph is not None:
+                receipt = _first_relationship_receipt(semantic_graph, fi.path, "imports")
+                if receipt:
+                    reasons.append(_receipt_reason(receipt))
 
         if include_tests:
-            tests = node.tests
+            tests = relations["tests"]
             if tests and any(t in all_paths for t in tests):
                 score += w.related_test
                 reasons.append("has related tests")
@@ -1631,6 +1772,10 @@ def score_files(
         if _keyword_only_false_positive(fi.path, reasons, content_hits):
             score = max(0.0, score * 0.72)
             reasons.append("likely false positive: keyword-only match")
+
+        if _should_dampen_go_symbol_carrier(fi.path, reasons, content_hits):
+            score = max(0.0, score * 0.45)
+            reasons.append("broad Go symbol carrier dampening")
 
         if _is_generated_agent_artifact(fi.path):
             score = _generated_agent_artifact_score(score, changed=fi.path in changed_paths)
@@ -1823,11 +1968,12 @@ def boost_paired_tests(
 
 def boost_recall_neighbors(
     scored: list[tuple[FileInfo, float, list[str]]],
-    dep_graph: DependencyGraph,
+    dep_graph: object | None,
     changed_paths: set[str],
     weights: ScoringWeights | None = None,
     *,
     seed_limit: int = 8,
+    semantic_graph: SemanticGraphIndex | None = None,
 ) -> list[tuple[FileInfo, float, list[str]]]:
     """Boost import/reverse-import/test neighbors of strong seed files.
 
@@ -1854,8 +2000,8 @@ def boost_recall_neighbors(
 
     boosts: dict[str, tuple[float, str]] = {}
     for seed in seed_paths:
-        node = dep_graph.get(seed)
-        neighbors = [*node.imports, *node.imported_by, *node.tests]
+        relations = _relations_for_path(dep_graph, seed, semantic_graph)
+        neighbors = [*relations["imports"], *relations["imported_by"], *relations["tests"]]
         for neighbor in neighbors:
             if neighbor == seed or neighbor not in path_set:
                 continue
@@ -1877,12 +2023,13 @@ def boost_recall_neighbors(
 
 def boost_second_pass_expansion(
     scored: list[tuple[FileInfo, float, list[str]]],
-    dep_graph: DependencyGraph,
+    dep_graph: object | None,
     keywords: set[str] | dict[str, float] | KeywordPlan,
     weights: ScoringWeights | None = None,
     *,
     seed_limit: int = 10,
     max_boosts: int = 32,
+    semantic_graph: SemanticGraphIndex | None = None,
 ) -> list[tuple[FileInfo, float, list[str]]]:
     """Boost guarded two-hop neighbours around strong first-pass seeds.
 
@@ -1919,8 +2066,12 @@ def boost_second_pass_expansion(
     boosts: dict[str, tuple[float, str, str]] = {}
 
     def neighbours(path: str) -> set[str]:
-        node = dep_graph.get(path)
-        return {p for p in (*node.imports, *node.imported_by, *node.tests) if p in path_map and p != path}
+        relations = _relations_for_path(dep_graph, path, semantic_graph)
+        return {
+            p
+            for p in (*relations["imports"], *relations["imported_by"], *relations["tests"])
+            if p in path_map and p != path
+        }
 
     for seed in seed_paths:
         seed_domains = _domain_tokens(seed) | keyword_tokens

@@ -11,13 +11,21 @@ MAX_RENDERED_MISSES = 20
 
 
 def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
+    """Render legacy static dashboard markup for compatibility tests.
+
+    The public dashboard command now serves the bundled React/Vite cockpit
+    instead of writing static HTML files.
+    """
     files = _selected_file_rows(snapshot)
+    task_map = _task_map_rows(snapshot)
     skills = _skill_rows(snapshot.skills.task_specific, "task-specific") + _skill_rows(snapshot.skills.baseline, "baseline")
     if not skills:
         skills = '<tr><td colspan="7">No skill recommendations found.</td></tr>'
     quality_strip = _quality_strip(snapshot)
+    integrations = _integrations_panel(snapshot)
     skills_inventory = _skills_inventory_panel(snapshot)
     learning = _learning_rows(snapshot)
+    observer = _observer_rows(snapshot)
     benchmarks = _benchmark_rows(snapshot)
     misses = _miss_rows(snapshot)
     actions = _action_rows(snapshot)
@@ -183,10 +191,13 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     <div class="brand">AgentPack</div>
     <nav aria-label="Dashboard sections">
       <a href="#health">Health</a>
+      <a href="#integrations">Integrations</a>
       <a href="#files">Files</a>
+      <a href="#task-map">Task Map</a>
       <a href="#skills">Skills</a>
       <a href="#inventory">Inventory</a>
       <a href="#learning">Learning</a>
+      <a href="#observer">Observer</a>
       <a href="#benchmarks">Benchmarks</a>
       <a href="#loop">Loop</a>
       <a href="#actions">Actions</a>
@@ -223,9 +234,16 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
     </div>
   </section>
 
+  {integrations}
+
   <section id="files" class="section">
     <div class="section-header"><h2>Selected Files</h2><small>Top {min(len(snapshot.selected_files), MAX_RENDERED_FILES)} files from the active context pack</small></div>
     <div class="section-body"><div class="table-wrap"><table><thead><tr><th class="path-col">Path</th><th>Mode</th><th>Score</th><th>Tokens</th><th class="reason-col">Reasons</th></tr></thead><tbody>{files}</tbody></table></div></div>
+  </section>
+
+  <section id="task-map" class="section">
+    <div class="section-header"><h2>Task Map</h2><small>Risk, tests, impact, and retrieve refs from the active pack</small></div>
+    <div class="section-body"><div class="table-wrap"><table><thead><tr><th class="path-col">Path</th><th>Kind</th><th>Risk</th><th class="reason-col">Why</th><th>Tests</th><th>May Break</th><th>Retrieve</th></tr></thead><tbody>{task_map}</tbody></table></div></div>
   </section>
 
   <section id="skills" class="section">
@@ -238,6 +256,11 @@ def render_dashboard_html(snapshot: DashboardSnapshot) -> str:
   <section id="learning" class="section">
     <div class="section-header"><h2>Learning</h2><small>Artifacts that can improve future routing and handoffs</small></div>
     <div class="section-body">{learning}</div>
+  </section>
+
+  <section id="observer" class="section">
+    <div class="section-header"><h2>Observer</h2><small>Advisory relationships from route, review, learn, and task memory</small></div>
+    <div class="section-body">{observer}</div>
   </section>
 
   <section id="benchmarks" class="section">
@@ -294,6 +317,64 @@ def _selected_file_rows(snapshot: DashboardSnapshot) -> str:
         for item in snapshot.selected_files[:MAX_RENDERED_FILES]
     )
     return rows or '<tr><td colspan="5">No selected files found.</td></tr>'
+
+
+def _integrations_panel(snapshot: DashboardSnapshot) -> str:
+    health = snapshot.mcp_health
+    registrations = "".join(
+        "<tr>"
+        f"<td>{_e(item.scope)}</td>"
+        f"<td><span class=\"pill {_status_class(item.status)}\">{_e(item.status)}</span></td>"
+        f"<td><code>{_e(item.path)}</code></td>"
+        f"<td>{_e(item.detail)}</td>"
+        "</tr>"
+        for item in health.registrations
+    ) or '<tr><td colspan="4">No MCP registration checks found.</td></tr>'
+    tools = " ".join(f'<span class="pill">{_e(tool)}</span>' for tool in health.expected_tools[:24]) or "No tools reported."
+    remediation = "".join(f"<li><code>{_e(command)}</code></li>" for command in health.remediation) or "<li>No repair action needed.</li>"
+    return f"""
+  <section id="integrations" class="section">
+    <div class="section-header"><h2>Integrations</h2><span class="pill {_status_class(health.status)}">{_e(health.status)}</span></div>
+    <div class="section-body">
+      <div class="grid">
+        <div class="metric"><strong>MCP Runtime</strong><span>{_e(health.runtime_status or "unknown")}</span></div>
+        <div class="metric"><strong>Runtime OK</strong><span>{'yes' if health.runtime_ok else 'no'}</span></div>
+        <div class="metric"><strong>Registered</strong><span>{'yes' if health.registered else 'no'}</span></div>
+        <div class="metric"><strong>Live Exposure</strong><span>{_e(health.live_exposure)}</span></div>
+      </div>
+      <p class="callout"><small>{_e(health.runtime_detail or "No runtime detail captured.")} Live host exposure cannot be proven by static dashboard; call agentpack_readiness() from the host.</small></p>
+      <h3>MCP Registrations</h3>
+      <div class="table-wrap"><table><thead><tr><th>Scope</th><th>Status</th><th>Path</th><th>Detail</th></tr></thead><tbody>{registrations}</tbody></table></div>
+      <h3>Expected Tools</h3>
+      <p>{tools}</p>
+      <h3>Repair Path</h3>
+      <ul>{remediation}</ul>
+    </div>
+  </section>"""
+
+
+def _task_map_rows(snapshot: DashboardSnapshot) -> str:
+    if not snapshot.task_map:
+        return '<tr><td colspan="7">No task map found. Run agentpack pack to generate one.</td></tr>'
+    rows: list[str] = []
+    for item in snapshot.task_map[:MAX_RENDERED_FILES]:
+        why = "; ".join(item.why_selected[:3])
+        tests = ", ".join(f"<code>{_e(test)}</code>" for test in item.tests_to_run[:3])
+        may_break = "; ".join(_e(value) for value in item.may_break[:2])
+        retrieve = f"<code>retrieve_context(block_id=&quot;{_e(item.retrieve_ref)}&quot;)</code>" if item.retrieve_ref else ""
+        risk_class = _status_class(item.risk_level)
+        rows.append(
+            "<tr>"
+            f"<td class=\"path-col\"><code>{_e(item.path)}</code></td>"
+            f"<td>{_e(item.kind)}</td>"
+            f"<td><span class=\"pill {risk_class}\">{_e(item.risk_level.upper())}</span></td>"
+            f"<td>{_e(why)}</td>"
+            f"<td>{tests}</td>"
+            f"<td>{may_break}</td>"
+            f"<td>{retrieve}</td>"
+            "</tr>"
+        )
+    return "".join(rows)
 
 
 def _skill_rows(items: Iterable[SkillRow], kind: str) -> str:
@@ -416,6 +497,28 @@ def _chip_list(values: Iterable[str], *, empty: str) -> str:
 
 def _learning_rows(snapshot: DashboardSnapshot) -> str:
     rows = []
+    for item in snapshot.learning_weak_spots:
+        files = ", ".join(item.evidence_files[:3]) or "no evidence files captured"
+        rows.append(
+            '<article class="info-card learning-card">'
+            f'<div><strong>{_e(item.concept or "Weak spot")}</strong><br>'
+            f'<small>{item.count} queued question(s) / {_e(item.mode or "mixed")}</small>'
+            f'<p>{_e(item.latest_question or item.latest_task or "No question captured.")}</p>'
+            f'<p><code>{_e(files)}</code></p></div>'
+            '<span class="pill stale">weak spot</span>'
+            "</article>"
+        )
+    for item in snapshot.learning_memories:
+        concepts = _chip_list(item.concepts, empty="no concepts")
+        files = ", ".join(item.changed_files[:3]) or "no changed files captured"
+        rows.append(
+            '<article class="info-card learning-card">'
+            f'<div><strong>{_e(item.task or "Recent task")}</strong><br>'
+            f'<small>{_e(item.stage or "task")} / {_e(item.status or "unknown")} / {_e(item.branch or "unknown")}</small>'
+            f'<p>{concepts}</p><p><code>{_e(files)}</code></p></div>'
+            '<span class="pill present">memory</span>'
+            "</article>"
+        )
     for item in snapshot.learning:
         state = "present" if item.exists else "missing"
         excerpt = f"<p>{_e(item.excerpt)}</p>" if item.excerpt else ""
@@ -428,6 +531,41 @@ def _learning_rows(snapshot: DashboardSnapshot) -> str:
     if not rows:
         return '<p class="empty-state">No learning artifacts checked.</p>'
     return '<div class="learning-list">' + "".join(rows) + "</div>"
+
+
+def _observer_rows(snapshot: DashboardSnapshot) -> str:
+    stats = "".join(
+        f'<span class="pill">{_e(kind)} {count}</span>'
+        for kind, count in sorted(snapshot.observer.event_types.items())
+    )
+    rows = []
+    for item in snapshot.observer.insights:
+        files = ", ".join(item.related_files[:4]) or "no files"
+        evidence = ", ".join(item.evidence[:3]) or "no evidence"
+        rows.append(
+            '<article class="info-card learning-card">'
+            f'<div><strong>{_e(item.title)}</strong><br>'
+            f'<small>{_e(item.kind)} / confidence {item.confidence:.2f}</small>'
+            f'<p>{_e(item.detail)}</p>'
+            f'<p><strong>Action:</strong> {_e(item.action)}</p>'
+            f'<p><code>{_e(files)}</code></p>'
+            f'<p><small>{_e(evidence)}</small></p></div>'
+            '<span class="pill">advisory</span>'
+            "</article>"
+        )
+    if not rows:
+        rows.append('<p class="empty-state">No observer signals yet.</p>')
+    return (
+        '<div class="grid">'
+        f'<div class="metric"><strong>Events</strong><span>{snapshot.observer.events}</span></div>'
+        f'<div class="metric compact"><strong>Brief</strong><span>{_e(snapshot.observer.brief_path)}</span></div>'
+        f'<div class="metric compact"><strong>Types</strong><span>{stats or "none"}</span></div>'
+        "</div>"
+        '<p class="callout"><small>Observer signals are hypotheses from local history. Verify source files and diffs before acting.</small></p>'
+        '<div class="learning-list">'
+        + "".join(rows)
+        + "</div>"
+    )
 
 
 def _benchmark_rows(snapshot: DashboardSnapshot) -> str:
@@ -505,6 +643,17 @@ def _stale_reason(snapshot: DashboardSnapshot) -> str:
 
 def _status_class(value: object) -> str:
     text = str(value)
+    risk_map = {
+        "low": "fresh",
+        "medium": "stale",
+        "high": "missing",
+        "healthy": "fresh",
+        "warning": "stale",
+        "present": "fresh",
+        "invalid": "stale",
+    }
+    if text in risk_map:
+        return risk_map[text]
     return text if text in {"fresh", "stale", "missing", "unknown"} else "unknown"
 
 

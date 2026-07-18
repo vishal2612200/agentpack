@@ -11,6 +11,7 @@ from agentpack.commands.hook_cmd import (
     _load_top_files,
     _load_pack_task,
     _current_root_hash,
+    _git_sync_decision_note,
     _run_git_auto_repack,
     _run_user_prompt_submit,
     _review_stage_gate_note,
@@ -131,6 +132,28 @@ class TestRunUserPromptSubmit:
         assert "agentpack_pack_context" in ctx
         assert "src/a.py" in ctx
         assert len(ctx) < 1000  # tiny hint, not full injection
+
+    def test_prompt_hook_uses_ambient_session_task(self, repo: Path, monkeypatch) -> None:
+        monkeypatch.setattr("pathlib.Path.home", lambda: repo)
+        monkeypatch.setenv("CLAUDE_SESSION_ID", "claude/local")
+        scoped = repo / ".agentpack" / "threads" / "claude-local"
+        scoped.mkdir(parents=True)
+        (repo / ".agentpack" / "task.md").write_text("old global task\n", encoding="utf-8")
+        (scoped / "task.md").write_text("fix scoped login\n", encoding="utf-8")
+        _write_snapshot(repo, "hash1")
+        _write_metrics(repo, ["src/scoped.py"])
+        (scoped / "pack_metadata.json").write_text(
+            json.dumps({"task": "fix scoped login", "snapshot_root_hash": "hash1", "token_estimate": 100}),
+            encoding="utf-8",
+        )
+        (repo / ".mcp.json").write_text(json.dumps({"mcpServers": {"agentpack": {}}}))
+
+        out = self._capture_output(repo, {"prompt": "fix scoped login"}, monkeypatch)
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+
+        assert "task: fix scoped login" in ctx
+        assert "old global task" not in ctx
+        assert "src/scoped.py" in ctx
 
     def test_stale_review_context_suppresses_file_hints(self, repo: Path, monkeypatch) -> None:
         monkeypatch.setattr("pathlib.Path.home", lambda: repo)
@@ -271,15 +294,46 @@ class TestRunUserPromptSubmit:
 
     def test_review_stage_gate_note_blocks_incomplete_active_review(self, repo: Path) -> None:
         (repo / ".agentpack" / "review-state.json").write_text(
-            json.dumps({"status": "awaiting_findings"}),
+            json.dumps({"status": "awaiting_judge"}),
             encoding="utf-8",
         )
 
         note = _review_stage_gate_note(repo, review_intent=True)
 
         assert "REVIEW STAGE BLOCK" in note
-        assert "Stage 2 findings artifact missing" in note
+        assert "Judge findings artifact missing" in note
         assert "agentpack review --check" in note
+
+    def test_review_stage_gate_ignores_stale_branch_preflight(self, repo: Path) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=repo, check=True)
+        subprocess.run(["git", "checkout", "-b", "main"], cwd=repo, check=True)
+        (repo / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=repo, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=repo, check=True)
+        (repo / ".agentpack" / "review-preflight.json").write_text(
+            json.dumps(
+                {
+                    "git": {"branch": "feat/toon-validator"},
+                    "paths": {"run_dir": ".agentpack/reviews/pr-48/run"},
+                }
+            ),
+            encoding="utf-8",
+        )
+        (repo / ".agentpack" / "review-state.json").write_text(
+            json.dumps({"status": "blocked_invalid_artifact"}),
+            encoding="utf-8",
+        )
+
+        note = _review_stage_gate_note(repo, review_intent=True)
+
+        assert "REVIEW PREFLIGHT STALE" in note
+        assert "prepared for branch feat/toon-validator" in note
+        assert "current branch is main" in note
+        assert "active review artifact invalid" not in note
 
     def test_hard_cap_enforced(self, repo: Path, monkeypatch) -> None:
         monkeypatch.setattr("pathlib.Path.home", lambda: repo)
@@ -451,6 +505,29 @@ class TestRunGitAutoRepack:
         assert "No active task" in json.loads(first[0])["hookSpecificOutput"]["additionalContext"]
         assert second == []
 
+    def test_no_task_coding_prompt_includes_git_sync_decision(self, tmp_path: Path, monkeypatch) -> None:
+        import io
+        import subprocess
+
+        (tmp_path / ".agentpack").mkdir()
+        subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+        (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+        (tmp_path / "app.py").write_text("print('changed')\n", encoding="utf-8")
+
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": "fix login bug"})))
+        outputs: list[str] = []
+        monkeypatch.setattr("builtins.print", lambda x: outputs.append(x))
+        _run_user_prompt_submit(tmp_path)
+
+        ctx = json.loads(outputs[0])["hookSpecificOutput"]["additionalContext"]
+        assert "GIT SYNC DECISION" in ctx
+        assert "tracked_dirty=1" in ctx
+        assert "decide whether tracked local changes are the task target" in ctx
+
     def test_no_task_chat_prompt_stays_silent(self, repo: Path, monkeypatch) -> None:
         import io
 
@@ -461,6 +538,40 @@ class TestRunGitAutoRepack:
             _run_user_prompt_submit(repo)
 
         assert outputs == []
+
+    def test_chat_prompt_with_active_task_stays_silent_and_fast(self, repo: Path, monkeypatch) -> None:
+        import io
+
+        _write_task(repo, "fix login flow")
+        (repo / ".agentpack" / "config.toml").write_text(
+            "[hooks]\nblocking_task_refresh = true\n",
+            encoding="utf-8",
+        )
+        monkeypatch.setattr("sys.stdin", io.StringIO(json.dumps({"prompt": "does agentpack help with token saving?"})))
+        outputs: list[str] = []
+        monkeypatch.setattr("builtins.print", lambda x: outputs.append(x))
+
+        with patch("agentpack.commands.hook_cmd._current_root_hash", side_effect=AssertionError("should stay cheap")), \
+             patch("agentpack.commands.hook_cmd._run_blocking_pack", side_effect=AssertionError("should not pack")):
+            _run_user_prompt_submit(repo)
+
+        assert outputs == []
+
+    def test_git_sync_decision_note_is_local_status_only(self, tmp_path: Path) -> None:
+        import subprocess
+
+        subprocess.run(["git", "init", "--quiet"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.email", "test@example.com"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "config", "user.name", "Test User"], cwd=tmp_path, check=True)
+        (tmp_path / "app.py").write_text("print('hello')\n", encoding="utf-8")
+        subprocess.run(["git", "add", "app.py"], cwd=tmp_path, check=True)
+        subprocess.run(["git", "commit", "-m", "initial"], cwd=tmp_path, check=True)
+
+        note = _git_sync_decision_note(tmp_path)
+
+        assert "GIT SYNC DECISION" in note
+        assert "upstream=(none)" in note
+        assert "no upstream configured" in note
 
     def test_session_start_clears_no_task_reminder(self, repo: Path) -> None:
         reminder = repo / ".agentpack" / ".no_task_reminded"

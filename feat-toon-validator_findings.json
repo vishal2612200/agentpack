@@ -1,0 +1,75 @@
+{
+  "findings": [
+    {
+      "id": "f1",
+      "unit": "cu8",
+      "lens": "unit",
+      "type": "logic",
+      "location": "src/agentpack/learning/extractor.py:116-130",
+      "claim": "infer_learning_mode checks for 'pr' as a bare substring, so common words containing 'pr' ('improve', 'deprecate', 'sprint', 'represent', 'approach') return 'review' mode unexpectedly. Examples: 'improve performance' → review mode; 'sprint planning' → review mode; 'deprecate old code' → review mode.",
+      "evidence": "cu8 code: `if any(term in lowered for term in ('review', 'pr', 'reviewer')):`. Python substring match confirmed: 'pr' in 'improve' is True, 'pr' in 'deprecate' is True, 'pr' in 'sprint' is True.",
+      "severity": "should-fix",
+      "category": "defect",
+      "confidence": "high",
+      "depends_on": null,
+      "direction": "Use word-boundary matching (e.g., check for ' pr ' with surrounding spaces, or split on whitespace) rather than bare substring for the 'pr' term."
+    },
+    {
+      "id": "f2",
+      "unit": "cu8",
+      "lens": "unit",
+      "type": "logic",
+      "location": "src/agentpack/learning/extractor.py:116-130",
+      "claim": "infer_learning_mode checks 'break' as a bare substring, so 'take a break', 'breakthrough', 'refactor and break down' all return 'failure' mode. Similarly, 'scale' in 'rescale' returns 'system-design' mode.",
+      "evidence": "cu8 code: `if any(term in lowered for term in ('failure', 'debug', 'incident', 'prod', 'break'))` and `if any(term in lowered for term in ('system design', 'architecture', 'tradeoff', 'scale'))`. Python substring match confirmed: 'break' in 'breakthrough' is True; 'scale' in 'rescale' is True.",
+      "severity": "should-fix",
+      "category": "defect",
+      "confidence": "high",
+      "depends_on": null,
+      "direction": "Use word-boundary matching for short/common terms like 'pr', 'break', 'scale', 'prod'."
+    },
+    {
+      "id": "f3",
+      "unit": "cu9",
+      "lens": "unit",
+      "type": "complexity",
+      "location": "src/agentpack/commands/learn.py:92-94",
+      "claim": "learning_request is assigned '' on line 92 and then immediately re-assigned '' again on line 94 (a dead write). The first assignment is never read.",
+      "evidence": "cu9 code: `learning_request = ''` (line 92) followed by `request_parts = list(request or [])` (line 93) followed by `learning_request = ''` (line 94). The value from line 92 is overwritten before any read.",
+      "severity": "nit",
+      "category": "preference",
+      "confidence": "high",
+      "depends_on": null,
+      "direction": "Remove the first assignment on line 92; keep only the one on line 94."
+    },
+    {
+      "id": "f4",
+      "unit": "cu5",
+      "lens": "unit",
+      "type": "convention",
+      "location": "src/agentpack/learning/task_memory.py:75",
+      "claim": "build_task_memory_payload includes 'cwd': str(root) at the top level and also nested inside 'provenance': {'cwd': str(root)}. The top-level 'cwd' duplicates what is already in provenance, adding a redundant field to every task_memory event written to session-events.jsonl.",
+      "evidence": "cu5 code lines 75 and 83: `'cwd': str(root)` appears twice. The provenance dict at line 83 already contains cwd, branch, and git_sha which are also at top-level.",
+      "severity": "nit",
+      "category": "preference",
+      "confidence": "high",
+      "depends_on": null,
+      "direction": "Remove the top-level 'cwd' key (line 75); it is already captured in provenance."
+    },
+    {
+      "id": "f5",
+      "unit": "cu2",
+      "lens": "unit",
+      "type": "edge_case",
+      "location": "src/agentpack/core/toon_validator.py:30-50",
+      "claim": "validate_toon_text calls _root_directive(text) before the require_format guard. When require_format=True and the format directive is missing, ToonValidationResult is returned with root=_root_directive(text) populated. This is correct behavior and consistent, but it means a file that fails the format check can still have a non-None root in its result — callers that inspect result.root without checking result.ok may be confused.",
+      "evidence": "cu2 code: `root = _root_directive(text)` on line 32 executes unconditionally, then `if require_format and not _has_format_directive(text): return ToonValidationResult(ok=False, ..., root=root, ...)`. Caller in toon_validate CLI (cu3) displays root only when result.ok is True (`root = f' root={result.root}' if result.root else ''` in the elif result.ok branch), so this specific caller is safe.",
+      "severity": "nit",
+      "category": "preference",
+      "confidence": "high",
+      "depends_on": null,
+      "direction": "No action required — existing callers check result.ok before using result.root. Document or add a comment that root may be populated even on failure for diagnostic purposes."
+    }
+  ],
+  "coverage": "Examined all 11 core change units (cu1-cu11) plus 2 incidental units (cu12 doc/gitignore, cu13 docs). Unit lens applied to cu1 (ToonParseError wrapping), cu2 (toon_validator), cu3 (CLI command), cu4 (MCP tool), cu5 (task_memory module), cu6 (workflow_cmd safe wrapper), cu7 (sessions module), cu8 (extractor additions), cu9 (learn.py refactor), cu10 (dashboard collectors), cu11 (model additions). Integration lens applied to callers of cu2 (toon_validate CLI, MCP impl), cu5 (workflow_cmd, learn.py, dashboard), cu7 (learn.py, dashboard), cu8 (learn.py). cu12 and cu13 skipped as incidental. The path traversal guard in cu4 was verified correct. ToonValidationResult frozen dataclass with mutable list[str] warnings field was verified safe because frozen=True prevents attribute reassignment, and field(default_factory=list) creates a new list per instance. No caller breakage found for contracts_touched in cu8 (LearningTopic.questions and LearningReport.learning_request/coach_mode all have defaults, so existing callers that construct these without the new fields are backward compatible). The mode dispatch ambiguity (f1, f2) was not caught by existing tests, which only cover the 'quiz' and 'interview' happy paths."
+}

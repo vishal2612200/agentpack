@@ -191,6 +191,38 @@ def test_go_summary_extracts_imports_symbols_and_public_api(tmp_path: Path) -> N
     assert "NewServer" in summary.public_api
 
 
+def test_rust_summary_extracts_imports_symbols_and_public_api(tmp_path: Path) -> None:
+    src = _write(
+        tmp_path,
+        "src/server.rs",
+        "use std::collections::HashMap;\n"
+        "use tokio::net::TcpListener;\n\n"
+        "pub struct Server {\n"
+        "    port: u16,\n"
+        "}\n\n"
+        "impl Server {\n"
+        "    pub fn new(port: u16) -> Self {\n"
+        "        Server { port }\n"
+        "    }\n"
+        "}\n\n"
+        "pub fn build_server(port: u16) -> Server {\n"
+        "    Server::new(port)\n"
+        "}\n",
+    )
+
+    summary = summarize("src/server.rs", src, "rust", "h1")
+
+    assert summary.language == "rust"
+    assert summary.provider == "offline"
+    assert "std" in summary.imports
+    assert "tokio" in summary.imports
+    assert {"Server", "Server.new", "build_server"} <= {symbol.name for symbol in summary.symbols}
+    assert "build_server" in summary.defines
+    assert "Server.new" in summary.defines
+    assert "build_server" in summary.public_api
+    assert summary.summary.splitlines()[0] == "Language: Rust"
+
+
 def test_env_file_external_system_and_side_effect_detection(tmp_path: Path) -> None:
     src = _write(
         tmp_path,

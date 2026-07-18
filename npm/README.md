@@ -3,6 +3,9 @@
 [![npm version](https://img.shields.io/npm/v/@vishal2612200/agentpack.svg)](https://www.npmjs.com/package/@vishal2612200/agentpack)
 [![npm downloads](https://img.shields.io/npm/dm/@vishal2612200/agentpack.svg)](https://www.npmjs.com/package/@vishal2612200/agentpack)
 [![PyPI core](https://img.shields.io/pypi/v/agentpack-cli.svg)](https://pypi.org/project/agentpack-cli/)
+[![Release evidence](https://img.shields.io/github/v/release/vishal2612200/agentpack?label=release%20evidence)](https://github.com/vishal2612200/agentpack/releases/latest)
+[![PyPI trusted publishing](https://img.shields.io/badge/PyPI-trusted%20publishing-blue)](https://github.com/vishal2612200/agentpack/actions/workflows/publish.yml)
+[![npm provenance](https://img.shields.io/badge/npm-provenance-blue)](https://github.com/vishal2612200/agentpack/actions/workflows/publish-npm.yml)
 [![CI](https://github.com/vishal2612200/agentpack/actions/workflows/ci.yml/badge.svg)](https://github.com/vishal2612200/agentpack/actions/workflows/ci.yml)
 
 **Your agent starts cold. AgentPack hands it the map.**
@@ -25,7 +28,7 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ![AgentPack route demo](https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-route-demo.svg)
 
-> **Status: alpha (v0.3.24).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
+> **Status: alpha (v0.4.0).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
 >
 > **Platform note:** macOS, Linux, and Windows are supported. Windows support targets PowerShell plus Git for Windows.
 >
@@ -33,13 +36,12 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ## Latest Update
 
-`0.3.24` adds thin plugin and IDE distribution surfaces for Codex, Cursor,
-Windsurf, Copilot, Cline, Kiro, OpenCode, and generic agent workflows. It also
-adds a faster docs/plugin release-check profile that skips build and public
-benchmark runs for docs-only releases.
+`0.4.0` adds architecture-aware PR context with deterministic snapshots and CI checks,
+an optional tree-sitter backend for Java, Ruby, and PHP extraction, and a staged review
+pipeline where Anchor, Judge, and Critic artifacts must validate before Actor publishing.
 
 ```bash
-npx @vishal2612200/agentpack learn --dashboard --team-export
+npx @vishal2612200/agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
 ```
 
 ## Before vs After
@@ -104,6 +106,13 @@ The Python CLI remains the source of truth. The npm package exists so JavaScript
 npm install -g @vishal2612200/agentpack
 agentpack --version
 ```
+
+Release trust signals:
+
+- PyPI core package uses GitHub Actions trusted publishing.
+- npm wrapper is published with npm provenance.
+- GitHub Releases include release-check, benchmark, wheel verification, and registry evidence.
+- Next hardening targets are release checksums, SBOM output, and SLSA-style provenance.
 
 Requirements:
 

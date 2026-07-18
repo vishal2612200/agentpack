@@ -4,15 +4,22 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
+
 from typer.testing import CliRunner
 
 from agentpack.cli import app
 from agentpack.commands.review_cmd import (
+    _ReviewPreflightError,
     _build_review_preflight,
+    _findings_to_inline_comments,
     _load_review_template,
     _parse_review_target,
+    _parse_commentable_right_lines,
     _review_output_paths,
+    _validate_critique_against_findings,
     _validate_review_artifact,
+    _write_approved_findings,
 )
 
 
@@ -34,6 +41,16 @@ def _init_repo(tmp_path: Path) -> Path:
     subprocess.run(["git", "add", "src/foo.py"], cwd=tmp_path, check=True)
     subprocess.run(["git", "commit", "-m", "change foo"], cwd=tmp_path, check=True)
     return tmp_path
+
+
+def _write_critique(repo: Path, preflight: dict, decisions: list[dict]) -> Path:
+    critique = repo / preflight["paths"]["critique_authoring_output"]
+    critique.parent.mkdir(parents=True, exist_ok=True)
+    critique.write_text(
+        json.dumps({"head_sha": preflight["git"]["head_sha"], "decisions": decisions}),
+        encoding="utf-8",
+    )
+    return critique
 
 
 def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeypatch) -> None:
@@ -61,24 +78,35 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["review"]["branch_prefix"] == "pr-6"
     assert preflight["review"]["target"] == {"raw": "6", "number": 6, "url": "https://example.com/pr/6", "source": "option"}
     assert preflight["execution_contract"] == {
-        "structured_format": "TOON",
+        "structured_format": "JSON authoring, canonical TOON handoff",
+        "canonical_format": "TOON",
         "requires_write_to_file": True,
         "requires_read_file_between_stages": True,
         "forbid_inline_review": True,
         "blocked_without_stage_artifact": True,
-        "stage_order": ["understanding", "judge"],
+        "stage_order": ["anchor", "judge", "critic", "actor"],
     }
     assert preflight["git"]["head_sha"] == "pr-head-sha"
+    assert preflight["citation_source"]["mode"] == "git-head"
+    assert preflight["review"]["scaffold"] == "light"
     assert preflight["diff"]["base_ref"] == "origin/main"
     assert preflight["diff"]["head_ref"] == "origin/pr/6"
     assert preflight["diff"]["range"] == "origin/main...origin/pr/6"
     assert preflight["diff"]["source"] == "pr-target"
     assert preflight["paths"]["run_dir"].startswith(".agentpack/reviews/pr-6/")
+    assert preflight["paths"]["understanding_authoring_output"].endswith("/understanding.json")
+    assert preflight["paths"]["understanding_canonical_output"].endswith("/understanding.toon")
     assert preflight["paths"]["understanding_output"].startswith(".agentpack/reviews/pr-6/")
+    assert preflight["paths"]["findings_authoring_output"].endswith("/findings.json")
+    assert preflight["paths"]["findings_canonical_output"].endswith("/findings.toon")
     assert preflight["paths"]["findings_output"].startswith(".agentpack/reviews/pr-6/")
+    assert preflight["paths"]["critique_authoring_output"].endswith("/critique.json")
+    assert preflight["paths"]["critique_canonical_output"].endswith("/critique.toon")
+    assert preflight["paths"]["approved_findings_output"].endswith("/approved-findings.toon")
     assert preflight["changed_files"] == [
         {
             "path": "src/foo.py",
+            "head_blob_sha": "",
             "related_tests": ["tests/test_foo.py"],
         }
     ]
@@ -152,6 +180,25 @@ def test_review_command_explicit_pr_binds_diff_and_run_dir(tmp_path, monkeypatch
     assert (repo / ".agentpack" / "review-state.json").exists()
 
 
+def test_review_command_prints_run_id_before_preflight_failure(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+
+    def fail_preflight(*_args, **_kwargs):
+        raise _ReviewPreflightError("simulated slow preflight failure")
+
+    monkeypatch.setattr("agentpack.commands.review_cmd._build_review_preflight", fail_preflight)
+
+    result = CliRunner().invoke(app, ["review", "--pr", "98", "focus latency"])
+
+    assert result.exit_code == 1
+    assert "Review run id:" in result.output
+    assert "Review run dir:" in result.output
+    assert "Review preflight blocked" in result.output
+    assert "simulated slow preflight failure" in result.output
+
+
 def test_review_command_explicit_pr_fetch_failure_blocks_without_fallback(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -174,6 +221,40 @@ def test_review_command_explicit_pr_fetch_failure_blocks_without_fallback(tmp_pa
     assert "--allow-local-fallback" in result.output
 
 
+def test_review_command_supports_strict_and_light_scaffolds(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    runner = CliRunner()
+
+    strict = runner.invoke(app, ["review", "--allow-local-fallback", "--strict", "small docs review"])
+
+    assert strict.exit_code == 0, strict.output
+    strict_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+    assert strict_preflight["review"]["scaffold"] == "strict"
+    assert "Review scaffold: strict" in (repo / ".agentpack" / "review.prompt.md").read_text(encoding="utf-8")
+
+    light = runner.invoke(app, ["review", "--allow-local-fallback", "--light", "security token review"])
+
+    assert light.exit_code == 0, light.output
+    light_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+    assert light_preflight["review"]["scaffold"] == "light"
+
+    conflict = runner.invoke(app, ["review", "--allow-local-fallback", "--strict", "--light", "conflict"])
+
+    assert conflict.exit_code == 1
+    assert "Use only one of --strict or --light" in conflict.output
+
+
 def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -186,10 +267,12 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     runbook_path = repo / ".agentpack" / "review.prompt.md"
     understanding_prompt_path = repo / ".agentpack" / "review-understanding.prompt.md"
     judge_prompt_path = repo / ".agentpack" / "review-judge.prompt.md"
+    critic_prompt_path = repo / ".agentpack" / "review-critic.prompt.md"
     assert preflight_path.exists()
     assert runbook_path.exists()
     assert understanding_prompt_path.exists()
     assert judge_prompt_path.exists()
+    assert critic_prompt_path.exists()
 
     preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
     run_dir = repo / preflight["paths"]["run_dir"]
@@ -201,25 +284,50 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert (run_dir / "runbook.md").exists()
     assert (run_dir / "understanding.prompt.md").exists()
     assert (run_dir / "judge.prompt.md").exists()
+    assert (run_dir / "critic.prompt.md").exists()
+    assert (run_dir / "understanding.template.toon").exists()
+    assert (run_dir / "findings.template.toon").exists()
+    assert (run_dir / "critique.template.toon").exists()
     assert (run_dir / "context.md").exists()
     assert (run_dir / "citations.json").exists()
+    assert (repo / ".agentpack" / "review-understanding.template.toon").exists()
+    assert (repo / ".agentpack" / "review-findings.template.toon").exists()
+    assert (repo / ".agentpack" / "review-critique.template.toon").exists()
     assert preflight["context_pack"]["path"].startswith(".agentpack/reviews/feature-review/")
     assert not (repo / ".agentpack" / "context.md").exists()
     assert preflight["paths"]["understanding_output"].startswith(".agentpack/reviews/feature-review/")
     assert preflight["paths"]["findings_output"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["understanding_authoring_output"].endswith("/understanding.json")
+    assert preflight["paths"]["understanding_canonical_output"] == preflight["paths"]["understanding_output"]
+    assert preflight["paths"]["findings_authoring_output"].endswith("/findings.json")
+    assert preflight["paths"]["findings_canonical_output"] == preflight["paths"]["findings_output"]
+    assert preflight["paths"]["critique_authoring_output"].endswith("/critique.json")
+    assert preflight["paths"]["critique_canonical_output"] == preflight["paths"]["critique_output"]
+    assert preflight["paths"]["understanding_template"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["findings_template"].startswith(".agentpack/reviews/feature-review/")
+    assert preflight["paths"]["critique_template"].startswith(".agentpack/reviews/feature-review/")
 
     runbook = runbook_path.read_text(encoding="utf-8")
     assert "reviewer is worried about prompt latency" in runbook
     assert preflight["review"]["run_id"] in runbook
     assert preflight["paths"]["understanding_output"] in runbook
     assert preflight["paths"]["findings_output"] in runbook
+    assert preflight["paths"]["understanding_template"] in runbook
+    assert preflight["paths"]["findings_template"] in runbook
+    assert preflight["paths"]["critique_output"] in runbook
+    assert preflight["paths"]["approved_findings_output"] in runbook
     assert "## Hard Gates" in runbook
+    assert "Review scaffold:" in runbook
+    assert "Citation source:" in runbook
     assert "AgentPack Context Preflight" in runbook
     assert "agentpack_pack_context" in runbook
     assert "Do not perform the review inline" in runbook
-    assert "If you cannot write the Stage 1 output file" in runbook
-    assert "run `agentpack review --check`; do not start Stage 2" in runbook
-    assert "do not produce a final summary unless it validates Stage 2" in runbook
+    assert "If you cannot write the Anchor output file" in runbook
+    assert "do not start Judge until it validates Anchor" in runbook
+    assert "run `agentpack review --check --post-inline-comments` for PR-bound runs" in runbook
+    assert "Do not produce a final summary unless Critic validates" in runbook
+    assert "Anchor JSON authoring output" in runbook
+    assert "Anchor canonical TOON handoff" in runbook
 
     understanding_prompt = understanding_prompt_path.read_text(encoding="utf-8")
     template = _load_review_template("stage1-understanding.md")
@@ -229,9 +337,15 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "agentpack_pack_context" in understanding_prompt
     assert "## Execution Gates" in understanding_prompt
     assert "Do not answer inline from this stage prompt." in understanding_prompt
-    assert f"Output path: {preflight['paths']['understanding_output']}" in understanding_prompt
+    assert f"Copy-fill TOON template: {preflight['paths']['understanding_template']}" in understanding_prompt
+    assert "Prefer valid JSON matching the schema. This is the default path." in understanding_prompt
+    assert "Do not use YAML block scalars" in understanding_prompt
+    assert "Start from the copy-fill TOON template" in understanding_prompt
+    assert "will canonicalize schema-valid JSON to TOON" in understanding_prompt
+    assert f"JSON authoring path: {preflight['paths']['understanding_authoring_output']}" in understanding_prompt
     assert understanding_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"change_units"' in understanding_prompt
+    assert "@root review_understanding" in understanding_prompt
 
     judge_prompt = judge_prompt_path.read_text(encoding="utf-8")
     template = _load_review_template("stage2-judge.md")
@@ -239,13 +353,23 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert "## Execution Gates" in judge_prompt
     assert "AgentPack context" in judge_prompt
     assert "Do not answer inline from this stage prompt." in judge_prompt
-    assert "Do not continue until the declared input TOON exists and has been read from disk." in judge_prompt
-    assert f"Input path: {preflight['paths']['understanding_output']}" in judge_prompt
-    assert f"Output path: {preflight['paths']['findings_output']}" in judge_prompt
+    assert f"Copy-fill TOON template: {preflight['paths']['findings_template']}" in judge_prompt
+    assert "Do not continue until the declared canonical TOON input exists and has been read from disk." in judge_prompt
+    assert f"Canonical TOON input path: {preflight['paths']['understanding_output']}" in judge_prompt
+    assert f"JSON authoring path: {preflight['paths']['findings_authoring_output']}" in judge_prompt
     assert judge_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"findings"' in judge_prompt
-    assert "Make one complete pass" in judge_prompt
-    assert "Do not hold back lower-priority fixes" in judge_prompt
+    assert "@root review_findings" in judge_prompt
+
+    critic_prompt = critic_prompt_path.read_text(encoding="utf-8")
+    template = _load_review_template("stage3-critic.md")
+    assert critic_prompt.startswith(template)
+    assert f"Copy-fill TOON template: {preflight['paths']['critique_template']}" in critic_prompt
+    assert f"Canonical TOON input path: {preflight['paths']['understanding_output']}" in critic_prompt
+    assert f"Canonical TOON input path: {preflight['paths']['findings_output']}" in critic_prompt
+    assert f"JSON authoring path: {preflight['paths']['critique_authoring_output']}" in critic_prompt
+    assert '"decisions"' in critic_prompt
+    assert '"head_sha"' in critic_prompt
 
 
 def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
@@ -260,7 +384,9 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
 
     missing = runner.invoke(app, ["review", "--check"])
     assert missing.exit_code == 1
-    assert "Stage 1 artifact missing" in missing.output
+    assert "Anchor artifact missing" in missing.output
+    assert "What failed: Anchor understanding artifact is missing" in missing.output
+    assert "Safe to continue: no; create the Anchor artifact first" in missing.output
 
     understanding = repo / preflight["paths"]["understanding_output"]
     understanding.parent.mkdir(parents=True, exist_ok=True)
@@ -278,9 +404,9 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
 
     ready = runner.invoke(app, ["review", "--check"])
     assert ready.exit_code == 0, ready.output
-    assert "Stage 1 valid" in ready.output
+    assert "Anchor valid" in ready.output
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "awaiting_findings"
+    assert state["status"] == "awaiting_judge"
 
     findings = repo / preflight["paths"]["findings_output"]
     findings.write_text(
@@ -293,11 +419,628 @@ def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
         encoding="utf-8",
     )
 
+    judge_ready = runner.invoke(app, ["review", "--check"])
+    assert judge_ready.exit_code == 0, judge_ready.output
+    assert "Judge valid" in judge_ready.output
+    state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "awaiting_critic"
+
+    actor_blocked = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+    assert actor_blocked.exit_code == 1
+    assert "Actor blocked" in actor_blocked.output
+    assert not (repo / preflight["paths"]["approved_findings_output"]).exists()
+
+    _write_critique(repo, preflight, [])
     complete = runner.invoke(app, ["review", "--check"])
     assert complete.exit_code == 0, complete.output
-    assert "Stage 2 valid" in complete.output
+    assert "Critic valid" in complete.output
     state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
-    assert state["status"] == "complete"
+    assert state["status"] == "ready_to_publish"
+    approved = repo / preflight["paths"]["approved_findings_output"]
+    assert approved.exists()
+
+
+def test_review_check_blocks_stale_active_preflight(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+    run_dir = repo / ".agentpack" / "reviews" / "old-branch" / "run"
+    run_dir.mkdir(parents=True)
+    preflight = {
+        "git": {"branch": "old-branch"},
+        "paths": {
+            "run_dir": ".agentpack/reviews/old-branch/run",
+            "understanding_output": ".agentpack/reviews/old-branch/run/understanding.toon",
+            "findings_output": ".agentpack/reviews/old-branch/run/findings.toon",
+        },
+    }
+    (repo / ".agentpack" / "review-preflight.json").write_text(json.dumps(preflight), encoding="utf-8")
+
+    result = runner.invoke(app, ["review", "--check"])
+
+    assert result.exit_code == 1
+    assert "Active review preflight is stale" in result.output
+    assert "prepared for branch old-branch" in result.output
+    assert "validating artifacts from another branch or PR" in result.output
+
+
+def test_critic_requires_one_known_decision_per_judge_finding_and_promotes_only_approved(tmp_path) -> None:
+    preflight = {
+        "git": {"head_sha": "abc123"},
+        "paths": {"approved_findings_output": ".agentpack/reviews/run/approved-findings.toon"},
+    }
+    findings = {
+        "findings": [
+            {"id": "f1", "severity": "blocker", "location": "src/foo.py:1", "unit": "cu1", "claim": "one", "evidence": "src/foo.py:1",},
+            {"id": "f2", "severity": "should-fix", "location": "src/foo.py:2", "unit": "cu1", "claim": "two", "evidence": "src/foo.py:2",},
+        ],
+        "coverage": "complete",
+    }
+    base = {"head_sha": "abc123", "decisions": [{"finding_id": "f1", "verdict": "accept", "rationale": "valid"}]}
+
+    with pytest.raises(ValueError, match="head_sha must exactly match"):
+        _validate_critique_against_findings({"head_sha": "old-head", "decisions": []}, findings, preflight)
+    with pytest.raises(ValueError, match="missing Judge finding IDs: f2"):
+        _validate_critique_against_findings(base, findings, preflight)
+    with pytest.raises(ValueError, match="unknown Judge finding IDs: extra"):
+        _validate_critique_against_findings(
+            {"head_sha": "abc123", "decisions": [*base["decisions"], {"finding_id": "extra", "verdict": "reject", "rationale": "unknown"}]},
+            findings,
+            preflight,
+        )
+    with pytest.raises(ValueError, match="exactly one decision"):
+        _validate_critique_against_findings(
+            {"head_sha": "abc123", "decisions": [*base["decisions"], {"finding_id": "f1", "verdict": "reject", "rationale": "duplicate"}, {"finding_id": "f2", "verdict": "reject", "rationale": "valid"}]},
+            findings,
+            preflight,
+        )
+
+    critique = {
+        "head_sha": "abc123",
+        "decisions": [
+            {"finding_id": "f1", "verdict": "downgrade", "rationale": "Impact is limited.", "severity": "nit"},
+            {"finding_id": "f2", "verdict": "reject", "rationale": "The evidence does not establish a defect."},
+        ],
+    }
+    _validate_critique_against_findings(critique, findings, preflight)
+    approved = _write_approved_findings(tmp_path, preflight, findings, critique)
+
+    assert approved["findings"] == [{**findings["findings"][0], "severity": "nit"}]
+    assert (tmp_path / preflight["paths"]["approved_findings_output"]).exists()
+    assert (tmp_path / ".agentpack" / "review-approved-findings.toon").exists()
+
+
+def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["review", "--allow-local-fallback", "older model compatibility"])
+    assert first.exit_code == 0, first.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_authoring_output"]
+    understanding_canonical = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        json.dumps(
+            {
+                "intent": {"requirement": "placeholder"},
+                "change_units": [],
+                "open_questions": [],
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    ready = runner.invoke(app, ["review", "--check"])
+
+    assert ready.exit_code == 0, ready.output
+    assert "Anchor valid" in ready.output
+    assert understanding.read_text(encoding="utf-8").lstrip().startswith("{")
+    assert understanding_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_understanding\n")
+
+    findings = repo / preflight["paths"]["findings_authoring_output"]
+    findings_canonical = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "```json\n"
+        + json.dumps(
+            {
+                "findings": [],
+                "coverage": "complete",
+            }
+        )
+        + "\n```\n",
+        encoding="utf-8",
+    )
+
+    judge_ready = runner.invoke(app, ["review", "--check"])
+
+    assert judge_ready.exit_code == 0, judge_ready.output
+    assert "Judge valid" in judge_ready.output
+    assert findings.read_text(encoding="utf-8").startswith("```json\n")
+    assert findings_canonical.read_text(encoding="utf-8").startswith("@format toon\n@root review_findings\n")
+    _write_critique(repo, preflight, [])
+    complete = runner.invoke(app, ["review", "--check"])
+    assert complete.exit_code == 0, complete.output
+    assert "Critic valid" in complete.output
+
+
+def test_review_validation_uses_pr_head_citation_source_when_worktree_drifts(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    head_sha = subprocess.run(
+        ["git", "rev-parse", "HEAD"],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+    (repo / "src" / "foo.py").write_text("def foo():\n    value = 0\n    return 2\n", encoding="utf-8")
+    run_dir = repo / ".agentpack" / "reviews" / "pr-1" / "run"
+    run_dir.mkdir(parents=True)
+    preflight = {
+        "paths": {"findings_output": ".agentpack/reviews/pr-1/run/findings.toon"},
+        "git": {"head_sha": head_sha},
+        "citation_source": {"mode": "git-head", "head_sha": head_sha},
+    }
+    (run_dir / "preflight.json").write_text(json.dumps(preflight), encoding="utf-8")
+    findings = run_dir / "findings.toon"
+    findings.write_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "f1",
+                        "unit": "cu1",
+                        "location": "src/foo.py:2",
+                        "claim": "foo returns changed value",
+                        "evidence": "src/foo.py:2 shows the returned value",
+                        "severity": "should-fix",
+                    }
+                ],
+                "coverage": "complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _validate_review_artifact(findings, kind="findings")
+
+    assert payload["findings"][0]["id"] == "f1"
+
+
+def test_review_validation_report_suggests_nearby_repair_line(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    invalid = repo / ".agentpack" / "findings-repair.toon"
+    invalid.parent.mkdir(parents=True, exist_ok=True)
+    invalid.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:1\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:1 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: incomplete\n",
+        encoding="utf-8",
+    )
+
+    try:
+        _validate_review_artifact(invalid, kind="findings")
+    except ValueError as exc:
+        assert "suggested=src/foo.py:2" in str(exc)
+    else:
+        raise AssertionError("unsupported evidence should fail citation validation")
+    report = json.loads((repo / ".agentpack" / "findings-validation-errors.json").read_text(encoding="utf-8"))
+    assert report["repair_hints"][0]["suggested"] == "src/foo.py:2"
+    assert 'src/foo.py:2 "return 2"' in report["repair_hints"][0]["suggestions"]
+
+
+def test_review_check_writes_repair_guide_for_invalid_toon(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    monkeypatch.setattr("agentpack.commands.review_cmd._gh_pr_metadata", lambda _root, _target=None: None)
+    runner = CliRunner()
+
+    first = runner.invoke(app, ["review", "--allow-local-fallback", "bad toon"])
+    assert first.exit_code == 0, first.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text("@format toon\nbroken\n", encoding="utf-8")
+
+    failed = runner.invoke(app, ["review", "--check"])
+
+    assert failed.exit_code == 1
+    assert "repair" in failed.output
+    assert "guide" in failed.output
+    repair = understanding.with_name("understanding-toon-repair.md")
+    assert repair.exists()
+    repair_text = repair.read_text(encoding="utf-8")
+    assert "@root review_understanding" in repair_text
+    assert "valid JSON matching the same schema" in repair_text
+
+
+def test_review_commentable_right_lines_parse_diff_hunks() -> None:
+    diff = (
+        "diff --git a/src/foo.py b/src/foo.py\n"
+        "--- a/src/foo.py\n"
+        "+++ b/src/foo.py\n"
+        "@@ -1,2 +1,2 @@\n"
+        " def foo():\n"
+        "-    return 1\n"
+        "+    return 2\n"
+    )
+
+    assert _parse_commentable_right_lines(diff) == {"src/foo.py": {1, 2}}
+
+
+def test_review_findings_to_inline_comments_require_right_side_lines() -> None:
+    findings = [
+        {
+            "id": "f1",
+            "location": "src/foo.py:2",
+            "claim": "foo returns a changed value",
+            "evidence": "src/foo.py:2 shows the returned value",
+            "severity": "should-fix",
+            "category": "defect",
+            "confidence": "high",
+            "direction": "Return the intended value or update the caller expectation.",
+        },
+        {
+            "id": "f2",
+            "location": "src/bar.py:4",
+            "claim": "bar changed",
+            "evidence": "src/bar.py:4 shows the change",
+        },
+    ]
+
+    comments, skipped, non_inline_notes = _findings_to_inline_comments(findings, {"src/foo.py": {2}})
+
+    assert comments == [
+        {
+            "path": "src/foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": (
+                "[![AgentPack review]"
+                "(https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-review-badge.png)]"
+                "(https://github.com/vishal2612200/agentpack)\n\n"
+                "**Should fix**\n\n"
+                "foo returns a changed value\n\n"
+                "Evidence: src/foo.py:2 shows the returned value\n\n"
+                "Suggested next step: Return the intended value or update the caller expectation.\n\n"
+                "<details><summary>Review metadata</summary>\n\n"
+                "Finding `f1` | severity: `should-fix` | category: `defect` | confidence: `high`\n\n"
+                "</details>"
+            ),
+        }
+    ]
+    assert skipped == ["finding 2: src/bar.py:4 is not in the PR diff as a right-side line"]
+    assert non_inline_notes == [
+        "- Finding `f2` at `src/bar.py:4`: bar changed\n"
+        "  Reason: finding 2: src/bar.py:4 is not in the PR diff as a right-side line\n"
+        "  Evidence: src/bar.py:4 shows the change"
+    ]
+
+
+def test_review_check_posts_inline_comments_once(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / "src" / "bar.py").write_text(
+        "def bar():\n    value = 1\n    flag = True\n    return 'supporting behavior'\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+    posted_requests: list[tuple[str, int, dict]] = []
+
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._gh_pr_metadata",
+        lambda _root, _target=None: {
+            "number": 98,
+            "title": "Load test",
+            "url": "https://github.com/acme/repo/pull/98",
+            "base_ref": "main",
+            "head_ref": "feature/load-test",
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._fetch_pr_refs", lambda _root, _number, _base: {"ok": True, "error": ""})
+    monkeypatch.setattr("agentpack.commands.review_cmd._rev_parse", lambda _root, _ref: "abc123")
+    monkeypatch.setattr("agentpack.commands.review_cmd._changed_paths", lambda _root, _range: ["src/foo.py"])
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._commentable_right_lines", lambda _root, _range: {"src/foo.py": {2}})
+
+    def fake_post(_root, repo_slug, pr_number, payload):
+        posted_requests.append((repo_slug, pr_number, payload))
+        return {"html_url": "https://github.com/acme/repo/pull/98#pullrequestreview-1", "id": 1}
+
+    monkeypatch.setattr("agentpack.commands.review_cmd._post_pull_request_review", fake_post)
+
+    prepared = runner.invoke(app, ["review", "--pr", "98", "focus latency"])
+    assert prepared.exit_code == 0, prepared.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:2\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:2 shows the returned value\n"
+        "    severity: should-fix\n"
+        "  -\n"
+        "    id: f2\n"
+        "    unit: cu1\n"
+        "    location: src/bar.py:4\n"
+        "    claim: bar returns supporting behavior\n"
+        "    evidence: src/bar.py:4 returns supporting behavior\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: complete\n",
+        encoding="utf-8",
+    )
+
+    _write_critique(
+        repo,
+        preflight,
+        [
+            {"finding_id": "f1", "verdict": "accept", "rationale": "The evidence is direct and the finding is actionable."},
+            {"finding_id": "f2", "verdict": "accept", "rationale": "This candidate remains valid and covers the non-inline body path."},
+        ],
+    )
+
+    posted = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+
+    assert posted.exit_code == 0, posted.output
+    assert "Posted inline review comments" in posted.output
+    assert len(posted_requests) == 1
+    repo_slug, pr_number, payload = posted_requests[0]
+    assert repo_slug == "acme/repo"
+    assert pr_number == 98
+    assert payload["commit_id"] == "abc123"
+    assert payload["event"] == "COMMENT"
+    assert "AgentPack found 2 evidence-backed findings: 1 inline and 1 in this review body." in payload["body"]
+    assert f"Run: `{preflight['review']['run_id']}`" in payload["body"]
+    assert "Head: `abc123`" in payload["body"]
+    assert "## Non-inline findings" in payload["body"]
+    assert "Finding `f2` at `src/bar.py:4`: bar returns supporting behavior" in payload["body"]
+    assert "Reason: finding 2: src/bar.py:4 is not in the PR diff as a right-side line" in payload["body"]
+    assert "Evidence: src/bar.py:4 returns supporting behavior" in payload["body"]
+    assert payload["comments"] == [
+        {
+            "path": "src/foo.py",
+            "line": 2,
+            "side": "RIGHT",
+            "body": (
+                "[![AgentPack review]"
+                "(https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-review-badge.png)]"
+                "(https://github.com/vishal2612200/agentpack)\n\n"
+                "**Should fix**\n\n"
+                "foo returns changed value\n\n"
+                "Evidence: src/foo.py:2 shows the returned value\n\n"
+                "Suggested next step: Fix this path, or leave a note explaining why the current behavior is intentional.\n\n"
+                "<details><summary>Review metadata</summary>\n\n"
+                "Finding `f1` | severity: `should-fix`\n\n"
+                "</details>"
+            ),
+        }
+    ]
+    posted_record = json.loads((repo / preflight["paths"]["run_dir"] / "posted-review.json").read_text(encoding="utf-8"))
+    dry_run_record = json.loads((repo / preflight["paths"]["run_dir"] / "inline-review-dry-run.json").read_text(encoding="utf-8"))
+    assert dry_run_record["status"] == "dry_run"
+    assert dry_run_record["payload_sha256"] == posted_record["payload_sha256"]
+    assert posted_record["status"] == "posted"
+    assert posted_record["comments"] == 1
+    assert posted_record["non_inline_findings"] == 1
+    state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
+    assert state["posted_review"]["status"] == "posted"
+
+    again = runner.invoke(app, ["review", "--check", "--post-inline-comments"])
+
+    assert again.exit_code == 0, again.output
+    assert "Review comments already posted" in again.output
+    assert len(posted_requests) == 1
+
+
+def test_review_check_dry_run_writes_inline_payload_without_posting(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._gh_pr_metadata",
+        lambda _root, _target=None: {
+            "number": 98,
+            "title": "Load test",
+            "url": "https://github.com/acme/repo/pull/98",
+            "base_ref": "main",
+            "head_ref": "feature/load-test",
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._fetch_pr_refs", lambda _root, _number, _base: {"ok": True, "error": ""})
+    monkeypatch.setattr("agentpack.commands.review_cmd._rev_parse", lambda _root, _ref: "abc123")
+    monkeypatch.setattr("agentpack.commands.review_cmd._changed_paths", lambda _root, _range: ["src/foo.py"])
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._commentable_right_lines", lambda _root, _range: {"src/foo.py": {2}})
+
+    def fail_if_posted(_root, _repo_slug, _pr_number, _payload):
+        raise AssertionError("dry-run should not call GitHub")
+
+    monkeypatch.setattr("agentpack.commands.review_cmd._post_pull_request_review", fail_if_posted)
+
+    prepared = runner.invoke(app, ["review", "--pr", "98", "focus latency"])
+    assert prepared.exit_code == 0, prepared.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:2\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:2 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: complete\n",
+        encoding="utf-8",
+    )
+
+    _write_critique(repo, preflight, [{"finding_id": "f1", "verdict": "accept", "rationale": "The evidence is direct and the finding is actionable."}])
+
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-check"])
+
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Inline review payload valid" in dry_run.output
+    run_dir = repo / preflight["paths"]["run_dir"]
+    assert not (run_dir / "posted-review.json").exists()
+    dry_run_record = json.loads((run_dir / "inline-review-dry-run.json").read_text(encoding="utf-8"))
+    assert dry_run_record["status"] == "dry_run"
+    assert dry_run_record["comments"] == 1
+    payload_record = json.loads((run_dir / "inline-review-payload.json").read_text(encoding="utf-8"))
+    assert payload_record["endpoint"] == "repos/acme/repo/pulls/98/reviews"
+    assert payload_record["payload_sha256"] == dry_run_record["payload_sha256"]
+    assert payload_record["payload"]["commit_id"] == "abc123"
+    assert payload_record["payload"]["comments"][0]["path"] == "src/foo.py"
+    assert payload_record["payload"]["comments"][0]["body"].startswith("[![AgentPack review]")
+    state = json.loads((repo / ".agentpack" / "review-state.json").read_text(encoding="utf-8"))
+    assert state["posted_review"]["status"] == "dry_run"
+
+
+def test_review_check_dry_run_keeps_non_commentable_finding_in_body(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    monkeypatch.chdir(repo)
+    runner = CliRunner()
+
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._gh_pr_metadata",
+        lambda _root, _target=None: {
+            "number": 98,
+            "title": "Load test",
+            "url": "https://github.com/acme/repo/pull/98",
+            "base_ref": "main",
+            "head_ref": "feature/load-test",
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._fetch_pr_refs", lambda _root, _number, _base: {"ok": True, "error": ""})
+    monkeypatch.setattr("agentpack.commands.review_cmd._rev_parse", lambda _root, _ref: "abc123")
+    monkeypatch.setattr("agentpack.commands.review_cmd._changed_paths", lambda _root, _range: ["src/foo.py"])
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._build_review_context_pack",
+        lambda _root, _review_context, _diff_info, _outputs, _warnings: {
+            "path": "",
+            "tokens": 0,
+            "selected_files": 0,
+            "broad_context": False,
+        },
+    )
+    monkeypatch.setattr("agentpack.commands.review_cmd._commentable_right_lines", lambda _root, _range: {})
+
+    prepared = runner.invoke(app, ["review", "--pr", "98", "focus latency"])
+    assert prepared.exit_code == 0, prepared.output
+    preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+
+    understanding = repo / preflight["paths"]["understanding_output"]
+    understanding.parent.mkdir(parents=True, exist_ok=True)
+    understanding.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    findings = repo / preflight["paths"]["findings_output"]
+    findings.write_text(
+        "@format toon\n"
+        "@root review_findings\n"
+        "findings[]:\n"
+        "  -\n"
+        "    id: f1\n"
+        "    unit: cu1\n"
+        "    location: src/foo.py:2\n"
+        "    claim: foo returns changed value\n"
+        "    evidence: src/foo.py:2 shows the returned value\n"
+        "    severity: should-fix\n"
+        "coverage:\n"
+        "  status: complete\n",
+        encoding="utf-8",
+    )
+
+    _write_critique(repo, preflight, [{"finding_id": "f1", "verdict": "accept", "rationale": "The evidence is direct and the finding is actionable."}])
+
+    dry_run = runner.invoke(app, ["review", "--check", "--dry-run-post"])
+
+    assert dry_run.exit_code == 0, dry_run.output
+    assert "Inline review payload valid" in dry_run.output
+    assert not (repo / preflight["paths"]["run_dir"] / "posted-review.json").exists()
+    run_dir = repo / preflight["paths"]["run_dir"]
+    dry_run_record = json.loads((run_dir / "inline-review-dry-run.json").read_text(encoding="utf-8"))
+    payload_record = json.loads((run_dir / "inline-review-payload.json").read_text(encoding="utf-8"))
+    assert dry_run_record["comments"] == 0
+    assert dry_run_record["non_inline_findings"] == 1
+    assert "comments" not in payload_record["payload"]
+    assert "AgentPack found 1 evidence-backed finding that could not be attached inline" in payload_record["payload"]["body"]
+    assert "Finding `f1` at `src/foo.py:2`: foo returns changed value" in payload_record["payload"]["body"]
+    assert "Reason: finding 1: src/foo.py:2 is not in the PR diff as a right-side line" in payload_record["payload"]["body"]
 
 
 def test_review_command_starts_fresh_and_warns_about_incomplete_previous_run(tmp_path, monkeypatch) -> None:
@@ -341,6 +1084,16 @@ def test_review_command_resume_reuses_existing_run(tmp_path, monkeypatch) -> Non
     assert resumed_preflight["review"]["mode"] == "resume"
     assert resumed_preflight["review_context"] == "first pass"
 
+    listed = runner.invoke(app, ["review", "--list"])
+    assert listed.exit_code == 0, listed.output
+    assert run_id in listed.output
+
+    latest = runner.invoke(app, ["review", "--resume", "latest"])
+    assert latest.exit_code == 0, latest.output
+    latest_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
+    assert latest_preflight["review"]["run_id"] == run_id
+
+
 def test_review_command_warns_on_invalid_understanding_toon(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.chdir(repo)
@@ -358,7 +1111,7 @@ def test_review_command_warns_on_invalid_understanding_toon(tmp_path, monkeypatc
     assert second.exit_code == 0, second.output
     second_preflight = json.loads((repo / ".agentpack" / "review-preflight.json").read_text(encoding="utf-8"))
 
-    assert any("invalid understanding TOON" in warning for warning in second_preflight["warnings"])
+    assert any("invalid understanding artifact" in warning for warning in second_preflight["warnings"])
 
 def test_review_command_resume_fails_cleanly_on_invalid_understanding_toon(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
@@ -410,6 +1163,7 @@ def test_review_findings_validator_requires_claim_level_citations(tmp_path) -> N
         "    location: src/foo.py\n"
         "    claim: foo returns changed value\n"
         "    evidence: code shows it\n"
+        "    severity: should-fix\n"
         "coverage:\n"
         "  status: incomplete\n",
         encoding="utf-8",
@@ -420,8 +1174,8 @@ def test_review_findings_validator_requires_claim_level_citations(tmp_path) -> N
     try:
         _validate_review_artifact(invalid, kind="findings")
     except ValueError as exc:
-        assert "missing valid location path:line" in str(exc)
-        assert "missing evidence path:line" in str(exc)
+        assert "location must include path:line evidence" in str(exc)
+        assert "evidence must include path:line evidence" in str(exc)
     else:
         raise AssertionError("invalid findings should fail citation validation")
 
@@ -489,6 +1243,77 @@ def test_review_findings_validator_can_use_semantic_support_command(tmp_path, mo
         assert "semantic support rejected (semantic mismatch)" in str(exc)
     else:
         raise AssertionError("semantic support command rejection should fail validation")
+
+
+def test_review_understanding_validator_accepts_structured_contracts(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    valid = repo / ".agentpack" / "understanding-contracts-valid.toon"
+    valid.parent.mkdir(parents=True, exist_ok=True)
+    valid.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  -\n"
+        "    id: cu1\n"
+        "    location: src/foo.py:1-2\n"
+        "    kind: core\n"
+        "    what_changed: foo return changed\n"
+        "    code: src/foo.py:2 return 2\n"
+        "    referenced_symbols[]:\n"
+        "      []\n"
+        "    callers[]:\n"
+        "      []\n"
+        "    contracts_touched[]:\n"
+        "      -\n"
+        "        contract: foo return value\n"
+        "        before: returns 1\n"
+        "        after: returns 2\n"
+        "        evidence: src/foo.py:2\n"
+        "    local_convention_refs[]:\n"
+        "      []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+    invalid = repo / ".agentpack" / "understanding-contracts-invalid.toon"
+    invalid.write_text(
+        "@format toon\n"
+        "@root review_understanding\n"
+        "intent:\n"
+        "  requirement: placeholder\n"
+        "change_units[]:\n"
+        "  -\n"
+        "    id: cu1\n"
+        "    location: src/foo.py:1-2\n"
+        "    kind: core\n"
+        "    what_changed: foo return changed\n"
+        "    code: src/foo.py:2 return 2\n"
+        "    referenced_symbols[]:\n"
+        "      []\n"
+        "    callers[]:\n"
+        "      []\n"
+        "    contracts_touched[]:\n"
+        "      -\n"
+        "        contract: foo return value\n"
+        "        before: returns 1\n"
+        "        after: returns 2\n"
+        "    local_convention_refs[]:\n"
+        "      []\n"
+        "open_questions[]:\n"
+        "  []\n",
+        encoding="utf-8",
+    )
+
+    _validate_review_artifact(valid, kind="understanding")
+
+    try:
+        _validate_review_artifact(invalid, kind="understanding")
+    except ValueError as exc:
+        assert "contracts_touched[1] missing required key: evidence" in str(exc)
+    else:
+        raise AssertionError("contract entries without evidence should fail schema validation")
 
 
 def test_review_understanding_validator_rejects_unsupported_symbol_line(tmp_path) -> None:

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shlex
 import shutil
 import subprocess
 from dataclasses import dataclass
@@ -36,12 +37,12 @@ def has_cli_command(command: str) -> bool:
 
 def refresh_commands(agent: str = "auto") -> RefreshCommands:
     if has_cli_command("guard"):
-        base = f"agentpack guard --agent {agent} --repair-stale --refresh-context"
+        global_base = refresh_command(agent, "global")
         return RefreshCommands(
-            primary=base,
-            context_missing=base,
-            thread_auto=f"AGENTPACK_THREAD_ID=<stable-id> {base} --thread auto",
-            repair=base,
+            primary=global_base,
+            context_missing=global_base,
+            thread_auto=f'AGENTPACK_THREAD_ID=<stable-id> {refresh_command(agent, "auto")}',
+            repair=global_base,
             used_guard=True,
         )
     pack = f"agentpack pack --agent {agent} --task auto"
@@ -54,14 +55,30 @@ def refresh_commands(agent: str = "auto") -> RefreshCommands:
     )
 
 
-def refresh_command_args(agent: str = "auto", mode: str = "balanced", budget: int = 0) -> list[str]:
+def refresh_command(agent: str = "auto", thread: str | None = None) -> str:
+    """Render one refresh command with each singleton option supplied once."""
+    return shlex.join(["agentpack", *refresh_command_args(agent, mode="", thread=thread)])
+
+
+def refresh_command_args(
+    agent: str = "auto",
+    mode: str = "balanced",
+    budget: int = 0,
+    thread: str | None = None,
+) -> list[str]:
     """Return CLI argv parts for refreshing context with the current command surface."""
     if has_cli_command("guard"):
-        args = ["guard", "--agent", agent, "--repair-stale", "--refresh-context", "--mode", mode]
+        args = ["guard", "--agent", agent, "--repair-stale", "--refresh-context"]
+        if mode:
+            args.extend(["--mode", mode])
     else:
-        args = ["pack", "--agent", agent, "--task", "auto", "--mode", mode]
+        args = ["pack", "--agent", agent, "--task", "auto"]
+        if mode:
+            args.extend(["--mode", mode])
     if budget:
         args.extend(["--budget", str(budget)])
+    if thread:
+        args.extend(["--thread", thread])
     return args
 
 
@@ -69,7 +86,9 @@ def fallback_agent_guidance() -> str:
     return (
         "If AgentPack tools are unavailable or context looks stale/wrong-worktree, "
         "do not trust old pack output. Use direct `rg`, PR diff inspection, and target-file reads, "
-        "then run focused validation."
+        "then run focused validation. For session handoffs, use MCP `create_handoff` and "
+        "`accept_handoff`; when MCP is unavailable, run `agentpack handoff create` or "
+        "`agentpack handoff resume [name]`."
     )
 
 

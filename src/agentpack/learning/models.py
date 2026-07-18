@@ -35,12 +35,37 @@ class LearningTopic(BaseModel):
     prompt: str
     files: list[str] = Field(default_factory=list)
     concepts: list[str] = Field(default_factory=list)
+    questions: list["LearningQuestion"] = Field(default_factory=list)
     citations: list[Citation] = Field(default_factory=list)
 
 
 class QuizQuestion(BaseModel):
     question: str
     answer: str
+
+
+class LearningQuestion(BaseModel):
+    mode: str
+    question: str
+    expected_points: list[str] = Field(default_factory=list)
+    evidence_files: list[str] = Field(default_factory=list)
+    difficulty: str = "medium"
+
+
+class LearningSession(BaseModel):
+    task: str
+    request: str = ""
+    mode: str = "study"
+    topic: str = ""
+    question: str = ""
+    expected_points: list[str] = Field(default_factory=list)
+    evidence_files: list[str] = Field(default_factory=list)
+    concepts: list[str] = Field(default_factory=list)
+    answer: str = ""
+    score: int | None = None
+    status: str = "queued"
+    source: str = "agentpack learn"
+    created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
 
 
 class AgentLesson(BaseModel):
@@ -100,6 +125,8 @@ class FeedbackSummary(BaseModel):
 class LearningReport(BaseModel):
     task: str
     scope: str
+    learning_request: str = ""
+    coach_mode: str = "study"
     since: str | None = None
     issue_references: list[str] = Field(default_factory=list)
     issue_reference_details: list[dict] = Field(default_factory=list)

@@ -7,31 +7,38 @@ from pathlib import Path
 
 import typer
 
-from agentpack.commands._shared import _atomic_write, _root, console
+from agentpack.commands._shared import _root, console
 from agentpack.dashboard.collectors import build_project_dashboard_snapshot
-from agentpack.dashboard.renderers import render_dashboard_html
+from agentpack.dashboard.server import DEFAULT_DASHBOARD_HOST, DEFAULT_DASHBOARD_PORT, serve_dashboard
 
 
 def register(app: typer.Typer) -> None:
     @app.command()
     def dashboard(
         json_output: bool = typer.Option(False, "--json", help="Print normalized dashboard snapshot JSON."),
-        open_browser: bool = typer.Option(False, "--open", help="Open the generated HTML dashboard."),
-        output: str = typer.Option("", "--output", "-o", help="Dashboard HTML output path."),
+        open_browser: bool = typer.Option(False, "--open", help="Open the served dashboard in a browser."),
+        port: int = typer.Option(DEFAULT_DASHBOARD_PORT, "--port", help="Local dashboard server port."),
+        output: str = typer.Option("", "--output", "-o", help="Deprecated. Static dashboard files are no longer written."),
+        legacy: bool = typer.Option(False, "--legacy", help="Deprecated. The dashboard is serve-only."),
     ) -> None:
-        """Generate a local AgentPack dashboard."""
+        """Serve the local AgentPack dashboard."""
         root = _root()
-        snapshot = build_project_dashboard_snapshot(root)
         if json_output:
+            snapshot = build_project_dashboard_snapshot(root)
             typer.echo(json.dumps(snapshot.model_dump(mode="json"), indent=2, sort_keys=True))
             return
-
-        out = root / (output or ".agentpack/dashboard.html")
-        out.parent.mkdir(parents=True, exist_ok=True)
-        _atomic_write(out, render_dashboard_html(snapshot))
-        console.print(f"[green]✓[/] Wrote [bold]{out}[/]")
-        if open_browser:
-            _open_file(out)
+        if output or legacy:
+            console.print("[red]Static dashboard output is deprecated.[/] Run `agentpack dashboard` and open the served URL instead.")
+            raise typer.Exit(2)
+        url = f"http://{DEFAULT_DASHBOARD_HOST}:{port}/"
+        console.print(f"[green]✓[/] Serving AgentPack dashboard at [bold]{url}[/]")
+        console.print("[dim]Press Ctrl+C to stop.[/]")
+        try:
+            serve_dashboard(root, host=DEFAULT_DASHBOARD_HOST, port=port, open_browser=open_browser)
+        except OSError as exc:
+            console.print(f"[red]Dashboard server failed on {DEFAULT_DASHBOARD_HOST}:{port}: {exc}[/]")
+            console.print("[dim]Use `agentpack dashboard --port <port>` if this port is already in use.[/]")
+            raise typer.Exit(1) from exc
 
 
 def _open_file(path: Path) -> None:

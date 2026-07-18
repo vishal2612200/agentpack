@@ -115,13 +115,19 @@ def render_quality_markdown(report: LearningReport, score: int, issues: list[str
 
 def render_dashboard_html(report: LearningReport) -> str:
     concepts = "".join(f'<span class="chip">{html.escape(concept)}</span>' for concept in report.concepts) or '<span class="muted">None detected</span>'
+    coach_request = html.escape(report.learning_request or "Ask for a lesson, quiz, interview, or failure drill with agentpack learn \"...\"")
+    coach_mode = html.escape(report.coach_mode.replace("-", " ").title())
     topics = "".join(
-        '<article class="learning-card topic-card">'
+        '<article class="topic-row">'
+        '<div class="topic-main">'
         f"<h3>{html.escape(topic.title)}</h3>"
         f"<p>{html.escape(topic.why)}</p>"
-        f'<p class="evidence"><strong>Evidence</strong><br>{_file_chips(topic.files)}</p>'
-        f'<p class="evidence"><strong>Concepts</strong><br>{_file_chips(topic.concepts)}</p>'
-        f'<label class="copy-label">Copy-ready study prompt</label><pre class="copy-prompt">{html.escape(topic.prompt)}</pre>'
+        f'<div class="chips">{_file_chips(topic.concepts)}</div>'
+        "</div>"
+        '<div class="coach-panel">'
+        f"{_questions_html(topic.questions)}"
+        f'<details><summary>Study prompt</summary><pre class="copy-prompt">{html.escape(topic.prompt)}</pre></details>'
+        "</div>"
         "</article>"
         for topic in report.learning_topics
     ) or '<p class="muted">No learning topics generated.</p>'
@@ -161,12 +167,12 @@ def render_dashboard_html(report: LearningReport) -> str:
   <style>
     :root {{
       color-scheme: light;
-      --bg: #eef2f6;
-      --glass: rgba(255, 255, 255, 0.74);
-      --glass-strong: rgba(255, 255, 255, 0.88);
-      --panel: rgba(255, 255, 255, 0.78);
-      --panel-soft: rgba(248, 250, 252, 0.82);
-      --border: rgba(137, 151, 172, 0.34);
+      --bg: #f4f7fb;
+      --glass: rgba(255, 255, 255, 0.82);
+      --glass-strong: rgba(255, 255, 255, 0.94);
+      --panel: #ffffff;
+      --panel-soft: #f8fafc;
+      --border: #d8dee8;
       --text: #131820;
       --muted: #526071;
       --focus: #0f62fe;
@@ -179,7 +185,7 @@ def render_dashboard_html(report: LearningReport) -> str:
     }}
     * {{ box-sizing: border-box; }}
     html {{ scroll-behavior: smooth; }}
-    body {{ margin: 0; background-color: var(--bg); background-image: linear-gradient(180deg, rgba(255,255,255,0.72), rgba(255,255,255,0) 220px), linear-gradient(rgba(31, 42, 68, 0.045) 1px, transparent 1px), linear-gradient(90deg, rgba(31, 42, 68, 0.045) 1px, transparent 1px); background-size: auto, 28px 28px, 28px 28px; color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; line-height: 1.5; }}
+    body {{ margin: 0; background: linear-gradient(180deg, #ffffff 0, var(--bg) 280px); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; line-height: 1.5; }}
     a:focus-visible, button:focus-visible, [tabindex]:focus-visible {{ outline: 3px solid rgba(15, 98, 254, 0.34); outline-offset: 3px; }}
     .skip-link {{ position: absolute; left: 16px; top: -48px; z-index: 4; padding: 10px 12px; border-radius: 8px; background: var(--text); color: #fff; text-decoration: none; }}
     .skip-link:focus {{ top: 12px; }}
@@ -189,7 +195,7 @@ def render_dashboard_html(report: LearningReport) -> str:
     nav {{ display: flex; flex-wrap: wrap; gap: 6px; }}
     nav a {{ min-height: 36px; display: inline-flex; align-items: center; color: var(--muted); text-decoration: none; font-size: 13px; font-weight: 560; padding: 7px 11px; border: 1px solid transparent; border-radius: 999px; transition: background-color 160ms ease, border-color 160ms ease, color 160ms ease; }}
     nav a:hover, nav a:focus-visible {{ background: rgba(255,255,255,0.82); border-color: var(--border); color: var(--text); }}
-    main {{ max-width: 1120px; margin: 0 auto; padding: 24px; }}
+    main {{ max-width: 1180px; margin: 0 auto; padding: 24px; }}
     header.hero {{ padding: 30px 0 24px; display: grid; grid-template-columns: minmax(0, 1fr) minmax(240px, 260px); gap: 24px; align-items: end; border-bottom: 1px solid rgba(137,151,172,0.24); }}
     h1, h2, h3 {{ line-height: 1.2; margin: 0; letter-spacing: 0; }}
     h1 {{ font-size: 34px; font-weight: 780; }}
@@ -208,12 +214,24 @@ def render_dashboard_html(report: LearningReport) -> str:
     .section {{ padding: 6px 0 10px; }}
     .section-header {{ margin-bottom: 12px; display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }}
     .section-body {{ padding: 0; }}
+    .coach-hero {{ display: grid; grid-template-columns: minmax(0, 1fr) minmax(260px, 340px); gap: 14px; margin: 18px 0; }}
+    .coach-card {{ padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow-soft); }}
+    .coach-card strong {{ display: block; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; }}
+    .coach-card span {{ display: block; margin-top: 8px; font-size: 20px; font-weight: 720; }}
     .card-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 12px; }}
     .learning-card {{ border: 1px solid rgba(255,255,255,0.76); border-radius: 8px; padding: 14px; background: var(--panel); box-shadow: var(--shadow-soft); backdrop-filter: blur(14px) saturate(135%); }}
     .learning-card p {{ margin: 10px 0 0; }}
-    .topic-card {{ display: grid; gap: 8px; }}
+    .topic-stack {{ display: grid; gap: 12px; }}
+    .topic-row {{ display: grid; grid-template-columns: minmax(220px, 0.42fr) minmax(0, 1fr); gap: 14px; padding: 16px; border: 1px solid var(--border); border-radius: 8px; background: var(--panel); box-shadow: var(--shadow-soft); }}
+    .topic-main p {{ margin: 8px 0 12px; color: var(--muted); }}
+    .coach-panel {{ display: grid; gap: 10px; }}
+    .question-card {{ padding: 12px; border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; background: var(--panel-soft); }}
+    .question-card p {{ margin: 0 0 8px; }}
+    .expected {{ margin: 0; color: var(--muted); font-size: 13px; }}
+    details {{ border: 1px solid var(--border); border-radius: 8px; background: var(--panel-soft); }}
+    summary {{ cursor: pointer; padding: 10px 12px; color: var(--muted); font-size: 13px; font-weight: 680; }}
     .copy-label {{ color: var(--muted); font-size: 12px; font-weight: 680; text-transform: uppercase; letter-spacing: 0.04em; }}
-    .copy-prompt {{ margin: 0; max-height: 240px; overflow: auto; white-space: pre-wrap; border: 1px solid var(--border); border-radius: 8px; padding: 12px; background: rgba(246,248,251,0.88); color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: all; }}
+    .copy-prompt {{ margin: 0; max-height: 200px; overflow: auto; white-space: pre-wrap; border-top: 1px solid var(--border); padding: 12px; background: #fff; color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; user-select: all; }}
     .chips {{ display: flex; flex-wrap: wrap; gap: 6px; }}
     .chip {{ display: inline-flex; align-items: center; border: 1px solid rgba(148,163,184,0.48); border-radius: 999px; padding: 2px 8px; background: var(--accent-bg); color: var(--accent); font-size: 12px; margin: 2px 4px 2px 0; }}
     table {{ width: 100%; border-collapse: collapse; }}
@@ -236,13 +254,13 @@ def render_dashboard_html(report: LearningReport) -> str:
     @media (max-width: 760px) {{
       .topbar-inner {{ padding: 10px 16px; align-items: flex-start; flex-direction: column; }}
       main {{ padding: 16px; }}
-      header.hero {{ grid-template-columns: 1fr; }}
+      header.hero, .coach-hero, .topic-row {{ grid-template-columns: 1fr; }}
       h1 {{ font-size: 26px; }}
     }}
   </style>
 </head>
 <body>
-<a class="skip-link" href="#main">Skip to learning dashboard</a>
+<a class="skip-link" href="#main">Skip to task coach</a>
 <div class="topbar">
   <div class="topbar-inner">
     <div class="brand">AgentPack</div>
@@ -259,8 +277,8 @@ def render_dashboard_html(report: LearningReport) -> str:
 <main id="main">
   <header class="hero">
     <div>
-    <p class="eyebrow">Learning dashboard</p>
-    <h1>AgentPack Learn Dashboard</h1>
+    <p class="eyebrow">Task coach</p>
+    <h1>Learn while agent works</h1>
     <p class="subtitle">{html.escape(report.task)}</p>
     </div>
     <div class="meta-stack">
@@ -268,16 +286,19 @@ def render_dashboard_html(report: LearningReport) -> str:
       <p class="meta"><strong>Since</strong><br><span class="muted">{html.escape(report.since or "not specified")}</span></p>
     </div>
   </header>
+  <div class="coach-hero">
+    <section class="coach-card"><strong>Current request</strong><span>{coach_request}</span></section>
+    <section class="coach-card"><strong>Coach mode</strong><span>{coach_mode}</span></section>
+  </div>
   <div class="metric-grid">
-    <section class="metric"><strong>Changed Files</strong><span>{len(report.source_files)}</span></section>
+    <section class="metric"><strong>Evidence Files</strong><span>{len(report.source_files)}</span></section>
     <section class="metric"><strong>Concepts</strong><span>{len(report.concepts)}</span></section>
-    <section class="metric"><strong>Learning Topics</strong><span>{len(report.learning_topics)}</span></section>
-    <section class="metric"><strong>Cards</strong><span>{len(report.learning_cards)}</span></section>
-    <section class="metric"><strong>Agent Lessons</strong><span>{len(report.agent_lessons)}</span></section>
+    <section class="metric"><strong>Topics</strong><span>{len(report.learning_topics)}</span></section>
+    <section class="metric"><strong>Questions</strong><span>{sum(len(topic.questions) for topic in report.learning_topics)}</span></section>
   </div>
   <section id="concepts" class="section"><div class="section-header"><h2>Concepts</h2><small>Detected from changed-file evidence</small></div><div class="section-body chips">{concepts}</div></section>
   <section id="files" class="section"><div class="section-header"><h2>Changed File Evidence</h2><small>Source-backed learning inputs</small></div><div class="section-body"><div class="table-wrap"><table><thead><tr><th>Path</th><th>Change</th><th>Why</th><th>Concepts</th></tr></thead><tbody>{source_rows}</tbody></table></div></div></section>
-  <section id="topics" class="section"><div class="section-header"><h2>Learning Topics</h2><small>Copy a source-backed prompt into GPT, Gemini, or another study tool</small></div><div class="section-body card-grid">{topics}</div></section>
+  <section id="topics" class="section"><div class="section-header"><h2>Coach Queue</h2><small>Answer first, then compare against expected points</small></div><div class="section-body topic-stack">{topics}</div></section>
   <section id="cards" class="section"><div class="section-header"><h2>Learning Cards</h2><small>Review-ready summaries</small></div><div class="section-body card-grid">{cards}</div></section>
   <section class="section"><div class="section-header"><h2>Risks and Tests</h2><small>What to review next</small></div><div class="section-body card-grid"><article class="learning-card"><h3>Risks</h3><ul>{risks}</ul></article><article class="learning-card"><h3>Tests</h3><ul>{tests}</ul></article></div></section>
   <section id="lessons" class="section"><div class="section-header"><h2>Agent Lessons</h2><small>Rules captured for future runs</small></div><div class="section-body"><ul>{lessons}</ul></div></section>
@@ -290,6 +311,23 @@ def render_dashboard_html(report: LearningReport) -> str:
 
 def _file_chips(values: list[str]) -> str:
     return "".join(f'<span class="chip">{html.escape(value)}</span>' for value in values) or '<span class="muted">none</span>'
+
+
+def _questions_html(questions) -> str:
+    if not questions:
+        return '<p class="muted">No coach questions generated.</p>'
+    parts: list[str] = []
+    for question in questions[:3]:
+        expected = ", ".join(question.expected_points) if question.expected_points else "task-specific answer"
+        evidence = _file_chips(question.evidence_files)
+        parts.append(
+            '<div class="question-card">'
+            f"<p><strong>{html.escape(question.mode.title())}</strong> {html.escape(question.question)}</p>"
+            f'<p class="expected">Expected: {html.escape(expected)}</p>'
+            f'<div class="chips">{evidence}</div>'
+            "</div>"
+        )
+    return "".join(parts)
 
 
 def render_team_lessons_markdown(report: LearningReport) -> str:
@@ -323,6 +361,10 @@ def render_learning_markdown(report: LearningReport) -> str:
         f"**Task:** {report.task}",
         f"**Scope:** {report.scope}",
     ]
+    if report.learning_request:
+        lines.append(f"**Learning request:** {report.learning_request}")
+    if report.coach_mode:
+        lines.append(f"**Coach mode:** {report.coach_mode}")
     if report.since:
         lines.append(f"**Since:** `{report.since}`")
     if report.issue_references:
@@ -355,6 +397,15 @@ def render_learning_markdown(report: LearningReport) -> str:
             lines.append("Evidence: " + ", ".join(f"`{path}`" for path in topic.files))
         if topic.concepts:
             lines.append("Concepts: " + ", ".join(topic.concepts))
+        if topic.questions:
+            lines.append("")
+            lines.append("Coach questions:")
+            for question in topic.questions:
+                points = ", ".join(question.expected_points) if question.expected_points else "task-specific answer"
+                files = ", ".join(f"`{path}`" for path in question.evidence_files) if question.evidence_files else "no evidence files"
+                lines.append(f"- [{question.mode}] {question.question}")
+                lines.append(f"  Expected points: {points}")
+                lines.append(f"  Evidence: {files}")
         lines.extend(["", "Copy-ready study prompt:", "```text", topic.prompt, "```", ""])
     lines.extend(["", "## Skill Evidence"])
     for item in report.skill_evidence:

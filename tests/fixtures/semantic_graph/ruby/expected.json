@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "ruby",
+  "entities": ["Auth", "TokenStore", "lookup"],
+  "relationships": [],
+  "paths": [],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.rb", "expected_absent": ["source.rb"]}
+}

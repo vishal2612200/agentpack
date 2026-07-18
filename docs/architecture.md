@@ -2,6 +2,26 @@
 
 AgentPack is a local context-preparation pipeline. It scans a repository, scores files for a task, renders a budgeted markdown pack, and writes agent-specific artifacts without calling remote APIs.
 
+## Product Direction
+
+AgentPack is moving from "generate a context file" toward a small local control
+plane for developer-agent work. The control plane has one job: make the next
+safe action obvious from current repo state.
+
+The problem is not only file selection. In real usage, agents fail when task
+state is stale, two chat sessions share one context, a completed task is reused,
+or an agent spends a large token budget reading context that has not changed.
+Those are workflow problems, so the implementation keeps setup, task, context,
+thread, token, and integration health in one shared snapshot.
+
+The architecture intentionally keeps hard boundaries:
+
+- `pack` and `route` find likely context, but never replace direct source inspection.
+- `next`, `quickstart`, `status`, `guard`, and MCP readiness read the same control-plane snapshot.
+- thread-scoped task/context files prevent cross-chat collisions while preserving `--thread global` for legacy workflows.
+- token contracts help agents choose `get_delta_context()` or `get_context()` before reaching for full repacks.
+- observer and learning data are advisory priors, not proof.
+
 ## Core Model: Compress, Cache, Retrieve
 
 AgentPack works by combining three local techniques:
@@ -23,8 +43,8 @@ provider prefix caches.
 ```
 1. Scan repo  →  apply .agentignore  →  skip generated AgentPack outputs  →  hash files
 2. Build offline summaries  →  role, imports, symbols, side effects, public API, errors, test hints
-3. Build import dependency graph  →  Python/JS/TS full, Go/Rust/Java/Kotlin best-effort
-4. Extract summary symbols       →  Python/JS/TS strongest, Go lightweight, others file-summary fallback
+3. Build canonical semantic graph  →  cached Tree-sitter records, dependency-aware materialization, two-pass resolution, source-line evidence
+4. Query the canonical graph  →  ranking, repo-map, task-map, ownership, and review impact
 5. Detect changed files  →  snapshot diff + git working tree + staged + optional --since ref
 6. Classify task  →  bugfix / feature / docs / release / infra / audit / test / ui / refactor
 7. Extract weighted task terms  →  literals, variants, concept synonyms, changed-file identifiers
@@ -70,16 +90,15 @@ provider prefix caches.
           │                   public API, naming     │
           │                   signals, errors        │
           │                                         │
-          │  Import graph  ──  Python AST           │
-          │  (6 languages)  ─  JS/TS regex          │
-          │                 ─  Go regex              │
-          │                 ─  Rust regex            │
-          │                 ─  Java/Kotlin regex     │
+          │  Semantic graph  ── Tree-sitter core    │
+          │  (two-pass)       ── definitions/scopes │
+          │                 ─  imports/calls/refs    │
+          │                 ─  inheritance/tests     │
+          │                 ─  comments/docs/config  │
           │                                         │
-          │  Symbol extract  ── Python AST (full)   │
-          │    (body via       ── JS/TS (functions, │
-          │  ast.get_source_segment)   classes,     │
-          │                    ── arrow fns w/ =>)  │
+          │  Evidence index ── stable IDs/hashes    │
+          │                 ─  source lines         │
+          │                 ─  confidence/provenance│
           │                                         │
           │  Naming signals ── public files/symbols │
           │                  ── env/config/test ids │
@@ -201,6 +220,7 @@ src/agentpack/
     execution_state.py         # task_state.md parsing + git-derived status + Docker/Compose read-only checks
     thread_context.py          # thread ids, scoped paths, thread index, same-branch/worktree overlap detection
     token_estimator.py         # tiktoken cl100k_base (approximate)
+    token_contract.py          # persisted token budget/selection contract for CLI + MCP routing
     redactor.py                # redact_secrets: fires at content materialization
     bootstrap.py               # is_initialized, bootstrap_if_needed
 
@@ -260,6 +280,12 @@ src/agentpack/
 
   mcp_server.py                # MCP tools: start_task, pack_context, get_context, explain, related, stats, delta
 
+  control_plane/
+    models.py                  # typed setup/task/context/thread/token snapshots
+    snapshot.py                # cheap snapshot builder; full repo scan only when requested
+    planner.py                 # pure next-action planner used by next/quickstart/status/guard/MCP
+    renderer.py                # shared human token/action rendering helpers
+
   session/
     state.py                   # SessionState dataclass + load/save/create/stop helpers
     __init__.py                # re-exports from state.py
@@ -295,11 +321,14 @@ src/agentpack/
 - **`ScanResult` splits cleanly**: `scan()` returns `ScanResult(packable, ignored, binary)` — downstream code only processes `packable` files, eliminating `if f.ignored or f.binary` guards throughout.
 - **`PackPlanner` owns shared planning**: `PackPlanner.plan()` runs scan → summarize → graph → changes → rank → repo map → select and returns a `PackPlan`. Both `pack` and `explain` use the same planner — no duplicated pipeline logic, no drift.
 - **`PackService` materializes a plan**: takes a `PackPlan`, computes delta since the previous pack, builds the `ContextPack` artifact, delegates rendering to `AdapterRegistry`, persists snapshot + metadata + metrics.
-- **Thread scope is opt-in and non-breaking**: no `--thread` means the legacy `.agentpack/task.md`, `.agentpack/context.md`, and `.agentpack/pack_metadata.json` flow is unchanged. Passing `--thread <id>` writes isolated state under `.agentpack/threads/<id>/` and appends `.agentpack/thread_index.jsonl`.
+- **The control plane owns "what now?"**: `control_plane.snapshot` builds a cheap setup/task/context/thread/token snapshot. `next`, `quickstart`, `status`, MCP readiness, and guard compatibility helpers use that shared model, while `guard` still asks for a strict file scan before returning success.
+- **Agent sessions are scoped by default**: when `AGENTPACK_THREAD_ID`, `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`, `CURSOR_SESSION_ID`, `WINDSURF_SESSION_ID`, `ANTIGRAVITY_SESSION_ID`, or `GEMINI_SESSION_ID` is present, commands and MCP tools use isolated state under `.agentpack/threads/<id>/`. `--thread global` opts into the legacy `.agentpack/task.md`, `.agentpack/context.md`, and `.agentpack/pack_metadata.json` flow.
 - **Concurrent work is warning-based**: thread mode detects active threads from the last 24 hours on the same branch/worktree and warns when selected or dirty files overlap. It does not lock files; separate worktrees/branches remain the safest workflow.
+- **Done tasks are terminal**: `finish` marks task state done and archives scoped sessions; later `guard`, `next`, MCP context reads, and refresh flows refuse to reuse completed context for a new task.
 - **Execution state is explicit context**: rendered packs include task status, checklist counts, git branch/SHA/ahead/behind/dirty counts, and Docker/Compose availability. `task_state.md` is optional; absent state is derived from git.
 - **Mode selection is value-aware**: changed files can be `full`, `diff`, `symbols`, `skeleton`, or `summary`. Large diffs keep task-relevant hunks first, and tight budgets downgrade files before dropping them.
 - **Rendered budget is the real budget**: final token accounting measures the markdown artifact, including tables, freshness, receipts, and overhead. Under pressure, AgentPack trims receipts first, then repo map, delta, runtime/concurrent detail, selected files, and only then freshness detail.
+- **Token contracts are persisted**: pack metadata records the rendered estimate, budget usage, selected-file mode counts, largest sections, trimmed modes, and recommended next context strategy. CLI and MCP surfaces use this to prefer delta/context reads over unnecessary full repacks.
 - **Repo maps are first-class context**: `analysis/repo_map.py` builds a compact semantic map before file context, and its token cost is reserved before file selection.
 - **Metrics feed history learning**: selection accuracy records hit/noise paths, token precision, mode counts, and mode tokens. Later packs gently penalize repeated noisy paths unless they are currently changed.
 - **Git history feeds recall**: files that historically changed in the same commits as live changed files receive a small boost, helping related tests, schemas, services, and configs surface without forcing full-content inclusion.
@@ -312,7 +341,7 @@ src/agentpack/
 - **`integrations/` vs `core/`**: git hooks, shell rc patching, and VS Code tasks are infrastructure concerns — they live in `integrations/`, not `core/`. `core/` is pure domain logic.
 - **Adapters render; installers configure**: `adapters/` knows how to write a context file for an agent. `installers/` knows how to configure the agent's tool (CLAUDE.md, .cursorrules, settings.json). They are separate concerns and separate classes.
 - **Agent integration contract is shared**: `integrations/agents.py` defines install, audit, and repair behavior for Claude, Cursor, Windsurf, Codex, Antigravity, and Generic. `install`, `repair`, `doctor --agent all`, and release verification use the same contract.
-- **MCP is the interactive path**: `start_task(thread_id=...)` writes global or scoped task state and returns a fresh pack, while `get_context(thread_id=...)` auto-refreshes stale task or repo-snapshot context and `get_delta_context()`, `explain_file()`, and `get_related_files()` let agents pull follow-up context on demand.
+- **MCP is the interactive path**: `readiness()` reports the recommended next tool, avoid list, and token hint; `start_task(thread_id=...)` writes ambient scoped or explicit global task state and returns a fresh pack, while `get_context(thread_id=...)` auto-refreshes stale task or repo-snapshot context and `get_delta_context()`, `explain_file()`, and `get_related_files()` let agents pull follow-up context on demand.
 - **Native enforcement status is explicit**: `native-integrations/status.json` tracks host skeletons and blockers. Entries stay `advisory`, not `enforced`, until a host exposes mandatory pre-edit/pre-tool hooks that can block failed readiness checks.
 
 ---

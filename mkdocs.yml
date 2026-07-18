@@ -8,6 +8,8 @@ edit_uri: edit/main/docs/
 theme:
   name: material
   language: en
+  logo: assets/icon.svg
+  favicon: assets/icon.svg
   features:
     - navigation.instant
     - navigation.sections
@@ -19,6 +21,7 @@ plugins:
   - search
 
 extra:
+  social_image: assets/agentpack-social.svg
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/vishal2612200/agentpack
@@ -48,6 +51,7 @@ nav:
       - AI coding agent context packing: ai-coding-agent-context.md
       - Reduce Claude Code token usage: reduce-claude-code-token-usage.md
       - Agent behavior before and after: examples/agent-behavior-before-after.md
+      - Demo assets: demo.md
   - Comparisons:
       - AgentPack vs Repomix: agentpack-vs-repomix.md
       - AgentPack vs Augment Context Engine: agentpack-vs-augment-context-engine.md
@@ -58,8 +62,10 @@ nav:
       - Privacy: privacy.md
       - Threat model: threat-model.md
       - Data flow: data-flow.md
+      - Terms: terms.md
       - Limitations: limitations.md
   - Development:
       - Architecture: architecture.md
       - Development: development.md
       - Runtime loop: runtime-loop.md
+      - GitHub community setup: github-community-setup.md

@@ -67,10 +67,13 @@ For keyword quality, write cases around the user wording that previously failed.
 The goal is not to preserve a static trigger list; it is to prove that real task
 phrases select the right skill and avoid broad generic recommendations.
 
-`agentpack benchmark --release-gate` is the public release gate. It expands to
-`--public-repos --prove-targets --misses --public-table`, reads
-`benchmarks/public-repos.toml` by default, and can use `--public-repos-cache`
-or `--refresh-public-repos`.
+`agentpack benchmark --release-gate` is the frozen public release gate. It
+expands to `--public-repos --prove-targets --misses --public-table`, reads
+`benchmarks/release-repos.lock.toml` by default, and enforces its committed
+case-count, recall, and token-precision floors. Use
+`benchmarks/public-repos.toml` with `--public-repos` for the broader evolving
+language-coverage suite. Both commands support `--public-repos-cache` and
+`--refresh-public-repos`.
 
 For external claims, use several real repositories or anonymized historical task
 sets and publish the generated table from `benchmarks/results/*-public.md`.
@@ -83,8 +86,8 @@ Python, TypeScript, Go, Java, and monorepo projects. For sampled repos,
 regression tests, but should not be presented as market proof.
 
 The current public release evidence table is
-[`benchmarks/results/2026-06-25-public.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/2026-06-25-public.md):
-107 scored public cases at 65.7% recall and 51.4% token precision. The
+[`benchmarks/results/2026-07-06-public.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/2026-07-06-public.md):
+107 scored public cases at 67.2% recall and 50.6% token precision. The
 precision margin is thin, so use slice regressions before changing selector
 rules.
 
@@ -126,7 +129,7 @@ agentpack benchmark e2e-report --baseline no-context --treatment agentpack --mar
 `e2e-report` compares task success, expected-file touch rate, tool calls, total
 tokens, estimated token cost, time-to-first-correct-file, and duration.
 Public E2E proof status lives in
-[`benchmarks/results/e2e-ab-status.md`](../benchmarks/results/e2e-ab-status.md).
+[`benchmarks/results/e2e-ab-status.md`](https://github.com/vishal2612200/agentpack/blob/main/benchmarks/results/e2e-ab-status.md).
 Until a dated `*-e2e-ab.md` report exists, AgentPack's public benchmark claims
 remain scoped to file selection.
 

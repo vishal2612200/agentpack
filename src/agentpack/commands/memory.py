@@ -9,6 +9,7 @@ from rich import box
 
 from agentpack.commands._shared import _root, console
 from agentpack.core.config import load_config
+from agentpack.learning.memory_timeline import build_memory_timeline
 from agentpack.session.references import merge_issue_reference_objects, merge_issue_references
 from agentpack.session.events import read_events
 
@@ -17,6 +18,10 @@ def register(app: typer.Typer) -> None:
     @app.command()
     def memory(
         json_output: bool = typer.Option(False, "--json", help="Print JSON."),
+        task: str = typer.Option("", "--task", help="Show the bounded retrieval chain for this task."),
+        path: list[str] = typer.Option([], "--path", help="Live candidate path; repeat to bound memory retrieval."),
+        timeline: bool = typer.Option(False, "--timeline", help="Show timestamped task, episode, procedure, and edge rows."),
+        limit: int = typer.Option(50, "--limit", help="Maximum timeline rows to show."),
         prune: bool = typer.Option(False, "--prune", help="Prune local memory files to configured retention limits."),
         dry_run: bool = typer.Option(False, "--dry-run", help="Show prune counts without writing files."),
         max_events: int = typer.Option(0, "--max-events", help="Override retained session event rows for --prune."),
@@ -25,6 +30,15 @@ def register(app: typer.Typer) -> None:
         """Show local cross-agent task memory from events and learning artifacts."""
         root = _root()
         cfg = load_config(root)
+        if task.strip():
+            from agentpack.learning.graph_memory import retrieve_memory_chain
+
+            payload = retrieve_memory_chain(root, task=task, live_paths=path)
+            if json_output:
+                typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+                return
+            console.print_json(json.dumps(payload, indent=2, sort_keys=True))
+            return
         if prune:
             result = {
                 "session_events": _prune_jsonl(
@@ -46,6 +60,35 @@ def register(app: typer.Typer) -> None:
                     f"[green]✓[/] {label}: kept {payload['kept']}, pruned {payload['pruned']}"
                     + (" (dry run)" if dry_run else "")
                 )
+            return
+        if timeline:
+            rows = build_memory_timeline(root, limit=limit)
+            payload = {"timeline": rows, "count": len(rows)}
+            if json_output:
+                typer.echo(json.dumps(payload, indent=2))
+                return
+            table = Table(title="AgentPack Memory Timeline", box=box.SIMPLE, show_header=True, padding=(0, 1))
+            table.add_column("time", style="dim")
+            table.add_column("kind")
+            table.add_column("id")
+            table.add_column("relation")
+            table.add_column("confidence")
+            table.add_column("stale")
+            table.add_column("reason")
+            for row in rows:
+                relation = ""
+                if row.get("from_id") or row.get("to_id"):
+                    relation = f"{_short(row.get('from_id'), 28)} -> {_short(row.get('to_id'), 28)}"
+                table.add_row(
+                    _short(row.get("timestamp"), 24),
+                    str(row.get("kind") or ""),
+                    _short(row.get("id") or row.get("version"), 32),
+                    relation,
+                    str(row.get("confidence") or ""),
+                    "yes" if row.get("is_stale") else "",
+                    _short(row.get("visible_reason"), 60),
+                )
+            console.print(table)
             return
         events = read_events(root, output_path=cfg.runtime.session_events_output, limit=500)
         tasks = [str(event.get("task")) for event in events if event.get("task")]
@@ -142,3 +185,8 @@ def _prune_jsonl(path, *, max_rows: int, dry_run: bool) -> dict:
     if pruned and not dry_run:
         path.write_text("\n".join(kept_lines) + "\n", encoding="utf-8")
     return {"path": str(path), "kept": len(kept_lines), "pruned": pruned, "total": len(lines)}
+
+
+def _short(value, limit: int) -> str:
+    text = str(value or "")
+    return text if len(text) <= limit else text[: max(0, limit - 1)].rstrip() + "…"

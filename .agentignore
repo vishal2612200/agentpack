@@ -22,6 +22,9 @@ generated/
 *.map
 *.lock
 *.log
+.agentpack/observer-brief.md
+.agentpack/dashboard.html
+.agentpack/reviews/
 
 # secrets
 .env
@@ -60,6 +63,7 @@ Gemfile.lock
 # Imported from git ignore sources because these look like generated/noisy paths
 .eggs/
 env/
+.mypy_cache/*
 .pytest_cache/*
 .ruff_cache/*
 **/.claude/settings.local.json

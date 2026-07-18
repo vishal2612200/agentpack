@@ -16,6 +16,7 @@ def register(app: typer.Typer) -> None:
         target: str = typer.Argument("", help="Path from the latest pack registry."),
         block_id: str = typer.Option("", "--block-id", help="Exact registry block ID to retrieve."),
         mode: str = typer.Option("as_stored", "--mode", help="as_stored|full|skeleton|symbols|summary."),
+        kind: str = typer.Option("any", "--kind", help="any|selected|omitted."),
         allow_stale: bool = typer.Option(False, "--allow-stale", help="Read current file contents when the registry hash is stale."),
         output: Path | None = typer.Option(None, "--output", "-o", help="Write retrieval output to a file."),
     ) -> None:
@@ -31,6 +32,7 @@ def register(app: typer.Typer) -> None:
             block_id=block_id,
             mode=mode,
             allow_stale=allow_stale,
+            kind=kind if kind in {"any", "selected", "omitted"} else "any",
             max_chars=cfg.runtime.max_retrieve_chars,
             registry_file=root / cfg.runtime.pack_registry_output,
         )
@@ -41,6 +43,7 @@ def register(app: typer.Typer) -> None:
                 "path": target,
                 "block_id": block_id,
                 "mode": mode,
+                "kind": kind,
                 "allow_stale": allow_stale,
             },
             output_path=cfg.runtime.session_events_output,

@@ -5,7 +5,12 @@ from agentpack.dashboard.models import (
     ContextHealth,
     DashboardSnapshot,
     LearningArtifact,
+    LearningWeakSpot,
     LoopSummary,
+    McpHealth,
+    McpRegistration,
+    ObserverInsightRow,
+    ObserverSummary,
     ProjectInfo,
     SelectedFileRow,
     SkillDomainSummary,
@@ -16,6 +21,7 @@ from agentpack.dashboard.models import (
     SkillsInventorySummary,
     SuggestedAction,
     TaskInfo,
+    TaskMapFileRow,
 )
 from agentpack.dashboard.renderers import render_dashboard_html
 
@@ -28,11 +34,64 @@ def test_render_dashboard_html_contains_core_sections() -> None:
             task=TaskInfo(text="fix auth", state="in_progress"),
             context=ContextHealth(status="fresh", mode="balanced", packed_tokens=1200, raw_tokens=40000),
             selected_files=[SelectedFileRow(path="src/auth.py", include_mode="full", score=120)],
+            task_map=[
+                TaskMapFileRow(
+                    path="src/auth.py",
+                    kind="selected",
+                    risk_level="medium",
+                    why_selected=["modified"],
+                    tests_to_run=["tests/test_auth.py"],
+                    may_break=["reverse dependents: src/api.py"],
+                    retrieve_ref="src__auth.py:abc123",
+                )
+            ],
             skills=SkillSection(
                 task_specific=[SkillRow(name="auth-review", confidence=0.8, status="used_helpful")]
             ),
             learning=[LearningArtifact(label="Learning notes", path=".agentpack/learning.md", exists=True)],
+            learning_weak_spots=[
+                LearningWeakSpot(
+                    concept="caching",
+                    count=2,
+                    mode="quiz",
+                    latest_task="Fix cache ttl bug",
+                    latest_question="How should TTL invalidation behave?",
+                    evidence_files=["src/cache.py"],
+                )
+            ],
+            observer=ObserverSummary(
+                events=1,
+                event_types={"task_memory": 1},
+                insights=[
+                    ObserverInsightRow(
+                        kind="counterfactual",
+                        title="Prior route context missed changed files",
+                        detail="A prior task changed src/cache.py without selecting it.",
+                        action="Inspect src/cache.py as a hypothesis.",
+                        confidence=0.62,
+                        related_files=["src/cache.py"],
+                        evidence=["Fix cache ttl bug"],
+                    )
+                ],
+            ),
             benchmarks=BenchmarkSummary(averages={"selection_recall": 0.8, "skill_recall_at_3": 0.9}),
+            mcp_health=McpHealth(
+                status="healthy",
+                runtime_status="stdio_waiting",
+                runtime_ok=True,
+                runtime_detail="agentpack mcp started and waited for MCP stdio",
+                registered=True,
+                registrations=[
+                    McpRegistration(
+                        scope="Codex",
+                        path="/Users/example/.codex/config.toml",
+                        status="present",
+                        detail="agentpack server registered.",
+                    )
+                ],
+                expected_tools=["readiness", "get_context"],
+                remediation=["Call agentpack_readiness() from the agent host to prove live exposure."],
+            ),
             loop=LoopSummary(
                 exists=True,
                 status="ready_to_finish",
@@ -49,6 +108,14 @@ def test_render_dashboard_html_contains_core_sections() -> None:
     assert "AgentPack Dashboard" in html
     assert "fix auth" in html
     assert "src/auth.py" in html
+    assert "Task Map" in html
+    assert 'href="#task-map"' in html
+    assert "tests/test_auth.py" in html
+    assert "retrieve_context(block_id=&quot;src__auth.py:abc123&quot;)" in html
+    assert "Integrations" in html
+    assert 'href="#integrations"' in html
+    assert "stdio_waiting" in html
+    assert "agentpack_readiness()" in html
     assert "auth-review" in html
     assert "selection_recall" in html
     assert "Guarded Loop" in html
@@ -61,8 +128,15 @@ def test_render_dashboard_html_contains_core_sections() -> None:
     assert "0.900" in html
     assert 'class="section-header"' in html
     assert 'href="#inventory"' in html
+    assert 'href="#observer"' in html
+    assert "Observer" in html
+    assert "Prior route context missed changed files" in html
+    assert "Observer signals are hypotheses" in html
     assert 'class="table-wrap"' in html
     assert 'class="learning-list"' in html
+    assert "weak spot" in html
+    assert "caching" in html
+    assert "How should TTL invalidation behave?" in html
     assert 'class="benchmark-grid"' in html
     assert 'class="empty-state">No recent benchmark misses.' in html
     assert "top: 54px" not in html

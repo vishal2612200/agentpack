@@ -9,12 +9,14 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from agentpack.core.models import ContextPack, FileInfo, OmittedRelevantFile, SelectedFile
+from agentpack.core.node_identity import symbol_node_id
 from agentpack.core.redactor import redact_secrets
 from agentpack.core.scanner import file_hash
 from agentpack.core.token_estimator import estimate_tokens
 
 
 RegistryKind = Literal["selected", "omitted"]
+RegistryKindFilter = Literal["selected", "omitted", "any"]
 
 
 class PackRegistryRecord(BaseModel):
@@ -23,6 +25,7 @@ class PackRegistryRecord(BaseModel):
     kind: RegistryKind
     include_mode: str
     symbol: str | None = None
+    node_id: str = ""
     file_hash: str | None = None
     content_hash: str
     tokens: int
@@ -52,6 +55,17 @@ def save_pack_registry(
     output_path: str = ".agentpack/pack-registry.json",
     max_records: int = 200,
 ) -> PackRegistry:
+    registry = build_pack_registry(pack, packable, max_records=max_records)
+    write_pack_registry(root, registry, output_path=output_path)
+    return registry
+
+
+def build_pack_registry(
+    pack: ContextPack,
+    packable: list[FileInfo],
+    *,
+    max_records: int = 200,
+) -> PackRegistry:
     info_by_path = {fi.path: fi for fi in packable}
     records: list[PackRegistryRecord] = []
     for sf in pack.selected_files:
@@ -72,10 +86,18 @@ def save_pack_registry(
         snapshot_root_hash=str(pack.freshness.get("snapshot_root_hash") or ""),
         records=records[:max_records],
     )
+    return registry
+
+
+def write_pack_registry(
+    root: Path,
+    registry: PackRegistry,
+    *,
+    output_path: str = ".agentpack/pack-registry.json",
+) -> None:
     path = registry_path(root, output_path)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(registry.model_dump_json(indent=2), encoding="utf-8")
-    return registry
 
 
 def load_pack_registry(root: Path, path: Path | None = None) -> PackRegistry | None:
@@ -95,13 +117,14 @@ def retrieve_from_registry(
     block_id: str = "",
     mode: str = "as_stored",
     allow_stale: bool = False,
+    kind: RegistryKindFilter = "any",
     max_chars: int = 20000,
     registry_file: Path | None = None,
 ) -> str:
     registry = load_pack_registry(root, registry_file)
     if registry is None:
         return "No pack registry found. Run `agentpack pack` first."
-    record = _find_record(registry, path=path, block_id=block_id)
+    record = _find_record(registry, path=path, block_id=block_id, kind=kind)
     if record is None:
         target = block_id or path
         return f"No registry record found for `{target}`."
@@ -163,12 +186,14 @@ def _symbol_records(sf: SelectedFile, fi: FileInfo | None) -> list[PackRegistryR
     for sym in sf.symbols:
         content = sym.body or sym.signature or sym.summary or sym.name
         content_hash = _hash_text(f"{sf.path}:{sym.name}:{content}")
+        node_id = sym.node_id or symbol_node_id(sf.path, sym, source_hash=fi.hash if fi else sf.source_hash or "")
         records.append(PackRegistryRecord(
             block_id=_block_id(f"{sf.path}::{sym.name}", content_hash),
             path=sf.path,
             kind="selected",
             include_mode="symbol",
             symbol=sym.name,
+            node_id=node_id,
             file_hash=fi.hash if fi else None,
             content_hash=content_hash,
             tokens=estimate_tokens(content),
@@ -182,7 +207,8 @@ def _symbol_records(sf: SelectedFile, fi: FileInfo | None) -> list[PackRegistryR
 
 def _omitted_record(item: OmittedRelevantFile, fi: FileInfo | None) -> PackRegistryRecord:
     summary = item.omission_reason
-    content_hash = _hash_text(f"{item.path}:{fi.hash or item.score}:{summary}")
+    source_hash = fi.hash if fi and fi.hash else str(item.score)
+    content_hash = _hash_text(f"{item.path}:{source_hash}:{summary}")
     return PackRegistryRecord(
         block_id=_block_id(item.path, content_hash),
         path=item.path,
@@ -197,8 +223,16 @@ def _omitted_record(item: OmittedRelevantFile, fi: FileInfo | None) -> PackRegis
     )
 
 
-def _find_record(registry: PackRegistry, *, path: str, block_id: str) -> PackRegistryRecord | None:
+def _find_record(
+    registry: PackRegistry,
+    *,
+    path: str,
+    block_id: str,
+    kind: RegistryKindFilter = "any",
+) -> PackRegistryRecord | None:
     for record in registry.records:
+        if kind != "any" and record.kind != kind:
+            continue
         if block_id and record.block_id == block_id:
             return record
         if path and record.path == path:
@@ -246,12 +280,14 @@ def _format_retrieval(record: PackRegistryRecord, content: str, *, stale: bool, 
         status.append("truncated")
     suffix = f" ({', '.join(status)})" if status else ""
     symbol_line = f"- symbol: {record.symbol}\n" if record.symbol else ""
+    node_line = f"- node_id: `{record.node_id}`\n" if record.node_id else ""
     return (
         f"## {record.path}{suffix}\n\n"
         f"- block_id: `{record.block_id}`\n"
         f"- kind: {record.kind}\n"
         f"- mode: {record.include_mode}\n"
         f"{symbol_line}"
+        f"{node_line}"
         f"- tokens: {record.tokens:,}\n\n"
         "```text\n"
         f"{content}\n"

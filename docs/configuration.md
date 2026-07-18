@@ -51,6 +51,9 @@ pr_comment_output = ".agentpack/pr-learning-comment.md"
 feedback_output = ".agentpack/learning-feedback.jsonl"
 ranking_feedback_output = ".agentpack/ranking-feedback.jsonl"
 episodic_cases_output = ".agentpack/episodic-cases.jsonl"
+task_starts_output = ".agentpack/task-starts.jsonl"
+procedures_output = ".agentpack/procedures.jsonl"
+memory_edges_output = ".agentpack/memory-edges.jsonl"
 dashboard_output = ".agentpack/learning-dashboard.html"
 team_lessons_output = ".agentpack/team-lessons.md"
 provider_command = ""
@@ -65,6 +68,8 @@ min_groundedness_score = 70
 [runtime]
 pack_registry_output = ".agentpack/pack-registry.json"
 session_events_output = ".agentpack/session-events.jsonl"
+observer_events_output = ".agentpack/observer-events.jsonl"
+observer_brief_output = ".agentpack/observer-brief.md"
 max_registry_records = 200
 max_retrieve_chars = 20000
 max_output_summary_items = 40
@@ -89,6 +94,12 @@ outcomes provide small, receipt-backed ranking boosts. Episodic boosts are
 ignored when the remembered file is missing or its recorded hash no longer
 matches the current checkout. Set it to `"off"` for baseline comparisons or if
 local memory becomes noisy.
+
+Task-start snapshots, procedures, and memory edges are local append-only
+artifacts. They let AgentPack connect task context to code locations and prior
+validated work while keeping live source and tests authoritative. Memory records
+carry hashes, provenance, confidence, and visible reasons; stale records remain
+hints.
 
 `max_session_events` and `max_episodic_cases` are retention limits used by
 `agentpack memory --prune`. Existing repos receive these defaults at runtime
@@ -227,6 +238,7 @@ agentpack diagnose-selection
 .agentpack/snapshots/     ✗ gitignored
 .agentpack/context.*      ✗ gitignored
 .agentpack/task.md        ✗ gitignored (local current task)
+.agentpack/learning-sessions.jsonl ✗ gitignored (local coach queue)
 .agentpack/learning.md    ✗ gitignored (local learning notes)
 .agentpack/daily-summary.md ✗ gitignored (local daily rollup)
 .agentpack/skills-progress.json ✗ gitignored (local skill evidence)

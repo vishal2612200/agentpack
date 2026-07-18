@@ -11,7 +11,16 @@ from typing import Any
 from agentpack.core.task_freshness import task_hash
 
 THREAD_INDEX = ".agentpack/thread_index.jsonl"
-_THREAD_ENV_VARS = ("AGENTPACK_THREAD_ID", "CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CURSOR_SESSION_ID")
+_THREAD_ENV_VARS = (
+    "AGENTPACK_THREAD_ID",
+    "CODEX_THREAD_ID",
+    "CLAUDE_SESSION_ID",
+    "CURSOR_SESSION_ID",
+    "WINDSURF_SESSION_ID",
+    "ANTIGRAVITY_SESSION_ID",
+    "GEMINI_SESSION_ID",
+)
+_GLOBAL_THREAD_VALUES = {"", "global", "legacy", "none", "off"}
 _SAFE_THREAD_RE = re.compile(r"[^A-Za-z0-9_.-]+")
 
 
@@ -49,11 +58,20 @@ def resolve_thread_id(explicit: str | None = None, env: dict[str, str] | None = 
 
 def resolve_thread_option(value: str | None, env: dict[str, str] | None = None) -> str | None:
     raw = (value or "").strip()
-    if not raw:
+    if raw.lower() in _GLOBAL_THREAD_VALUES:
         return None
     if raw.lower() == "auto":
         return resolve_thread_id(None, env=env)
     return resolve_thread_id(raw, env={})
+
+
+def resolve_session_thread_option(value: str | None = None, env: dict[str, str] | None = None) -> str | None:
+    raw = (value or "").strip()
+    if raw.lower() in {"global", "legacy", "none", "off"}:
+        return None
+    if raw and raw.lower() != "auto":
+        return resolve_thread_id(raw, env={})
+    return resolve_thread_id(None, env=env)
 
 
 def sanitize_thread_id(value: str) -> str:
@@ -106,6 +124,33 @@ def build_thread_index_row(
         "status": status,
         "updated_at": datetime.now(timezone.utc).isoformat(),
     }
+
+
+def task_state_path(root: Path, thread_id: str | None) -> Path:
+    scoped = thread_paths(root, thread_id)
+    return scoped.task_state if scoped else root / ".agentpack" / "task_state.md"
+
+
+def read_task_status(root: Path, thread_id: str | None = None) -> str:
+    path = task_state_path(root, thread_id)
+    if not path.exists():
+        return ""
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ""
+    for line in lines:
+        if line.lower().startswith("status:"):
+            return line.split(":", 1)[1].strip().lower()
+    return ""
+
+
+def task_is_done(root: Path, thread_id: str | None = None) -> bool:
+    return read_task_status(root, thread_id) == "done"
+
+
+def task_is_terminal(root: Path, thread_id: str | None = None) -> bool:
+    return read_task_status(root, thread_id) in {"done", "handed_off"}
 
 
 def detect_conflicts(root: Path, current: dict[str, Any], now: datetime | None = None) -> dict[str, Any]:
@@ -179,7 +224,7 @@ def _active_rows(root: Path, now: datetime | None = None) -> list[dict[str, Any]
             row = json.loads(line)
         except json.JSONDecodeError:
             continue
-        if row.get("status") == "done":
+        if row.get("status") in {"done", "handed_off"}:
             continue
         updated_at = _parse_datetime(row.get("updated_at"))
         if updated_at is None or updated_at < cutoff:

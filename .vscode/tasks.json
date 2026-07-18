@@ -15,7 +15,7 @@
     {
       "label": "AgentPack: Repack (auto task)",
       "type": "shell",
-      "command": "agentpack guard --agent auto --repair-stale --refresh-context --mode balanced",
+      "command": "agentpack guard --agent auto --repair-stale --refresh-context --thread global --mode balanced",
       "runOptions": {
         "runOn": "folderOpen"
       },
@@ -29,7 +29,7 @@
     {
       "label": "AgentPack: Guard context",
       "type": "shell",
-      "command": "agentpack guard --agent auto --repair-stale --refresh-context --mode balanced",
+      "command": "agentpack guard --agent auto --repair-stale --refresh-context --thread global --mode balanced",
       "group": "none",
       "presentation": {
         "reveal": "always",

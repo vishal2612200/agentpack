@@ -15,6 +15,7 @@ from agentpack.core.ignore import load_spec
 from agentpack.core.scanner import scan
 from agentpack.core.snapshot import build_snapshot
 from agentpack.core.context_pack import load_pack_metadata
+from agentpack.core.token_contract import token_contract_from_metadata
 from agentpack.application.pack_service import AdapterRegistry
 from agentpack.analysis.ranking import suggest_task_rewrite
 from agentpack.commands._shared import console, _root
@@ -46,6 +47,7 @@ def register(app: typer.Typer) -> None:
         raw = sum(f.estimated_tokens for f in scan_result.all_files)
         after_ignore = sum(f.estimated_tokens for f in scan_result.packable)
         packed = meta.get("token_estimate", 0) if meta else 0
+        token_contract = token_contract_from_metadata(meta)
         saving = (1 - packed / raw) * 100 if raw > 0 else 0
 
         ignored_count = len(scan_result.ignored) + len(scan_result.binary)
@@ -136,7 +138,11 @@ def register(app: typer.Typer) -> None:
         token_tbl.add_row("files packable", f"{len(scan_result.packable):,}")
         token_tbl.add_row("files full", f"{included_count:,}")
         token_tbl.add_row("files summary", f"{summarized_count:,}")
+        if token_contract:
+            token_tbl.add_row("contract usage", f"{float(token_contract.get('usage_ratio') or 0):.1%}")
         console.print(token_tbl)
+        if token_contract and token_contract.get("recommended_next_context"):
+            console.print(f"[dim]Token contract: {token_contract['recommended_next_context']}[/]")
 
         events_summary = summarize_events(read_events(root, output_path=cfg.runtime.session_events_output))
         if events_summary["events"]:

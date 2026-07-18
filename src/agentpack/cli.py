@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import typer
 from agentpack.commands import (
+    architecture,
     benchmark,
     claude_cmd,
     ci_cmd,
@@ -14,6 +15,7 @@ from agentpack.commands import (
     eval_cmd,
     explain,
     guard,
+    handoff,
     hook_cmd,
     ignore_cmd,
     init,
@@ -44,6 +46,7 @@ from agentpack.commands import (
     summarize,
     task_cmd,
     threads,
+    toon_validate,
     tune,
     upgrade,
     verify_wheel,
@@ -62,6 +65,16 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(help="AgentPack — token-aware context packing for AI coding agents.")
 
+_CORE_HELP_CALLBACKS = {
+    "quickstart",
+    "start",
+    "next_action",
+    "doctor",
+    "init",
+    "route_task",
+    "pack",
+}
+
 
 @app.callback()
 def _main(
@@ -71,7 +84,16 @@ def _main(
 
 
 for mod in [
+    architecture,
+    quickstart,
+    start_cmd,
+    next_cmd,
+    doctor,
     init,
+    route,
+    pack,
+    guard,
+    handoff,
     ignore_cmd,
     scan,
     diff,
@@ -79,23 +101,19 @@ for mod in [
     state_cmd,
     task_cmd,
     threads,
+    toon_validate,
     stats,
     dashboard,
     summarize,
     compress_output,
     learn,
     memory,
-    pack,
     perf,
     install,
     repair,
-    route,
-    next_cmd,
     migrate,
     monitor,
     explain,
-    guard,
-    doctor,
     diagnose_selection,
     eval_cmd,
     tune,
@@ -108,7 +126,6 @@ for mod in [
     verify_wheel,
     mcp_cmd,
     hook_cmd,
-    quickstart,
     review_cmd,
     skills,
     release_check,
@@ -116,11 +133,26 @@ for mod in [
     resolve_cmd,
     skill_review_cmd,
     retrieve,
-    start_cmd,
     wrap,
     workflow_cmd,
 ]:
     mod.register(app)
+
+
+def _configure_help_panels() -> None:
+    """Keep the default help focused while retaining every command path."""
+    for command in app.registered_commands:
+        callback_name = getattr(command.callback, "__name__", "")
+        command.rich_help_panel = (
+            "Core loop"
+            if callback_name in _CORE_HELP_CALLBACKS
+            else "Advanced, diagnostics, and release"
+        )
+    for group in app.registered_groups:
+        group.rich_help_panel = "Advanced, diagnostics, and release"
+
+
+_configure_help_panels()
 
 
 def main() -> None:

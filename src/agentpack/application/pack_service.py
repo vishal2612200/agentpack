@@ -21,7 +21,13 @@ from agentpack.core.snapshot import build_snapshot, save_snapshot, load_snapshot
 from agentpack.core.diff import diff_snapshots
 from agentpack.core import git
 from agentpack.core.command_surface import refresh_commands
-from agentpack.core.context_pack import enrich_call_site_scores, select_files, save_pack_metadata, load_pack_metadata
+from agentpack.core.context_pack import (
+    compact_selected_file_payloads,
+    enrich_call_site_scores,
+    select_files,
+    save_pack_metadata,
+    load_pack_metadata,
+)
 from agentpack.core.citations import (
     citation_manifest_relpath,
     collect_pack_citations,
@@ -40,16 +46,20 @@ from agentpack.core.models import (
     SelectedFile,
 )
 from agentpack.core.modes import normalize_mode
-from agentpack.core.pack_registry import save_pack_registry
-from agentpack.core.task_freshness import read_task_md, task_metadata
+from agentpack.core.pack_registry import build_pack_registry, write_pack_registry
+from agentpack.core.task_map import build_task_map, task_map_for_path
+from agentpack.core.task_freshness import normalize_task_text, read_task_md, task_hash, task_metadata
 from agentpack.core.thread_context import (
     append_thread_index,
     build_thread_index_row,
     detect_conflicts,
+    read_task_status,
     resolve_thread_id,
     thread_paths,
 )
+from agentpack.core.token_contract import build_token_contract
 from agentpack.core.token_estimator import estimate_tokens
+from agentpack.core.selection_models import SelectionEngine
 from agentpack.learning.feedback import ranking_feedback_boosts
 from agentpack.renderers.markdown import render_claude, render_generic
 from agentpack.analysis.ranking import (
@@ -76,7 +86,8 @@ from agentpack.analysis.monorepo import (
 )
 from agentpack.analysis.task_classifier import classify_task
 from agentpack.analysis.tests import find_related_tests
-from agentpack.analysis import dependency_graph as dep_graph_mod
+from agentpack.architecture.index import SemanticGraphIndex
+from agentpack.architecture.compat import to_dependency_graph
 from agentpack.summaries.base import build_all_summaries
 from agentpack.session.events import record_event
 from agentpack.session.references import collect_repo_issue_references
@@ -96,6 +107,7 @@ class PackRequest:
     thread_id: str | None = None
     output_path: Path | None = None
     write_canonical: bool = True
+    verify_incremental: bool = False
 
 
 @dataclass
@@ -136,12 +148,14 @@ class RankResult:
 class PackPlan:
     """Shared planning output used by both pack and explain."""
     task: str
+    selection_engine: SelectionEngine
     requested_mode: str
     mode: str
     budget: int
     scan_result: ScanResult
     summaries: dict[str, Any]
     dep_graph: DependencyGraph
+    semantic_graph: SemanticGraphIndex
     all_changed: set[str]
     git_staged: set[str]
     recently_modified: list[str]
@@ -222,11 +236,12 @@ class FileRanker:
         self,
         packable: list[FileInfo],
         changes: ChangeSet,
-        dep_graph: DependencyGraph,
+        dep_graph: DependencyGraph | None,
         task: str,
         cfg: Any,
         summaries: dict | None = None,
         root: Path | None = None,
+        semantic_graph: SemanticGraphIndex | None = None,
         workspace_roots: list[str] | None = None,
         workspace_dependency_edges: dict[str, set[str]] | None = None,
     ) -> RankResult:
@@ -243,12 +258,19 @@ class FileRanker:
         keyword_plan.weights = keyword_weights
         keywords = set(keyword_weights)
         generic_ratio = generic_task_term_ratio(task)
+        # Note: classify_task(task) is also called inside build_keyword_plan
+        # above, populating KeywordPlan.task_class (read by
+        # _path_concrete_term_bonus for scoring). This call is kept separate
+        # since it feeds RankResult/PackPlan/ContextPack.task_class for
+        # telemetry — both are pure functions of the same `task` string, so
+        # they always agree, but there is no single source of truth.
         task_classification = classify_task(task)
         all_paths = {f.path for f in packable}
 
         for fi in packable:
             tests = find_related_tests(fi.path, all_paths)
-            dep_graph.nodes[fi.path].tests = tests
+            if dep_graph is not None:
+                dep_graph.nodes[fi.path].tests = tests
 
         churn_counts: dict[str, int] = {}
         co_changed_paths: dict[str, int] = {}
@@ -264,7 +286,7 @@ class FileRanker:
             changed_paths=changes.all_changed,
             staged_paths=changes.git_staged,
             recently_modified=changes.recently_modified,
-            dep_graph=dep_graph,
+            dep_graph=None,
             keywords=keyword_plan,
             include_tests=cfg.context.include_tests,
             include_configs=cfg.context.include_configs,
@@ -272,7 +294,10 @@ class FileRanker:
             summaries=summaries,
             churn_counts=churn_counts,
             co_changed_paths=co_changed_paths,
+            semantic_graph=semantic_graph,
         )
+        if semantic_graph is not None:
+            scored = _boost_semantic_graph_neighbors(scored, semantic_graph, changes.all_changed)
         scored = boost_monorepo_workspaces(
             scored,
             workspace_roots=workspace_roots or [],
@@ -281,8 +306,20 @@ class FileRanker:
             task=task,
             weights=cfg.scoring,
         )
-        scored = boost_recall_neighbors(scored, dep_graph, changes.all_changed, weights=cfg.scoring)
-        scored = boost_second_pass_expansion(scored, dep_graph, keyword_plan, weights=cfg.scoring)
+        scored = boost_recall_neighbors(
+            scored,
+            None,
+            changes.all_changed,
+            weights=cfg.scoring,
+            semantic_graph=semantic_graph,
+        )
+        scored = boost_second_pass_expansion(
+            scored,
+            None,
+            keyword_plan,
+            weights=cfg.scoring,
+            semantic_graph=semantic_graph,
+        )
         scored = boost_frontend_api_consumers(scored, summaries, keyword_plan, weights=cfg.scoring)
         scored = boost_api_endpoint_pairs(scored, keyword_plan, weights=cfg.scoring)
         scored = boost_cross_layer_related(scored, keyword_plan, weights=cfg.scoring)
@@ -304,6 +341,38 @@ class FileRanker:
             task_class_signals=task_classification.signals,
             scored=scored,
         )
+
+
+def _boost_semantic_graph_neighbors(
+    scored: list[tuple[FileInfo, float, list[str]]],
+    graph: SemanticGraphIndex,
+    changed_paths: set[str],
+) -> list[tuple[FileInfo, float, list[str]]]:
+    """Use canonical relationship evidence as a small ranking signal."""
+    related: dict[str, list[tuple[str, str, str]]] = {}
+    for path in sorted(changed_paths):
+        for row in graph.neighbors(path, limit=200):
+            target = (row["node"].get("locator") or {}).get("path")
+            if target and target != path:
+                evidence = (row.get("evidence") or [{}])[0]
+                location = str(evidence.get("path") or path)
+                if evidence.get("start_line"):
+                    location += f":{evidence['start_line']}"
+                related.setdefault(target, []).append((row["relationship"], row["edge_key"], location))
+    if not related:
+        return scored
+    boosted: list[tuple[FileInfo, float, list[str]]] = []
+    for file_info, score, reasons in scored:
+        relationships = related.get(file_info.path, [])
+        if not relationships:
+            boosted.append((file_info, score, reasons))
+            continue
+        unique_relationships = sorted({relationship for relationship, _edge_key, _location in relationships})
+        edge_keys = sorted({edge_key for _relationship, edge_key, _location in relationships})[:3]
+        evidence_locations = sorted({location for _relationship, _edge_key, location in relationships})[:2]
+        bonus = min(24.0, 8.0 + 4.0 * len(unique_relationships))
+        boosted.append((file_info, score + bonus, [*reasons, f"semantic graph: {', '.join(unique_relationships)} from changed file (edges: {', '.join(edge_keys)}; evidence: {', '.join(evidence_locations)})"]))
+    return sorted(boosted, key=lambda item: (-item[1], item[0].path))
 
 
 def _scan_metadata(
@@ -417,8 +486,17 @@ def _read_agent_lessons(root: Path, cfg: Any, limit: int = 2000) -> str:
 class PackPlanner:
     """Runs scan → summarize → graph → rank → select; shared by pack and explain."""
 
-    def plan(self, request: PackRequest) -> PackPlan:
+    def plan(
+        self,
+        request: PackRequest,
+        *,
+        selection_engine: SelectionEngine = SelectionEngine.V1,
+    ) -> PackPlan:
+        selection_engine = SelectionEngine(selection_engine)
+        if selection_engine is not SelectionEngine.V1:
+            raise NotImplementedError(f"selection engine {selection_engine.value} is not implemented")
         root = request.root
+        from agentpack.architecture.service import build_snapshot_for_ref
         cfg = load_config(root)
         requested_mode = request.mode or cfg.context.default_mode
         normalized_mode = normalize_mode(requested_mode)
@@ -488,7 +566,11 @@ class PackPlanner:
         phase_times["summarize"] = time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        dep_graph = dep_graph_mod.build(packable, root, summaries=summaries)
+        semantic_snapshot = build_snapshot_for_ref(
+            root,
+            verify_incremental=request.verify_incremental or request.task_source == "benchmark",
+        )
+        semantic_graph = SemanticGraphIndex(semantic_snapshot)
         phase_times["deps"] = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -508,11 +590,12 @@ class PackPlanner:
         rank_result = FileRanker().rank(
             packable,
             changes,
-            dep_graph,
+            None,
             request.task,
             cfg,
             summaries=summaries,
             root=root,
+            semantic_graph=semantic_graph,
             workspace_roots=workspace_roots,
             workspace_dependency_edges=workspace_dependency_edges,
         )
@@ -552,7 +635,8 @@ class PackPlanner:
             files=packable,
             scored=rank_result.scored,
             summaries=summaries,
-            dep_graph=dep_graph,
+            dep_graph=None,
+            semantic_graph=semantic_graph,
             changed_paths=changes.all_changed,
             budget_tokens=repo_map_budget,
         )
@@ -660,16 +744,28 @@ class PackPlanner:
                 omitted_relevant_files=omitted_relevant_files,
             )
             rank_result.scored = expanded_scored
+        selected = compact_selected_file_payloads(
+            selected,
+            files=packable,
+            summaries=summaries,
+            scored=rank_result.scored,
+            task=request.task,
+            changed_paths=changes.all_changed,
+        )
         phase_times["select"] = time.perf_counter() - t0
 
         return PackPlan(
             task=request.task,
+            selection_engine=selection_engine,
             requested_mode=requested_mode,
             mode=effective_mode,
             budget=effective_budget,
             scan_result=scan_result,
             summaries=summaries,
-            dep_graph=dep_graph,
+            # Compatibility projection is materialized only for legacy output
+            # consumers; internal planning uses semantic_graph.
+            dep_graph=to_dependency_graph(semantic_graph),
+            semantic_graph=semantic_graph,
             all_changed=changes.all_changed,
             git_staged=changes.git_staged,
             recently_modified=changes.recently_modified,
@@ -790,6 +886,8 @@ class PackService:
         execution_state = build_execution_state(root, scoped_paths)
         if scoped_paths:
             freshness["thread_id"] = scoped_paths.thread_id
+            freshness["owner_thread_id"] = scoped_paths.thread_id
+            freshness["task_status"] = read_task_status(root, scoped_paths.thread_id) or "active"
             freshness["thread_paths"] = scoped_paths.as_relative_dict(root)
         thread_row = None
         concurrent_context: dict[str, Any] = {}
@@ -831,11 +929,26 @@ class PackService:
             execution_state=execution_state,
             concurrent_context=concurrent_context,
         )
+        registry = build_pack_registry(
+            pack_obj,
+            packable,
+            max_records=cfg.runtime.max_registry_records,
+        )
+        pack_obj.task_map = build_task_map(pack_obj, plan.semantic_graph, registry).model_dump(mode="json")
 
         adapter = AdapterRegistry.get(request.agent, cfg)
         packed_tokens = _fit_rendered_budget(pack_obj, adapter)
         saving_pct = max(0.0, (1 - packed_tokens / all_tokens) * 100) if all_tokens > 0 else 0.0
         pack_obj.estimated_savings_percent = saving_pct
+        registry = build_pack_registry(
+            pack_obj,
+            packable,
+            max_records=cfg.runtime.max_registry_records,
+        )
+        pack_obj.task_map = build_task_map(pack_obj, plan.semantic_graph, registry).model_dump(mode="json")
+        packed_tokens = _settle_rendered_token_estimate(pack_obj, adapter)
+        pack_obj.estimated_savings_percent = max(0.0, (1 - packed_tokens / all_tokens) * 100) if all_tokens > 0 else 0.0
+        saving_pct = pack_obj.estimated_savings_percent
 
         t0 = time.perf_counter()
         if scoped_paths:
@@ -870,6 +983,16 @@ class PackService:
             "selected_files_with_citations": sum(1 for sf in pack_obj.selected_files if sf.citations),
             "manifest_path": citation_manifest_path,
         }
+        selected_files_meta = _selected_file_metadata(pack_obj.selected_files, pack_obj.task_map)
+        token_contract = build_token_contract(
+            budget=plan.budget,
+            token_estimate=packed_tokens,
+            raw_repo_tokens=all_tokens,
+            after_ignore_tokens=raw_tokens,
+            selected_files=selected_files_meta,
+            context_path=str(out_path.relative_to(root)),
+            mode=plan.mode,
+        )
         plan.phase_times["render"] = time.perf_counter() - t0
         persist_keyword_plan_stats(root, request.task, plan.keyword_plan)
 
@@ -887,20 +1010,20 @@ class PackService:
             token_estimate=packed_tokens,
             freshness=pack_obj.freshness,
             freshness_warnings=pack_obj.freshness_warnings,
-            selected_files=_selected_file_metadata(pack_obj.selected_files),
+            selected_files=selected_files_meta,
             pack_handoff=build_pack_handoff(pack_obj),
             execution_state=pack_obj.execution_state,
             concurrent_context=pack_obj.concurrent_context,
             citation_manifest_path=citation_manifest_path,
             citation_summary=citation_summary,
+            token_contract=token_contract,
+            task_map=pack_obj.task_map,
             metadata_path=scoped_paths.metadata if scoped_paths else None,
         )
-        save_pack_registry(
+        write_pack_registry(
             root,
-            pack_obj,
-            packable,
+            registry,
             output_path=cfg.runtime.pack_registry_output,
-            max_records=cfg.runtime.max_registry_records,
         )
         issue_reference_details = collect_repo_issue_references(root, request.task)
         record_event(
@@ -908,6 +1031,7 @@ class PackService:
             "pack",
             {
                 "task": request.task,
+                "thread_id": request.thread_id or "",
                 "issue_references": [item.ref for item in issue_reference_details],
                 "issue_reference_details": [item.to_dict() for item in issue_reference_details],
                 "agent": request.agent,
@@ -921,8 +1045,20 @@ class PackService:
                 "citation_manifest_path": citation_manifest_path,
                 "citation_count": len(pack_obj.citations),
             },
-            output_path=cfg.runtime.session_events_output,
+            source=request.task_source or "pack",
         )
+        if issue_reference_details:
+            record_event(
+                root,
+                "github_reference_attached",
+                {
+                    "task": request.task,
+                    "thread_id": request.thread_id or "",
+                    "issue_references": [item.ref for item in issue_reference_details],
+                    "issue_reference_details": [item.to_dict() for item in issue_reference_details],
+                },
+                source="github-metadata",
+            )
         if thread_row:
             append_thread_index(root, thread_row)
         excluded_receipts = [r for r in pack_obj.receipts if r.action == "excluded"]
@@ -1010,7 +1146,7 @@ def _workspace_include_globs(workspace: str | None, configured: list[str]) -> li
     return [f"{workspace}/**"]
 
 
-def _selected_file_metadata(selected: list[SelectedFile]) -> list[dict[str, Any]]:
+def _selected_file_metadata(selected: list[SelectedFile], task_map: dict[str, Any] | None = None) -> list[dict[str, Any]]:
     return [
         {
             "path": sf.path,
@@ -1019,9 +1155,37 @@ def _selected_file_metadata(selected: list[SelectedFile]) -> list[dict[str, Any]
             "why": sf.reasons[0] if sf.reasons else "",
             "reasons": sf.reasons,
             "tokens": _sf_tokens(sf),
+            "symbols": [
+                {
+                    "name": symbol.name,
+                    "kind": symbol.kind,
+                    "start_line": symbol.start_line,
+                    "end_line": symbol.end_line,
+                    "signature": symbol.signature,
+                    "summary": symbol.summary,
+                    "node_id": symbol.node_id,
+                    "signature_hash": symbol.signature_hash,
+                    "source_hash": symbol.source_hash,
+                }
+                for symbol in sf.symbols[:20]
+            ],
+            **_selected_task_map_metadata(task_map or {}, sf.path),
         }
         for sf in selected
     ]
+
+
+def _selected_task_map_metadata(task_map: dict[str, Any], path: str) -> dict[str, Any]:
+    item = task_map_for_path(task_map, path, "selected")
+    if not item:
+        return {}
+    return {
+        "risk_level": item.get("risk_level", ""),
+        "risk_reasons": item.get("risk_reasons", []),
+        "tests_to_run": item.get("tests_to_run", []),
+        "may_break": item.get("may_break", []),
+        "retrieve_ref": item.get("retrieve_ref", ""),
+    }
 
 
 def _sf_tokens(sf: SelectedFile) -> int:
@@ -1305,17 +1469,36 @@ def _apply_ranking_feedback_boosts(
     if str(memory_setting).strip().lower() == "off":
         return scored
     boosts = ranking_feedback_boosts(root, task)
+    episodic_reasons: dict[str, str] = {}
     try:
-        from agentpack.learning.episodes import episodic_memory_boosts
+        from agentpack.learning.episodes import episodic_memory_matches
 
-        episodic_boosts = episodic_memory_boosts(
+        episodic_matches = episodic_memory_matches(
             root,
             task,
             output_path=cfg.learning.episodic_cases_output,
+            procedures_path=getattr(cfg.learning, "procedures_output", ".agentpack/procedures.jsonl"),
             max_boost=float(getattr(cfg.context, "memory_boost_weight", 12.0)),
+            eligible_paths={fi.path for fi, score, _reasons in scored if score > 0},
         )
     except Exception:
-        episodic_boosts = {}
+        episodic_matches = []
+    episodic_boosts: dict[str, float] = {}
+    for match in episodic_matches:
+        path = str(match.get("path") or "")
+        boost = float(match.get("boost") or 0)
+        if not path or boost <= 0:
+            continue
+        episodic_boosts[path] = max(episodic_boosts.get(path, 0.0), boost)
+        procedure_titles = [
+            str(item.get("title") or item.get("procedure_id") or "")
+            for item in match.get("procedures") or []
+            if isinstance(item, dict)
+        ]
+        reason = str(match.get("visible_reason") or "episodic memory similar task")
+        if procedure_titles:
+            reason += f"; procedure={procedure_titles[0]}"
+        episodic_reasons[path] = f"{reason}; confidence={float(match.get('confidence') or 0):.2f}"
     for path, boost in episodic_boosts.items():
         boosts[path] = max(boosts.get(path, 0.0), boost)
     if not boosts:
@@ -1326,7 +1509,9 @@ def _apply_ranking_feedback_boosts(
         if boost <= 0 or fi.path in changed_paths:
             adjusted.append((fi, score, reasons))
             continue
-        label = "episodic memory similar task" if fi.path in episodic_boosts else "learning feedback miss"
+        label = episodic_reasons.get(fi.path) or (
+            "episodic memory similar task" if fi.path in episodic_boosts else "learning feedback miss"
+        )
         adjusted.append((fi, score + boost, [*reasons, f"{label} boost +{boost:.0f}"]))
     return adjusted
 
@@ -1750,7 +1935,14 @@ def _boost_github_pr_paths(
     return adjusted
 
 
-def _task_md_body(root: Path) -> str | None:
+def _task_md_body(root: Path, thread_id: str | None = None) -> str | None:
+    scoped = thread_paths(root, thread_id)
+    if scoped:
+        try:
+            text = scoped.task.read_text(encoding="utf-8")
+        except OSError:
+            return None
+        return normalize_task_text(text) or None
     return read_task_md(root)
 
 
@@ -1789,7 +1981,15 @@ def _build_freshness_metadata(
         metadata["full_scan_reason"] = plan.scan_result.full_scan_reason
     if plan.mode_warning:
         metadata["mode_warning"] = plan.mode_warning
-    metadata.update(task_metadata(root, request.task))
+    task_md = _task_md_body(root, request.thread_id)
+    if request.thread_id:
+        metadata["packed_task_hash"] = task_hash(request.task)
+        if task_md:
+            metadata["task_md"] = task_md
+            metadata["task_md_hash"] = task_hash(task_md)
+            metadata["task_matches_task_md"] = task_md == request.task
+    else:
+        metadata.update(task_metadata(root, request.task))
     if plan.workspace:
         metadata["workspace"] = plan.workspace
     if plan.workspace_roots:
@@ -1803,9 +2003,6 @@ def _build_freshness_metadata(
         metadata["git_branch"] = git.current_branch(root)
     if dirty:
         metadata["dirty_files_sample"] = sorted(dirty)[:8]
-    task_md = _task_md_body(root)
-    if task_md:
-        metadata["task_md"] = task_md
     return metadata
 
 

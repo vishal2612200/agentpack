@@ -2,7 +2,9 @@
 
 Thin Codex plugin for AgentPack ranked repo context.
 
-AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, resolving cited PR comments, and learning from current local session context.
+AgentPack is a local context engine, not a coding agent. This plugin exposes lightweight Codex skills for routing tasks, packing context, refreshing stale packs, reviewing diffs, resolving PR comments, auditing skills, and learning from current local session context.
+
+Use `$agentpack-handoff [name]` to package current work and `$agentpack-resume [name]` to claim it from another real session. Other agents use the same MCP tools or `agentpack handoff resume` CLI.
 
 Install AgentPack first:
 
@@ -23,18 +25,19 @@ Codex setup installs this package under
 the exposed skills match the installed CLI.
 
 Use `$agentpack-review <reviewer context>` to prepare and run the local
-two-stage PR review workflow. It writes preflight metadata, a runbook, stage
-prompts, and branch-scoped understanding/findings TOON files. The reviewer
-context is only a lens; the review still depends on direct `gh pr view`,
-`git diff`, code reads, and validation.
+Anchor, Judge, Critic, Actor PR review workflow. It writes preflight metadata, a runbook, stage
+prompts, copy-fill TOON templates, and run-scoped understanding/findings/critique TOON
+files. The reviewer context is only a lens; the review still depends on direct
+`gh pr view`, `git diff`, code reads, and validation. If an older model writes
+valid JSON or fenced output, `agentpack review --check` canonicalizes it to
+TOON; malformed output gets a local repair guide. For PR-bound reviews,
+`agentpack review --check --dry-run-post` validates and writes the inline
+review payload from Critic-approved findings without calling GitHub; `--post-inline-comments` performs the
+real GitHub review post. Actor never edits or pushes the PR branch.
 
-Use `$agentpack-resolve PR #123` to snapshot PR comments and run the cited
-validate, plan, fix, verify, and reply loop. Replies are posted only after
-`agentpack resolve --check` passes and the PR head remains unchanged.
-
-Use `$agentpack-skill-review path/to/SKILL.md` to audit a skill and generate a
-balanced trigger/non-trigger eval workspace. The generated runbook leaves model
-execution and human review with the host agent, while keeping local manifests,
-findings, and candidate evals reproducible.
+Use `$agentpack-resolve [PR and context]` to validate, fix, verify, and reply
+to review comments with file and test citations. Use `$agentpack-skill-review
+<skill path or name>` to audit a skill and generate balanced trigger and
+non-trigger eval cases.
 
 The plugin delegates to local AgentPack CLI and MCP behavior. It does not upload source code or call hosted model APIs.

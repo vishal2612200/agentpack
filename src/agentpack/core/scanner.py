@@ -52,9 +52,25 @@ LANGUAGE_MAP: dict[str, str] = {
     ".sql": "sql",
     ".tf": "terraform",
     ".xml": "xml",
+    ".proto": "protobuf",
+    ".graphql": "graphql",
+    ".graphqls": "graphql",
+    ".gql": "graphql",
 }
 
 ALWAYS_SKIP = {".git", ".agentpack", ".claude"}
+
+
+def _detect_language(abs_path: Path) -> str | None:
+    """Detect language by extension, falling back to filename for Dockerfiles.
+
+    Dockerfiles have no extension (`Dockerfile`, `Dockerfile.dev`, ...), so a
+    pure suffix lookup can't classify them.
+    """
+    name = abs_path.name.lower()
+    if name == "dockerfile" or name.startswith("dockerfile."):
+        return "dockerfile"
+    return LANGUAGE_MAP.get(abs_path.suffix.lower())
 
 
 def file_hash(path: Path) -> str:
@@ -117,7 +133,7 @@ def _ignored_file_info(path: str, abs_path: Path) -> FileInfo:
 
 def _binary_file_info(path: str, abs_path: Path) -> FileInfo:
     size = abs_path.stat().st_size
-    lang = LANGUAGE_MAP.get(abs_path.suffix.lower())
+    lang = _detect_language(abs_path)
     return FileInfo(
         path=path,
         abs_path=abs_path,
@@ -135,7 +151,7 @@ def _packable_file_info(
     prev_files: dict[str, dict],
 ) -> FileInfo | None:
     size = abs_path.stat().st_size
-    lang = LANGUAGE_MAP.get(abs_path.suffix.lower())
+    lang = _detect_language(abs_path)
     fhash = file_hash(abs_path)
 
     prev = prev_files.get(path)

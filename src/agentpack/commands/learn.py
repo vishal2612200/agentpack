@@ -9,7 +9,7 @@ from agentpack.commands._shared import _atomic_write, _root, console
 from agentpack.commands.dashboard import _open_file
 from agentpack.core.config import load_config
 from agentpack.learning.collector import collect_learning_inputs
-from agentpack.learning.extractor import build_learning_report
+from agentpack.learning.extractor import apply_learning_request, build_learning_report
 from agentpack.learning.feedback import (
     apply_feedback_to_report,
     load_feedback_summary,
@@ -32,15 +32,18 @@ from agentpack.learning.renderers import (
     render_quality_markdown,
     render_team_lessons_markdown,
 )
+from agentpack.learning.sessions import record_learning_sessions
 from agentpack.learning.skill_map import apply_skill_feedback, recommend_practice_drills, render_skill_summary, update_skill_map
+from agentpack.learning.task_memory import latest_task_memory, learning_inputs_from_memory
+from agentpack.observer.brief import write_observer_brief
+from agentpack.observer.events import record_learning_feedback_observation, record_learning_observation
 from agentpack.session.events import record_event
 
 
 def register(app: typer.Typer) -> None:
     @app.command()
     def learn(
-        action: str = typer.Argument("", help="Optional action: feedback."),
-        value: str = typer.Argument("", help="Feedback value for `agentpack learn feedback`: helpful|not-helpful."),
+        request: list[str] = typer.Argument(None, help="Optional learning request, or: feedback helpful|not-helpful."),
         task: str = typer.Option("auto", "--task", help="Task source. Only 'auto' is supported."),
         since: str | None = typer.Option(None, "--since", help="Git ref to compare against, e.g. HEAD~1 or main."),
         today: bool = typer.Option(False, "--today", help="Use today's work scope label for the report."),
@@ -88,13 +91,13 @@ def register(app: typer.Typer) -> None:
 
         root = _root()
         cfg = load_config(root)
-        if action:
-            if action != "feedback":
-                console.print("[red]Unknown learn action. Supported action: feedback.[/]")
-                raise typer.Exit(2)
-            if not value:
+        request_parts = list(request or [])
+        learning_request = ""
+        if request_parts and request_parts[0] == "feedback":
+            if len(request_parts) < 2:
                 console.print("[red]Feedback value required: helpful|not-helpful.[/]")
                 raise typer.Exit(2)
+            value = request_parts[1]
             try:
                 payload = record_direct_learning_feedback(
                     root / cfg.learning.feedback_output,
@@ -112,8 +115,21 @@ def register(app: typer.Typer) -> None:
                 {"feedback": payload["feedback"], "target": payload["target"]},
                 output_path=cfg.runtime.session_events_output,
             )
+            try:
+                task_text = _task_text(root)
+                record_learning_feedback_observation(
+                    root,
+                    task=task_text,
+                    feedback=str(payload["feedback"]),
+                    target=str(payload["target"]),
+                )
+                write_observer_brief(root, task=task_text)
+            except Exception:
+                pass
             console.print(f"[green]✓[/] Recorded learning feedback in {cfg.learning.feedback_output}")
             return
+        if request_parts:
+            learning_request = " ".join(request_parts).strip()
         skill_map_path = root / cfg.learning.skill_map_output
         if skills:
             typer.echo(render_skill_summary(skill_map_path), nl=False)
@@ -137,18 +153,28 @@ def register(app: typer.Typer) -> None:
             return
 
         since_date = _today_start_iso() if today and not since else None
-        inputs = collect_learning_inputs(
-            root,
-            since=since,
-            since_date=since_date,
-            max_changed_files=cfg.learning.max_changed_files,
-            max_diff_chars_per_file=cfg.learning.max_diff_chars_per_file,
-        )
+        memory = latest_task_memory(root) if learning_request else None
+        use_memory = memory is not None and _request_prefers_memory(learning_request)
+        if use_memory and memory is not None:
+            inputs = learning_inputs_from_memory(memory)
+        else:
+            inputs = collect_learning_inputs(
+                root,
+                since=since,
+                since_date=since_date,
+                max_changed_files=cfg.learning.max_changed_files,
+                max_diff_chars_per_file=cfg.learning.max_diff_chars_per_file,
+            )
+            if learning_request and not inputs.changed_files and memory is not None:
+                inputs = learning_inputs_from_memory(memory)
         report = build_learning_report(
             inputs,
             max_cards=cfg.learning.max_cards,
             max_quiz_questions=cfg.learning.max_quiz_questions,
         )
+        if use_memory:
+            report = report.model_copy(update={"scope": "task-memory"})
+        report = apply_learning_request(report, learning_request)
         feedback_summary = load_feedback_summary(root / cfg.learning.feedback_output)
         report = apply_feedback_to_report(report, feedback_summary)
         report.agent_lessons = rank_agent_lessons(report, feedback_summary, limit=cfg.learning.max_cards)
@@ -197,6 +223,7 @@ def register(app: typer.Typer) -> None:
         quality = score_learning_report(report, root=root)
         if quality.score < cfg.learning.min_groundedness_score:
             console.print(f"[yellow]Learning quality warning:[/] score {quality.score}; " + "; ".join(quality.issues))
+        learning_session_count = record_learning_sessions(root, report)
 
         if llm_prompt:
             prompt_path = root / cfg.learning.llm_prompt_output
@@ -230,6 +257,15 @@ def register(app: typer.Typer) -> None:
                 {"feedback": feedback, "target": feedback_target},
                 output_path=cfg.runtime.session_events_output,
             )
+            try:
+                record_learning_feedback_observation(
+                    root,
+                    task=report.task,
+                    feedback=feedback,
+                    target=feedback_target,
+                )
+            except Exception:
+                pass
         if ci:
             typer.echo(render_quality_markdown(report, quality.score, quality.issues), nl=False)
             if quality.score < cfg.learning.min_groundedness_score:
@@ -255,9 +291,25 @@ def register(app: typer.Typer) -> None:
                 "selected_hits": len(report.selected_hits),
                 "selected_misses": len(report.selected_misses),
                 "ranking_feedback_paths": ranking_feedback_count,
+                "learning_request": report.learning_request,
+                "coach_mode": report.coach_mode,
+                "learning_sessions": learning_session_count,
             },
             output_path=cfg.runtime.session_events_output,
         )
+        try:
+            record_learning_observation(
+                root,
+                task=report.task,
+                concepts=list(report.concepts),
+                selected_hits=len(report.selected_hits),
+                selected_misses=len(report.selected_misses),
+                learning_request=report.learning_request,
+                learning_sessions=learning_session_count,
+            )
+            write_observer_brief(root, task=report.task)
+        except Exception:
+            pass
         console.print(f"[green]✓[/] Wrote {out_path.relative_to(root)}")
 
 
@@ -277,6 +329,11 @@ def _task_text(root) -> str:
         if lines:
             return lines[0]
     return "Current work"
+
+
+def _request_prefers_memory(request: str) -> bool:
+    lowered = request.lower()
+    return any(term in lowered for term in ("last task", "previous task", "recent task", "what agent changed", "agent changed"))
 
 
 def _split_mapping(value: str, flag: str) -> tuple[str, str]:

@@ -41,8 +41,8 @@ wheel before release. Older `0.3.12` tables remain historical artifacts only.
 Methodology and baseline plans live under `benchmarks/results/v0.3.20/`.
 
 The current local release-candidate baseline is
-`benchmarks/results/2026-06-25-public.md`: 107 scored public cases at 65.7%
-recall and 51.4% token precision. Treat it as scoped release evidence for this
+`benchmarks/results/2026-07-06-public.md`: 107 scored public cases at 67.2%
+recall and 50.6% token precision. Treat it as scoped release evidence for this
 public suite, not as a universal agent-success claim.
 
 For additional repo-specific proof, create `.agentpack/benchmark.toml` with real
@@ -68,7 +68,7 @@ Quality gates for a serious local eval:
 | Miss diagnostics | every miss has status, rank, score, and reasons |
 | Mode comparison | `lite`, `balanced`, and `deep` all reported |
 
-The current expanded-suite local baseline is **65.7% recall / 51.4% token
+The current expanded-suite local baseline is **67.2% recall / 50.6% token
 precision** across 107 scored public cases. Do not improve headline recall by
 spending the precision margin. Publish per-language slices, and call out whether
 gains came from Python, TypeScript/Vite, Go/Gin, Java/Spring, or TypeScript

@@ -6,25 +6,23 @@ or benchmark workflows.
 
 ## Commands
 
-Most users should start with five commands:
+Most users should start with four commands:
 
 ```bash
-agentpack init --agent auto
-agentpack route --task "describe the change"
-agentpack pack --task "describe the change"
-agentpack doctor
-agentpack benchmark --release-gate
+agentpack quickstart
+agentpack start "describe the change"
+agentpack next
+agentpack doctor --agent auto
 ```
 
 Core command map:
 
 | Command | Use when |
 |---|---|
-| `agentpack init` | Set up `.agentpack/` and install one agent integration for a repo |
-| `agentpack route` | Route a task to files, rules, skills, commands, and safety warnings without writing context |
-| `agentpack pack` | Generate a ranked context pack for one task |
+| `agentpack quickstart` | Show the shortest first-run path for this repo |
+| `agentpack start` | Write one concrete task and refresh context |
+| `agentpack next` | Answer "what now?" from setup, task, context, token, and session state |
 | `agentpack doctor` | Audit MCP, hooks, agent files, CLI path, and repo health |
-| `agentpack benchmark` | Measure recall, precision, and misses against real tasks |
 
 Advanced command map:
 
@@ -33,16 +31,22 @@ Advanced command map:
 | `agentpack install` | Refresh or add an agent integration without changing project state |
 | `agentpack upgrade` | Refresh the auto-detected IDE/agent integration after package upgrade |
 | `agentpack repair` | Restore missing or drifted integration files |
+| `agentpack init` | Set up `.agentpack/` and install one agent integration for a repo |
+| `agentpack route` | Route a task to files, rules, skills, commands, safety warnings, and advisory observer priors without writing a full context pack |
+| `agentpack pack` | Generate a ranked context pack for one task |
+| `agentpack benchmark` | Measure recall, precision, and misses against real tasks |
 | `agentpack work` | Convenience wrapper for init, task, context refresh, and next steps |
 | `agentpack work --run` | Advanced optional proof harness around a configured external runner |
 | `agentpack start` | Write a task and run the default guard/refresh workflow |
-| `agentpack review` | Prepare the full two-stage PR review bundle for the current branch or PR |
+| `agentpack review` | Prepare the Anchor, Judge, Critic, Actor PR review bundle for the current branch or PR |
 | `agentpack resolve` | Validate, fix, verify, and reply to PR review comments with citations |
+| `agentpack skill-review` | Audit a skill and generate a balanced trigger/non-trigger eval workspace |
 | `agentpack finish` | Run finish checks, capture benchmark evidence, and mark state done |
 | `agentpack learn` | Generate developer learning notes, skill progress, and future-agent lessons from task context and git changes |
 | `agentpack task` | Show, set, or clear global/thread-scoped task files |
 | `agentpack next` | Recommend the next AgentPack action from repo/task/context state |
-| `agentpack retrieve` | Retrieve file or symbol context from the latest pack registry |
+| `agentpack retrieve` | Retrieve selected, omitted, file, or symbol context from the latest pack registry |
+| `agentpack toon-validate` | Validate TOON syntax for agent-facing artifacts |
 | `agentpack learn` | Generate local learning notes, skill evidence, future-agent lessons, selected-file miss feedback, and local feedback signals |
 | `agentpack perf` | Show runtime scorecard and optional recent history from pack, retrieval, and output-compression events |
 | `agentpack wrap` | Pack fresh task context, then launch a coding agent binary |
@@ -59,7 +63,7 @@ Advanced command map:
 | `agentpack eval` | Run deterministic failure evals with tests, diff limits, and taxonomy labels |
 | `agentpack tune` | Suggest fixes from recent pack metrics and benchmark misses |
 | `agentpack status` | Inspect current pack freshness and metadata |
-| `agentpack dashboard` | Generate a local HTML dashboard for context, skills, learning, and quality |
+| `agentpack dashboard` | Serve a local dashboard for context, skills, learning, observer signals, integrations, and quality |
 | `agentpack threads` | List, archive, prune, and inspect thread-scoped contexts |
 | `agentpack state` | Show or update task execution state |
 | `agentpack diff` | Show what changed between context snapshots |
@@ -68,17 +72,19 @@ Advanced command map:
 | `agentpack dev-check` | Run docs, lint, pytest, and npm wrapper checks |
 | `agentpack verify-wheel` | Install a wheel in a temp venv and run benchmark gate |
 | `agentpack release-check` | Run the local release gate |
-| `agentpack release prepare` | Run release-check, public table benchmark, and wheel verification |
+| `agentpack release prepare` | Run release-check, public table benchmark, wheel verification, and release notes |
 | `agentpack ci init` | Generate a GitHub Actions workflow for AgentPack checks |
 | `agentpack global-install` | Install opt-in global hooks for initialized repos |
 | `agentpack global-repair-hooks` | Repair stale global template hooks and current repo git hooks |
 
 ### `agentpack learn`
 
-Generate local learning notes from the latest task, pack metadata, and git diff.
+Generate local learning notes from the latest task, pack metadata, git diff, or recent task memory. Lessons are generated on demand; `agentpack work` only records cheap task facts and advisory observer events.
 
 ```bash
 agentpack learn --since main
+agentpack learn "quiz me on last task" --json
+agentpack learn "interview me on this PR"
 agentpack learn --json
 agentpack learn feedback helpful --target card:1
 agentpack learn feedback not-helpful --note "too generic"
@@ -89,7 +95,11 @@ Writes `.agentpack/learning.md`, `.agentpack/agent-lessons.md`, and
 `.agentpack/ranking-feedback.jsonl`; later packs give overlapping tasks a small
 boost for those missed paths. Explicit feedback writes
 `.agentpack/learning-feedback.jsonl`. Future packs inject bounded agent lessons
-when `[learning].inject_agent_lessons = true`.
+when `[learning].inject_agent_lessons = true`. Quoted learning requests switch
+the output into Task Coach mode (`quiz`, `interview`, `failure`, `review`, or
+`system-design`) and can use recent `task_memory` events from
+`.agentpack/session-events.jsonl`. Learning runs and feedback also refresh
+`.agentpack/observer-brief.md` for local advisory relationships.
 
 ### `agentpack retrieve`
 
@@ -99,12 +109,15 @@ Retrieve content from the latest `.agentpack/pack-registry.json`.
 agentpack retrieve src/app.py
 agentpack retrieve --block-id src__app.py__run:abc123def456
 agentpack retrieve src/app.py --mode skeleton
+agentpack retrieve src/app.py --kind omitted --mode full
 agentpack retrieve src/app.py --mode full --allow-stale
 ```
 
 Use `--block-id` for exact file or symbol blocks printed by pack-registry
-retrieval output. Full-file retrieval refuses stale hashes unless
-`--allow-stale` is passed.
+retrieval output. Use `--kind selected|omitted` when selected and omitted
+records share a path. Full-file retrieval refuses stale hashes unless
+`--allow-stale` is passed. MCP agents can use `get_task_map()` to discover
+retrieve refs and then call `retrieve_context(block_id="...")`.
 
 ### `agentpack perf`
 
@@ -165,9 +178,16 @@ uses `JIRA_BASE_URL` plus either `JIRA_BEARER_TOKEN` or `JIRA_EMAIL` with
 ```bash
 agentpack memory
 agentpack memory --json
+agentpack memory --timeline
+agentpack memory --timeline --json --limit 100
 agentpack memory --prune --dry-run
 agentpack memory --prune --max-events 2000 --max-episodes 1000
 ```
+
+`--timeline` joins task-start snapshots, episodic cases, procedures, and memory
+edges into timestamped rows with version keys, record hashes, relation IDs,
+confidence, visible reason, and stale path flags. Use it to inspect ordering and
+relationships without treating memory as source of truth.
 
 `--prune` keeps the newest session events and episodic cases according to
 runtime retention limits. Use `--dry-run` before writing. `agentpack doctor`
@@ -253,6 +273,7 @@ agentpack doctor
 agentpack doctor --agent codex
 agentpack doctor --agent all
 agentpack doctor --fix
+agentpack doctor --agent all --fix
 ```
 
 Example output:
@@ -301,9 +322,12 @@ The new checks in `doctor`:
 - **Source checkout mismatch**: warns when you're inside an AgentPack source checkout but the `agentpack` executable imports the installed site-packages copy. Use `PYTHONPATH=src python -m agentpack.cli ...` or `pip install -e .` for local development.
 - **Concurrent thread warning**: warns when active thread records overlap in the same worktree and branch.
 
-`--fix` performs only safe AgentPack-managed repairs: refresh stale generated
-rules/hooks and sync imported `.agentignore` blocks. It does not delete user
-configuration, force thread mode, or run destructive git operations.
+`doctor` is the diagnose-first command. `--agent all --fix` diagnoses every
+supported local integration, then applies safe AgentPack-managed repairs for
+failing checks and syncs imported `.agentignore` blocks. It does not delete user
+configuration, force thread mode, repair global shell/git hooks, or run
+destructive git operations. For an explicit mutation-only workflow, use
+`agentpack repair --agent <agent>` or `agentpack repair --agent all`.
 
 ---
 
@@ -345,6 +369,11 @@ Run the optional guarded loop with a generic local runner after preparing fresh
 context. Keep this as an advanced verification path, not the main quickstart.
 It is a proof harness around existing agents, not AgentPack's default workflow
 and not an autonomous coding product.
+
+Plain `agentpack work "task"` stays on the fast path: it writes the task,
+refreshes context, records a bounded `task_memory` event, and returns. It does
+not generate lessons, render dashboards, call providers, or block the coding
+agent on coach output.
 
 ```bash
 agentpack work "fix auth token expiry" --run --runner "claude < .agentpack/context.claude.md" --verify "pytest -q"
@@ -469,13 +498,21 @@ agentpack install --agent antigravity  # GEMINI.md + git hooks + VS Code tasks
 ```
 
 All installs are idempotent — safe to re-run, merge with existing config, never duplicate.
-Claude installs also refresh `/agentpack`, `/agentpack-review`, and `/agentpack-learn`.
+Claude installs also refresh `/agentpack`, `/agentpack-review`, `/agentpack-learn`, `/agentpack-handoff`, and `/agentpack-resume`.
 Codex installs refresh the local plugin cache, enable `agentpack@local`, and
 disable stale enabled AgentPack marketplace entries so Codex loads the same
 version as the installed CLI.
-The review slash command runs the local two-stage review bundle; the learning
+The review slash command runs the local Anchor, Judge, Critic, Actor review bundle; the learning
 slash command uses current local AgentPack session context and keeps the user
 learning statement at the end for prompt caching.
+
+### `agentpack handoff`
+
+Transfer current work between real Codex, Claude, Cursor, Windsurf, Gemini,
+Antigravity, Cline, Copilot, OpenCode, or generic sessions. Handoffs use memorable
+project-scoped names, a canonical JSON report, and a complete compressed Git patch
+under `AGENTPACK_HOME`. Use `create`, `list`, `show`, `resume`, `release`, `cancel`,
+`export`, and `import`. MCP exposes the same create/list/get/accept/release lifecycle.
 
 ---
 
@@ -506,11 +543,14 @@ are not still active.
 ### `agentpack repair`
 
 Repair missing or drifted integration files. It uses the same installer contract as `init` and `install`, but is named for the "make this repo healthy again" workflow.
+Use `doctor` when you want diagnosis and safety guidance first; use `repair`
+when you already decided to write AgentPack-managed integration files.
 
 ```bash
 agentpack repair                 # repair auto-detected agent
 agentpack repair --agent codex   # AGENTS.md + hooks + MCP config + agentpack@local + git hooks
 agentpack repair --agent all     # repair every supported integration
+agentpack repair --agent all --global  # repair global configs where supported
 ```
 
 ---
@@ -525,9 +565,19 @@ agentpack guard --refresh-context                   # refresh stale/missing cont
 agentpack guard --agent codex --repair-stale        # repair stale Codex rules/hooks
 agentpack guard --agent auto --repair-stale --refresh-context
 agentpack guard --thread codex-local --refresh-context
+agentpack guard --refresh-context --allow-dirty-targets
 ```
 
 This is the strongest non-native enforcement AgentPack can provide: tools that run commands get a failing exit code when context is unsafe, and an automatic repair/refresh path when allowed.
+Failures print what failed, why it matters, the exact repair command, and whether
+it is safe to continue. When unsafe, treat direct `rg`, `git diff`, and targeted
+file reads as the source of truth until the guard passes.
+
+By default, tracked local changes block refresh because AgentPack should not
+pull or trust stale context over an unclear worktree. Use
+`--allow-dirty-targets` only after confirming the tracked changes are part of
+the current task. It lets guard refresh context from the dirty tree, but still
+does not attempt a git sync.
 
 ---
 
@@ -572,8 +622,11 @@ AGENTPACK_THREAD_ID=codex-local agentpack start "fix auth session bug" --thread 
 
 By default, `start` writes the task and runs
 `guard --agent auto --repair-stale --refresh-context`. Use `--pack-only` when
-you only want a fresh pack. Thread mode is still explicit: pass `--thread <id>`
-or `--thread auto` to write under `.agentpack/threads/<id>/`.
+you only want a fresh pack. In an agent session, `start` writes under
+`.agentpack/threads/<id>/` automatically from `AGENTPACK_THREAD_ID`,
+`CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`, `CURSOR_SESSION_ID`,
+`WINDSURF_SESSION_ID`, `ANTIGRAVITY_SESSION_ID`, or `GEMINI_SESSION_ID`. Pass
+`--thread global` for the legacy `.agentpack/task.md` flow.
 
 ---
 
@@ -591,9 +644,9 @@ agentpack work "fix auth session bug" --json
 ```
 
 `work` composes existing commands instead of inventing a separate path:
-`init --yes` when missing, then `start`, then `next`. It does not silently use
-ambient thread env vars; pass `--thread auto` when you want documented thread
-env resolution.
+`init --yes` when missing, then `start`, then `next`. It uses the ambient agent
+session lease when one is available; pass `--thread global` to force legacy
+global state.
 
 ---
 
@@ -612,8 +665,9 @@ agentpack finish --json
 
 By default, `finish` writes a selection diagnosis, optionally captures a
 benchmark case when `--since` is supplied, runs `dev-check`, and marks task
-state `done`. With `--thread` it writes scoped state; with `--archive-thread` it
-also appends a done row to the thread index.
+state `done`. In an agent session it writes scoped state and appends a done row
+to the thread index so the completed context is not reused. `--archive-thread`
+is kept as a compatibility flag.
 
 When a Ralph Loop state applies, `finish` also requires a passing loop
 verification and a post-run source diff. Dirty files that existed before loop
@@ -674,8 +728,9 @@ Default outputs:
 - `.agentpack/learning-dashboard.html` with `--dashboard`
 - `.agentpack/team-lessons.md` with `--team-export`
 - `.agentpack/learning-feedback.jsonl` with `--feedback`
+- `.agentpack/learning-sessions.jsonl` for on-demand coach questions
 
-The command reads `.agentpack/task.md`, changed files, and bounded redacted
+The command reads the current session task file, changed files, and bounded redacted
 diffs. It does not call a hosted service by default. The human-facing summary
 explains changed files, concepts, decisions, risks, tests, learning cards, quiz
 questions, skill evidence, and next practice. Summary, decision, risk, and test
@@ -697,7 +752,8 @@ enrich the report; AgentPack sends the bounded report JSON on stdin and accepts
 LearningReport-compatible JSON fields on stdout. This keeps hosted model,
 company LLM gateway, or custom rules-engine integration behind an explicit local
 command boundary. `--dashboard` writes a static HTML learning dashboard for
-IDE/browser review. `--team-export` writes a shareable lessons file that omits
+IDE/browser review, including recent task memory and queued weak spots from
+on-demand quiz/interview sessions. `--team-export` writes a shareable lessons file that omits
 personal skill history. `--ci` prints a quality report and exits non-zero when
 learning is too generic or lacks changed-file evidence. `--skills` and
 `--drills` turn the local skill map into a quick progress view and
@@ -722,15 +778,16 @@ agentpack task set "fix billing webhook retry" --pack --mode deep
 agentpack task clear
 ```
 
-Global mode writes `.agentpack/task.md`. Thread mode writes
-`.agentpack/threads/<id>/task.md`. `task set --pack` delegates to `pack`;
-`task set --guard` delegates to the guard/refresh workflow.
+Without an ambient session, task commands write `.agentpack/task.md`. In an
+agent session they write `.agentpack/threads/<id>/task.md` automatically. Use
+`--thread global` to force legacy global state. `task set --pack` delegates to
+`pack`; `task set --guard` delegates to the guard/refresh workflow.
 
 ---
 
 ### `agentpack pack`
 
-Generate a context pack. `agentpack pack --task "<task>"` writes the task into `.agentpack/task.md` and packs it. `--task auto` reads `.agentpack/task.md`, then falls back to git context, and is the default when the flag is omitted.
+Generate a context pack. `agentpack pack --task "<task>"` writes the task into the current session task file and packs it. `--task auto` reads the current session task file, then falls back to git context only in legacy global mode, and is the default when the flag is omitted.
 
 ```bash
 printf '%s\n' "fix auth session bug" > .agentpack/task.md
@@ -759,14 +816,14 @@ Options:
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--agent` | `auto` | Target agent (`auto` \| `claude` \| `cursor` \| `windsurf` \| `codex` \| `antigravity` \| `generic`). `auto` detects the active IDE from env and project files. |
-| `--task` | `auto` | Task text to write before packing, or `auto` to read `.agentpack/task.md` / git context. |
+| `--task` | `auto` | Task text to write before packing, or `auto` to read the current session task file / legacy git context. |
 | `--mode` | `balanced` | Budget mode: `lite`, `balanced`, `deep` |
 | `--budget` | 0 (uses config default 40000) | Token budget |
 | `--workspace` | — | Restrict packing to a monorepo workspace and write `.agentpack/workspaces/<workspace>/context.md` |
 | `--since` | — | Only include files changed since this git ref |
 | `--session` | off | Re-pack on every file change (watch mode) |
 | `--refresh` | off | Force rebuild summaries before packing |
-| `--thread` | — | Use `.agentpack/threads/<id>/task.md`, `context.md`, `context.claude.md`, `task_state.md`, and `pack_metadata.json` instead of global task/context files. `--thread auto` resolves documented thread env vars. |
+| `--thread` | ambient session | Use `.agentpack/threads/<id>/task.md`, `context.md`, `context.claude.md`, `task_state.md`, and `pack_metadata.json` instead of global task/context files. `--thread global` opts into legacy global files. |
 
 **Budget modes:**
 
@@ -811,11 +868,15 @@ AgentPack uses budget-aware compression when building context:
 
 This keeps unrelated dirty files from consuming the whole context budget while preserving changed-file recall.
 
-**Multi-thread execution context:** omit `--thread` for the legacy global `.agentpack/task.md` and `.agentpack/context.md` flow. Plain `pack`, `status`, and `guard` do not silently adopt `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`, or other host session env vars. Pass `--thread <id>` or `--thread auto` when multiple agents are changing the same project so each thread gets isolated task/context state under `.agentpack/threads/<id>/`. Thread ids are sanitized to letters, numbers, `_`, `.`, and `-`.
+**Multi-thread execution context:** in an agent session, plain `pack`, `status`, `guard`, `task`, `state`, `start`, `work`, `finish`, and MCP context tools adopt `AGENTPACK_THREAD_ID`, `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`, `CURSOR_SESSION_ID`, `WINDSURF_SESSION_ID`, `ANTIGRAVITY_SESSION_ID`, or `GEMINI_SESSION_ID` automatically so each chat gets isolated task/context state under `.agentpack/threads/<id>/`. Pass `--thread global` when you intentionally want the legacy `.agentpack/task.md` and `.agentpack/context.md` flow. Thread ids are sanitized to letters, numbers, `_`, `.`, and `-`.
 
-`--thread auto` resolves in this order: `AGENTPACK_THREAD_ID`, `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`, `CURSOR_SESSION_ID`. A concrete `--thread <id>` wins over env vars.
+`--thread auto` resolves in this order: `AGENTPACK_THREAD_ID`, `CODEX_THREAD_ID`, `CLAUDE_SESSION_ID`, `CURSOR_SESSION_ID`, `WINDSURF_SESSION_ID`, `ANTIGRAVITY_SESSION_ID`, `GEMINI_SESSION_ID`. A concrete `--thread <id>` wins over env vars.
 
 Each thread pack appends `.agentpack/thread_index.jsonl` with task hash, branch, worktree, selected files, dirty files, status, and timestamp. If another active thread from the last 24 hours is on the same branch and worktree with overlapping selected/dirty files, the rendered context includes `## Concurrent Context` as a warning. It does not block edits; it tells the agent to coordinate or move to a separate branch/worktree.
+
+Completed sessions are terminal. `agentpack finish` marks the session `done`;
+later `guard`, `next`, `pack`, and MCP context reads refuse to reuse that
+completed context for a new task.
 
 Rendered packs now include `## Execution State` after freshness. AgentPack reads optional `.agentpack/threads/<id>/task_state.md` first, then `.agentpack/task_state.md`, parsing `Status:`, `Summary:`, and checklist counts from `- [x]`, `- [ ]`, and `- [!]`. If no task state exists, it derives status from git and reports lightweight Docker/Compose availability without mutating containers or using the network.
 
@@ -832,10 +893,13 @@ agentpack next --fix
 agentpack next --fix-all-safe
 ```
 
-`next` checks for an uninitialized repo, missing task, stale context, active
-thread conflicts, and noisy recent pack diagnostics. With `--fix`, it only runs
-safe refresh work for stale context; it does not initialize projects, delete
-files, force thread mode, or change git state.
+`next` is the CLI control plane. It reads the shared setup/task/context/session
+snapshot used by `quickstart`, `status`, and `guard`, then recommends the next
+command. Human output shows the next command, what failed, why it matters, and
+whether it is safe to continue. JSON output includes the snapshot and current
+token hint so agent hosts can avoid unnecessary full-context calls.
+With `--fix`, it only runs safe refresh work for stale context; it does not
+initialize projects, delete files, force thread mode, or change git state.
 `--fix-all-safe` can initialize a missing `.agentpack/config.toml`, refresh stale
 context, and write `.agentpack/selection_diagnosis.md`. It still does not apply
 ignore suggestions, delete thread directories, resolve thread conflicts, or
@@ -886,7 +950,7 @@ Valid statuses are `planned`, `in_progress`, `blocked`, and `done`.
 
 ### `agentpack route`
 
-Route a task without writing context files. This is the CLI debug/admin surface for the same router used by MCP `route_task`.
+Route a task without writing a full context pack. This is the CLI debug/admin surface for the same router used by MCP `route_task`.
 
 ```bash
 agentpack route --task "fix flaky payment webhook test"
@@ -895,7 +959,24 @@ agentpack route --task "fix flaky payment webhook test" --format json
 pipx run --spec agentpack-cli agentpack route --task "fix auth token expiry"
 ```
 
-Output includes relevant files, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt. It uses the existing AgentPack file ranker in memory and does not write `.agentpack/context.md`. `--json` is the stable machine-readable alias; `--format json` remains supported.
+Output includes relevant files, why those files were selected, common candidates that were not selected, applied rules, recommended skills, suggested commands, safety warnings, optional observer priors, and an agent prompt. It uses the existing AgentPack file ranker in memory and does not write `.agentpack/context.md`. Observer priors are hypotheses from local history; verify source and diff evidence before editing. `--json` is the stable machine-readable alias; `--format json` remains supported.
+
+---
+
+### `agentpack toon-validate`
+
+Validate TOON syntax for agent-facing artifacts. Review artifacts can also be checked against the review-specific schemas.
+
+```bash
+agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon
+agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --format json
+agentpack toon-validate .agentpack/reviews/pr-123/run/critique.toon --schema review-critique
+agentpack toon-validate .agentpack/reviews/pr-123/run/understanding.toon --schema review-understanding
+agentpack toon-validate .agentpack/reviews/pr-123/run/findings.toon --schema review-findings --allow-json --write-canonical
+```
+
+By default the validator requires `@format toon` as the first non-empty line. Use `--allow-missing-format` only for legacy files.
+Use `--schema review-understanding`, `--schema review-findings`, or `--schema review-critique` for review-stage files. With `--allow-json --write-canonical`, valid JSON that matches the selected schema is rewritten as canonical TOON; malformed output still fails. MCP-only agents can call `validate_toon(..., return_canonical=true)` to receive canonical TOON in the response without using the CLI rewrite path.
 
 ---
 
@@ -916,7 +997,7 @@ agentpack skills feedback --task "fix auth" --used-skill pytest-debugging --test
 
 ### `agentpack quickstart`
 
-Show the shortest useful path for the current repo.
+Show one clear first-run path for the current repo.
 
 ```bash
 agentpack quickstart
@@ -924,18 +1005,79 @@ agentpack quickstart --task "fix auth token expiry"
 agentpack quickstart --task "fix auth token expiry" --write
 ```
 
-`quickstart` does not guess at magic. It checks whether `.agentpack/config.toml`, `.agentpack/task.md`, and context packs exist, then prints the next few commands. With `--write`, it writes the supplied task into `.agentpack/task.md`.
+`quickstart` does not guess at magic. It reads the same control-plane snapshot
+as `next`, checks whether `.agentpack/config.toml`, the current session task
+file, and context metadata exist, then prints one next command path. In an
+agent session, `--write` writes the supplied task under
+`.agentpack/threads/<id>/task.md`; `--thread global` opts into the legacy global
+task file. Optional later commands like `stats`, `watch`, and `benchmark` stay
+out of the first-run path.
+
+### Token contract
+
+Every pack metadata file includes `token_contract`: budget, rendered token
+estimate, selected-file mode counts, largest selected sections, trimmed section
+counts, and a recommended next context strategy. `agentpack next --json`,
+`agentpack stats`, and MCP `readiness()` expose the same contract. Treat it as a
+routing hint: use `get_delta_context()` for small follow-up reads or near-budget
+packs, and use `get_context()` when task/context freshness is the question.
+
+---
+
+### `agentpack architecture`
+
+Build a local deterministic architecture snapshot, compare two commits, and
+evaluate declared invariants without any model call.
+
+```bash
+agentpack architecture snapshot --ref HEAD --json
+agentpack architecture snapshot --cold --json
+agentpack architecture snapshot --verify-incremental --json
+agentpack architecture diff --base origin/main --head HEAD --json
+agentpack architecture check --base origin/main --head HEAD --json
+agentpack architecture query "token validation" --type symbol --json
+agentpack architecture path AuthService TokenStore --json
+agentpack architecture explain AuthService.validate_token --json
+agentpack architecture artifacts --diff .agentpack/raw/architecture-diff.json --check .agentpack/raw/architecture-check.json
+```
+
+The snapshot is the canonical semantic graph under `.agentpack/architecture/`.
+It contains stable entities and evidence-backed relationships for definitions,
+imports, calls, references, inheritance, implementation, tests, comments,
+documents, configuration, and external effects. Snapshots are cache-addressed
+by commit, schema version, and extractor profile. Incremental worktree builds
+reuse file records under `.agentpack/architecture/records/`, persist materialized
+state under `.agentpack/architecture/state/`, and verify incremental output
+against a cold graph when requested. `--verify-incremental` performs that
+equivalence check; normal builds do not pay for a second rebuild. `--cold` bypasses the materialized graph and
+includes build diagnostics in JSON output.
+Graph MCP operations return bounded compact evidence by default. Pass
+`detail="full"` to `query_graph`, `get_graph_node`, `get_graph_neighbors`,
+`shortest_path`, or `explain_graph_edge` when complete entity metadata and all
+evidence are required.
+Only citation-backed structured or declared evidence may block a check;
+best-effort and file-level signals remain advisory. `artifacts` removes source
+hashes and absolute paths before writing the CI diff, summary, and receipt.
 
 ---
 
 ### `agentpack review`
 
-Prepare the full two-stage PR review bundle for the current branch or checked-out PR.
+Prepare the Anchor, Judge, Critic, Actor PR review bundle for the current branch or checked-out PR.
 
 ```bash
 agentpack review
 agentpack review "focus on backward compatibility"
+agentpack review --pr 123 "focus on backward compatibility"
+agentpack review --light --pr 123 "small docs-only review"
+agentpack review --strict --pr 123 "security-sensitive review"
+agentpack review --check
+agentpack review --check --dry-run-post
+agentpack review --check --dry-run-check
+agentpack review --check --post-inline-comments
 agentpack review --resume <run_id>
+agentpack review --resume latest
+agentpack review --list
 ```
 
 Writes:
@@ -944,60 +1086,111 @@ Writes:
 - `.agentpack/review.prompt.md`
 - `.agentpack/review-understanding.prompt.md`
 - `.agentpack/review-judge.prompt.md`
+- `.agentpack/review-critic.prompt.md`
+- `.agentpack/review-understanding.template.toon`
+- `.agentpack/review-findings.template.toon`
+- `.agentpack/review-critique.template.toon`
+- `.agentpack/review-approved-findings.toon` after Critic validation
 - `.agentpack/reviews/<branch-prefix>/<run_id>/preflight.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/runbook.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/context.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/citations.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.prompt.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/judge.prompt.md`
-- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon`
-- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critic.prompt.md`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.template.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.template.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critique.template.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.json` as the Anchor authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon` as the Anchor canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.json` as the Judge candidate authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon` as the Judge canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critique.json` as the Critic authoring artifact
+- `.agentpack/reviews/<branch-prefix>/<run_id>/critique.toon` as the Critic canonical handoff
+- `.agentpack/reviews/<branch-prefix>/<run_id>/approved-findings.toon` as the Actor-only publish input
+- `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-payload.json` when inline PR comment payloads are built
+- `.agentpack/reviews/<branch-prefix>/<run_id>/inline-review-dry-run.json` when `--dry-run-post` validates the payload without calling GitHub
+- `.agentpack/reviews/<branch-prefix>/<run_id>/posted-review.json` when inline PR comments are posted or intentionally skipped because there are no findings
 
 `review` stays local-first. It does not replace `gh pr view`, `git diff`, or
 direct code inspection. Instead it captures the latest available PR metadata,
 selects a diff base, lists changed files and related tests, records stale/dirty
 warnings, writes run-scoped broad context, and renders the full
-understanding-plus-judge prompt bundle for a host agent to perform the actual
+Anchor-plus-Judge-plus-Critic prompt bundle for a host agent to perform the actual
 review. Review context is written under the review run directory instead of
 overwriting the active `.agentpack/context.md` pack.
 
-Review artifacts are claim-grounded. `understanding.toon` and `findings.toon`
-must cite repo facts with valid `path:line` evidence. Resume/preflight
-validation rejects findings with prose-only evidence, missing locations, files
-that do not exist, line ranges outside the current checkout, or stale
-hash-bearing source citations. Finding evidence and Stage 1 resolved-context
-fields such as `referenced_symbols`, `callers`, and `local_convention_refs`
-also have to overlap the cited span enough to catch arbitrary `path:line`
-references that do not support the claim. For stricter meaning-level review,
-set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local JSON-in/JSON-out command;
-review validation sends each mechanically supported claim/citation pair on
-stdin and rejects it when the command returns `{"supported": false, "reason":
-"..."}`.
+Review artifacts are claim-grounded. Stage agents write JSON by default, then
+`agentpack review --check` validates and canonicalizes that JSON into
+`understanding.toon`, `findings.toon`, or `critique.toon`. Judge reads canonical
+`understanding.toon`; Critic reads both prior canonical artifacts, so TOON remains the inter-stage handoff format while JSON
+is only the authoring format. Resume/preflight validation also accepts legacy
+TOON artifacts and fenced JSON, then writes canonical TOON. If the output is
+malformed, review validation writes `<stage>-toon-repair.md` next to the
+artifact with a copy-fill template and recovery instructions. It then rejects
+findings with prose-only evidence, missing locations, files that do not exist,
+line ranges outside the review source, or stale hash-bearing source citations.
+For PR-bound reviews, citation validation reads file contents from the recorded
+PR head SHA. Local fallback reviews validate against the working tree. Failed
+claim-support checks write `<stage>-validation-errors.json` with nearby
+replacement line hints when AgentPack can find a stronger candidate. Finding
+evidence and Stage 1 resolved-context fields such as `referenced_symbols`,
+`callers`, and `local_convention_refs` also have to overlap the cited span
+enough to catch arbitrary `path:line` references that do not support the claim.
+Stage 1 `contracts_touched` entries may use structured
+`contract`/`before`/`after`/`evidence` objects so contract evidence is explicit
+instead of buried in prose.
+For stricter meaning-level review, set `AGENTPACK_CITATION_SEMANTIC_COMMAND` to a local
+JSON-in/JSON-out command; review validation sends each mechanically supported
+claim/citation pair on stdin and rejects it when the command returns
+`{"supported": false, "reason": "..."}`.
+
+After Critic validates, `agentpack review --check` deterministically writes
+`approved-findings.toon` from accepted Judge findings and allowed severity downgrades. Rejected findings never reach the Actor. `agentpack review --check --dry-run-post` reads only that approved artifact and writes the GitHub review payload to `inline-review-payload.json` without calling GitHub. `--dry-run-check` is an alias for the same validation path. `agentpack review --check --post-inline-comments` generates the same dry-run record internally, verifies the payload hash, then posts only approved findings as one GitHub PR review. Actor is publish-only: it never edits or pushes a PR branch. GitHub only accepts inline comments on right-side lines in the PR diff, so AgentPack posts commentable approved findings inline and keeps non-commentable approved findings in the review body under `Non-inline findings`. Successful posts are recorded in `posted-review.json` so re-running the check does not duplicate PR comments.
+
+Review scaffolding adapts to PR size and risk. Small PRs default to a lighter
+scaffold; security/auth/billing/database/migration-style reviews default to
+strict. Use `--light` to force the compact path and `--strict` to force the full
+three-artifact scaffold; `--light` reduces context but still requires Critic.
+
+The dry-run payload record has this shape:
+
+```json
+{
+  "repo": "OWNER/REPO",
+  "pr": 123,
+  "endpoint": "repos/OWNER/REPO/pulls/123/reviews",
+  "payload_sha256": "...",
+  "payload": {
+    "commit_id": "<pr-head-sha>",
+    "event": "COMMENT",
+    "body": "AgentPack found N evidence-backed finding(s) and left them inline where they apply...",
+    "comments": [
+      {
+        "path": "src/file.py",
+        "line": 42,
+        "side": "RIGHT",
+        "body": "**Should fix**\n\n...\n\nEvidence: ...\n\nSuggested next step: ...\n\n<details><summary>Review metadata</summary>\n\nFinding `f1` | severity: `should-fix`\n\n</details>"
+      }
+    ]
+  }
+}
+```
+
+For controlled E2E tests, use a draft or throwaway PR, run
+`agentpack review --check --dry-run-post`, inspect `payload_sha256`, then run
+`agentpack review --check --post-inline-comments`. To clean up a test comment,
+use the comment id from the GitHub API or PR discussion URL:
+
+```bash
+gh api -X DELETE repos/OWNER/REPO/pulls/comments/<comment_id>
+```
 
 The positional argument is optional reviewer context. It shapes prioritization
 only; it must not replace code evidence.
 Fresh runs are the default. Interrupted work is resumed only when
-`--resume <run_id>` is passed explicitly.
-
----
-
-### `agentpack resolve`
-
-Prepare and gate a cited loop for resolving inline and top-level PR review comments.
-
-```bash
-agentpack resolve --pr 123
-agentpack resolve --pr 123 --inline-only
-agentpack resolve --check
-agentpack resolve --reply
-```
-
-The command snapshots the latest PR head and comments into `.agentpack/`, then
-renders a host-agent prompt. The agent writes a disposition for every comment,
-`--check` gates the plan before edits, and `--reply` validates cited responses
-and the unchanged PR head before posting them through `gh`. Start a fresh run
-after posting to resnapshot remaining comments; the loop does not mark GitHub
-threads resolved automatically.
+`--resume <run_id>` is passed explicitly. Use `--list` to see recent run ids,
+or `--resume latest` to resume the newest known run for the current branch.
 
 ---
 
@@ -1042,7 +1235,7 @@ agentpack watch --debounce 3.0         # wait 3s after last change before refres
 Default installs include `watchdog` and use native filesystem events. If `watchdog`
 is unavailable in an editable checkout or distro-managed environment, watch mode
 falls back to polling. Context is refreshed whenever source files or
-`.agentpack/task.md` change.
+the current task file changes.
 
 ---
 
@@ -1104,25 +1297,26 @@ Register in Claude Code settings (`~/.claude/settings.json`):
 | Tool | Description |
 |---|---|
 | `readiness()` | Prove the current host can call AgentPack MCP tools; returns server, version, tool list, CLI command surface, and latest context provenance. |
-| `route_task(task)` | Read-only task router. Returns relevant files, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt as JSON. |
+| `route_task(task)` | Read-only task router. Returns relevant files, why-selected/why-not-selected explanations, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt as JSON. |
 | `get_skills()` | Return discovered skill/rule inventory as JSON. |
 | `get_skill(name_or_path)` | Return one skill's raw `SKILL.md` content after `route_task` recommends it. |
 | `explain_route(task)` | Return route JSON with positive skill score reasons for debugging router choices. |
-| `start_task(task, mode, budget, max_tokens, thread_id)` | Recommended MCP-first entry point. Writes global or scoped task.md, generates a ranked pack, and returns packed markdown. |
-| `pack_context(task, mode, budget, max_tokens, thread_id)` | Generate a ranked context pack. If `task` is provided, writes global/scoped task.md; if omitted, reads task.md or infers from git. |
-| `get_context(thread_id)` | Return the latest global/scoped pack. If task.md or the repo snapshot differs from the packed metadata, it auto-refreshes before returning; otherwise it prepends a freshness header. |
-| `refresh()` | Refresh using the current `task.md` or git-inferred task. |
+| `start_task(task, mode, budget, max_tokens, thread_id)` | Recommended MCP-first entry point. Uses the ambient session by default, writes scoped or explicit global task.md, generates a ranked pack, and returns packed markdown. |
+| `pack_context(task, mode, budget, max_tokens, thread_id)` | Generate a ranked context pack. If `task` is provided, writes scoped/global task.md; if omitted in a scoped session, requires an existing scoped task instead of falling back to stale global task text. |
+| `get_context(thread_id)` | Return the latest scoped/global pack. If task.md or the repo snapshot differs from the packed metadata, it auto-refreshes before returning; completed sessions return a refusal instead of old context. |
+| `refresh()` | Refresh using the current ambient session task file; legacy global mode may fall back to git-inferred task. |
 | `explain_file(path, task)` | Show score, inclusion mode, reasons, symbols, imports, and importers for one file. |
 | `get_related_files(path, depth)` | Return import-graph neighbours and related tests for a file. |
 | `get_delta_context(max_files)` | Return the latest selected-file delta plus top current selected files. Useful for cheap prompt-time refresh checks. |
+| `validate_toon(content, path, require_format, schema, allow_json, return_canonical)` | Validate TOON or review-stage JSON fallback. With `return_canonical=true`, includes canonical TOON in the response when validation succeeds. |
 | `get_stats()` | Return latest pack stats, savings, selection quality, excluded files, and benchmark-style signals. |
 
 **Live MCP exposure:** CLI `doctor` verifies MCP registration and local runtime readiness. It cannot prove the current agent host actually exposes AgentPack tools; call `readiness()` from that host. If it returns JSON, live exposure is confirmed.
 
-**Staleness detection:** `get_context()` compares the current task file, snapshot hash, and git state against the latest pack metadata. If `.agentpack/task.md` or the repo snapshot changed, it blocks for a fresh pack and prepends:
+**Staleness detection:** `get_context()` compares the current session task file, snapshot hash, and git state against the latest pack metadata. If the task file or repo snapshot changed, it blocks for a fresh pack and prepends:
 
 ```
-> Context auto-refreshed because .agentpack/task.md differs from the packed task ...
+> Context auto-refreshed because the current task differs from the packed task ...
 ```
 
 If auto-refresh fails, it falls back to the cached context with a loud stale warning and asks the agent to call `pack_context()` again.
@@ -1141,7 +1335,7 @@ cli_refresh_command: agentpack guard --agent auto --repair-stale --refresh-conte
 -->
 ```
 
-Claude prompt hooks stay inactive until a real task exists in `.agentpack/task.md`, then emit lightweight freshness hints instead of background repacks. Non-MCP rule files and VS Code folder-open tasks use the installed command surface for refresh/readiness. If you want prompt submit to block for a fresh pack when context is stale, set `blocking_task_refresh = true` under `[hooks]` in `.agentpack/config.toml`.
+Claude prompt hooks stay inactive until a real task exists in the current session task file, and ordinary chat prompts stay silent. Coding/review prompts emit lightweight freshness hints instead of background repacks. Non-MCP rule files and VS Code folder-open tasks use the installed command surface for refresh/readiness. If you want prompt submit to block for a fresh pack when context is stale, set `blocking_task_refresh = true` under `[hooks]` in `.agentpack/config.toml`.
 
 **Smart truncation:** `start_task()` and `pack_context()` keep headers intact and trim file content blocks to fit the token budget, appending a note about how many files were omitted.
 
@@ -1343,23 +1537,46 @@ Newer metrics include token-weighted precision. File precision answers "how many
 
 ### `agentpack dashboard`
 
-Generate a static local dashboard from existing `.agentpack/` artifacts.
+Serve a local context-decision cockpit from existing `.agentpack/` artifacts.
 
 ```bash
 agentpack dashboard
 agentpack dashboard --open
+agentpack dashboard --port 8766
 agentpack dashboard --json
 ```
 
-The dashboard writes `.agentpack/dashboard.html` by default. It is local-only,
-uses inline CSS, and does not load remote scripts or assets. Missing artifacts
-render empty states with suggested commands such as `agentpack pack --task auto`,
-`agentpack learn`, and `agentpack benchmark --init`.
+The dashboard serves at `http://127.0.0.1:8765/` by default. It no longer writes
+or supports static dashboard HTML; run `agentpack dashboard` and keep the local
+server process alive while using the cockpit. If port `8765` is occupied, use
+`--port`.
 
-`--json` prints the normalized dashboard snapshot to stdout instead of writing
-HTML. Use it when you want to inspect the underlying project, context, selected
-files, skill feedback, learning artifacts, benchmark metrics, and suggested
-actions programmatically.
+The cockpit is local-only and does not load remote scripts or assets. It uses a
+loopback-only Python server for the dashboard data API and PTY-backed terminal
+sessions. Missing artifacts render empty states with suggested commands such as
+`agentpack pack --task auto`, `agentpack learn`, and
+`agentpack benchmark --init`. It shows selected and omitted context, task-map
+risk, tests, memory influence, observer signals from
+`.agentpack/observer-events.jsonl`, MCP health, and loop/action state.
+
+The current workspace is backed by `/api/dashboard/v2`. It provides a typed
+workspace envelope, Tree-sitter impact inspection, agent-session continuity,
+and action inspection before execution. The Explain/Build preference is stored
+in the browser as `agentpack.dashboard.presentation_mode`; v1 routes remain
+available for existing integrations. See [`docs/dashboard-v2.md`](dashboard-v2.md)
+for request and response examples.
+
+Command rows in the cockpit run through the local PTY runner instead of asking
+you to copy/paste. The server only allows AgentPack-related commands, runs them
+from the project folder, rejects shell operators, and requires confirmation for
+risky commands such as `agentpack repair`, `agentpack init`, or commands using
+flags like `--fix`, `--force`, or `--repair-stale`.
+
+`--json` prints the normalized dashboard snapshot to stdout instead of starting
+the server. Use it when you want to inspect the underlying project, context,
+selected files, skill feedback, learning artifacts, observer signals, benchmark
+metrics, and suggested actions programmatically. Observer cards are hypotheses
+from local history, not source evidence.
 
 To build a real usefulness signal for your repo:
 
@@ -1381,8 +1598,9 @@ See [benchmarks/README.md](https://github.com/vishal2612200/agentpack/blob/main/
 
 ### `agentpack diagnose-selection`
 
-Combine latest pack stats, largest token consumers, pack diagnostics, and recent
-benchmark misses into concrete selection tuning advice.
+Combine latest pack stats, largest token consumers, why-selected reasons,
+why-not-selected omission buckets, pack diagnostics, and recent benchmark misses
+into concrete selection tuning advice.
 
 ```bash
 agentpack diagnose-selection
@@ -1391,8 +1609,8 @@ agentpack diagnose-selection --write
 ```
 
 `--write` saves `.agentpack/selection_diagnosis.md`. The output points to
-specific actions such as rewrite the task, explain a file, ignore generated
-paths, reduce mode, or add a benchmark case.
+specific actions such as rewrite the task, explain a file, inspect omission
+buckets, ignore generated paths, reduce mode, or add a benchmark case.
 
 ---
 
@@ -1633,10 +1851,14 @@ Run the release workflow as package-user CLI automation.
 ```bash
 agentpack release prepare
 agentpack release prepare --json
+agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
 ```
 
 It runs `release-check`, writes the public benchmark table, verifies the wheel
-in a temporary venv, and prints a release summary. It is the broadest local
+in a temporary venv, writes GitHub-ready release notes to
+`dist/github-release-notes-<tag>.md`, and prints a release summary. The notes
+include release metadata, validation evidence, the matching changelog entry,
+and the `gh release create ... --notes-file` command. It is the broadest local
 pre-publish command; `release-check` remains the non-mutating core gate.
 
 ---
@@ -1649,13 +1871,17 @@ Generate a GitHub Actions workflow for AgentPack checks.
 agentpack ci init
 agentpack ci init --force
 agentpack ci init --json
+agentpack ci init --architecture
 ```
 
-The workflow runs `dev-check` on pull requests and
+The default workflow runs `dev-check` on pull requests and
 `release-check --profile auto` on pushes to `main`. Auto keeps the full release
 gate for code changes, but uses the docs/plugin profile for docs, agent-rule,
 plugin, and native-integration-only diffs. Existing workflows are not
-overwritten unless `--force` is present.
+overwritten unless `--force` is present. `--architecture` instead writes a
+pull-request-only workflow that installs the optional parser extra, uploads a
+sanitized architecture artifact, and publishes a check/sticky summary only
+when repository permissions allow it.
 
 ---
 
@@ -1677,7 +1903,7 @@ This is the core reliability loop: pack, measure recall, inspect misses, then tu
 
 If top includes look noisy:
 
-1. Rewrite `.agentpack/task.md` with concrete domain nouns, entrypoints, or filenames.
+1. Run `agentpack task set "<concrete task>"` with domain nouns, entrypoints, or filenames.
 2. Re-pack and re-check `agentpack stats`.
 3. If generated output still dominates, run `agentpack ignore suggest`; apply with `agentpack ignore apply --yes` only after reviewing.
 4. Use `agentpack explain --file <path>` on repeat offenders before changing scoring.

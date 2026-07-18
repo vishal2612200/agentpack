@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
+from typing import Literal
 
 try:
     import tomllib
@@ -65,6 +66,9 @@ class LearningConfig(BaseModel):
     feedback_output: str = ".agentpack/learning-feedback.jsonl"
     ranking_feedback_output: str = ".agentpack/ranking-feedback.jsonl"
     episodic_cases_output: str = ".agentpack/episodic-cases.jsonl"
+    task_starts_output: str = ".agentpack/task-starts.jsonl"
+    procedures_output: str = ".agentpack/procedures.jsonl"
+    memory_edges_output: str = ".agentpack/memory-edges.jsonl"
     dashboard_output: str = ".agentpack/learning-dashboard.html"
     team_lessons_output: str = ".agentpack/team-lessons.md"
     provider_command: str = ""
@@ -103,11 +107,17 @@ class LoopConfig(BaseModel):
 class RuntimeConfig(BaseModel):
     pack_registry_output: str = ".agentpack/pack-registry.json"
     session_events_output: str = ".agentpack/session-events.jsonl"
+    observer_events_output: str = ".agentpack/observer-events.jsonl"
+    observer_brief_output: str = ".agentpack/observer-brief.md"
     max_registry_records: int = 200
     max_retrieve_chars: int = 20000
     max_output_summary_items: int = 40
     max_session_events: int = 2000
     max_episodic_cases: int = 1000
+
+
+class HandoffConfig(BaseModel):
+    max_patch_bytes: int = Field(default=20 * 1024 * 1024, gt=0)
 
 
 class HooksConfig(BaseModel):
@@ -180,6 +190,28 @@ class ScoringWeights(BaseModel):
     ignored_penalty: float = -100
 
 
+class ArchitectureSelectorConfig(BaseModel):
+    entity_types: list[str] = Field(default_factory=list)
+    path_globs: list[str] = Field(default_factory=list)
+    qualified_names: list[str] = Field(default_factory=list)
+    qualified_name_contains: list[str] = Field(default_factory=list)
+
+
+class ArchitectureInvariantConfig(BaseModel):
+    id: str
+    kind: Literal["forbid_edge", "require_test", "require_consumer_update"] = "forbid_edge"
+    enforcement: Literal["block", "warn"] = "warn"
+    edge_types: list[str] = Field(default_factory=lambda: ["imports"])
+    min_confidence: Literal["structured", "best_effort", "file_level", "unavailable"] = "best_effort"
+    source: ArchitectureSelectorConfig = Field(default_factory=ArchitectureSelectorConfig)
+    target: ArchitectureSelectorConfig = Field(default_factory=ArchitectureSelectorConfig)
+
+
+class ArchitectureConfig(BaseModel):
+    cache_dir: str = ".agentpack/architecture"
+    invariant: list[ArchitectureInvariantConfig] = Field(default_factory=list)
+
+
 class Config(BaseModel):
     project: ProjectConfig = Field(default_factory=ProjectConfig)
     context: ContextConfig = Field(default_factory=ContextConfig)
@@ -188,11 +220,13 @@ class Config(BaseModel):
     learning: LearningConfig = Field(default_factory=LearningConfig)
     loop: LoopConfig = Field(default_factory=LoopConfig)
     runtime: RuntimeConfig = Field(default_factory=RuntimeConfig)
+    handoff: HandoffConfig = Field(default_factory=HandoffConfig)
     hooks: HooksConfig = Field(default_factory=HooksConfig)
     skills: SkillsConfig = Field(default_factory=SkillsConfig)
     agentic: AgenticConfig = Field(default_factory=AgenticConfig)
     agents: AgentsConfig = Field(default_factory=AgentsConfig)
     scoring: ScoringWeights = Field(default_factory=ScoringWeights)
+    architecture: ArchitectureConfig = Field(default_factory=ArchitectureConfig)
 
 
 DEFAULT_CONFIG = Config()
@@ -248,6 +282,9 @@ pr_comment_output = ".agentpack/pr-learning-comment.md"
 feedback_output = ".agentpack/learning-feedback.jsonl"
 ranking_feedback_output = ".agentpack/ranking-feedback.jsonl"
 episodic_cases_output = ".agentpack/episodic-cases.jsonl"
+task_starts_output = ".agentpack/task-starts.jsonl"
+procedures_output = ".agentpack/procedures.jsonl"
+memory_edges_output = ".agentpack/memory-edges.jsonl"
 dashboard_output = ".agentpack/learning-dashboard.html"
 team_lessons_output = ".agentpack/team-lessons.md"
 provider_command = ""
@@ -265,11 +302,17 @@ min_groundedness_score = 70
 [runtime]
 pack_registry_output = ".agentpack/pack-registry.json"
 session_events_output = ".agentpack/session-events.jsonl"
+observer_events_output = ".agentpack/observer-events.jsonl"
+observer_brief_output = ".agentpack/observer-brief.md"
 max_registry_records = 200
 max_retrieve_chars = 20000
 max_output_summary_items = 40
 max_session_events = 2000
 max_episodic_cases = 1000
+
+[handoff]
+# Maximum uncompressed Git patch size. Raise deliberately for large binary work.
+max_patch_bytes = 20971520
 
 [loop]
 enabled = true
@@ -329,6 +372,19 @@ recently_modified     = 20
 churn_high            = 15
 large_unrelated_penalty = -50
 ignored_penalty       = -100
+
+[architecture]
+cache_dir = ".agentpack/architecture"
+
+# Example:
+# [[architecture.invariant]]
+# id = "no-public-internal-imports"
+# kind = "forbid_edge"
+# enforcement = "block"
+# edge_types = ["imports"]
+# min_confidence = "best_effort"
+# source = { path_globs = ["src/public/**"] }
+# target = { path_globs = ["src/internal/**"] }
 """
 
 

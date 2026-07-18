@@ -1,6 +1,6 @@
 # Terms
 
-AgentPack is distributed under the MIT License.
+AgentPack is distributed under the GNU Affero General Public License v3.0.
 
 The software is provided "as is", without warranty of any kind, express or implied, including merchantability, fitness for a particular purpose, and noninfringement.
 

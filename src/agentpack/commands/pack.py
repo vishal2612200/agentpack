@@ -12,7 +12,7 @@ from rich import box
 
 from agentpack.core import git
 from agentpack.core.ignore import SENSITIVE_PATTERNS
-from agentpack.core.thread_context import resolve_thread_option, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.analysis.ranking import suggest_task_rewrite
 from agentpack.application.pack_service import PackRequest, PackService, PackResult
 from agentpack.commands._shared import console, _root, _file_hash, _now_iso
@@ -39,7 +39,7 @@ def register(app: typer.Typer) -> None:
         refresh: bool = typer.Option(False, "--refresh", help="Rebuild summaries before packing."),
         watch: bool = typer.Option(False, "--watch", help="Watch for file changes and re-pack automatically."),
         session: bool = typer.Option(False, "--session", help="Keep re-packing on changes for the whole session (alias for --watch)."),
-        thread: str = typer.Option("", "--thread", help="Use thread-scoped task/context state."),
+        thread: str = typer.Option("", "--thread", help="Use thread-scoped task/context state (auto by default in agent sessions; use 'global' for legacy global state)."),
     ) -> None:
         """Generate a context pack for an AI coding agent."""
         if not is_requested_mode(mode):
@@ -47,7 +47,7 @@ def register(app: typer.Typer) -> None:
             raise typer.Exit(1)
 
         resolved_agent = _resolve_agent(agent)
-        resolved_thread_id = resolve_thread_option(thread)
+        resolved_thread_id = resolve_session_thread_option(thread)
         resolved_task, task_source = _resolve_task_with_source(task, thread_id=resolved_thread_id)
 
         if watch or session:
@@ -110,6 +110,13 @@ def _resolve_task_with_source(task: str, thread_id: str | None = None) -> tuple[
         if body:
             console.print(f"[dim]Auto task (thread {scoped.thread_id}): {body}[/]")
             return body, "thread_task.md"
+    if scoped:
+        console.print(
+            f"[red]No task is set for AgentPack session {scoped.thread_id}.[/] "
+            f"Run [bold]agentpack start \"describe the task\" --thread {scoped.thread_id}[/] "
+            "or pass [bold]--task[/] explicitly."
+        )
+        raise typer.Exit(1)
     # task.md takes priority over all git heuristics
     task_md_path = root / ".agentpack" / "task.md"
     if task_md_path.exists():

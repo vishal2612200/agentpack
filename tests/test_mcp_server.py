@@ -12,6 +12,7 @@ from agentpack.mcp_server import (
     _truncate_to_budget,
     _get_context_impl,
     _get_delta_context_impl,
+    _get_task_map_impl,
     _get_stats_impl,
     _retrieve_context_impl,
     _compress_output_impl,
@@ -20,6 +21,7 @@ from agentpack.mcp_server import (
     _resolve_mcp_task,
     _pack_context_impl,
     _route_task_impl,
+    _validate_toon_impl,
 )
 
 
@@ -101,6 +103,8 @@ def test_readiness_impl_can_emit_json(tmp_path):
 
     payload = json.loads(result)
     assert payload["mcp_server"] == "agentpack"
+    assert payload["recommended_next_tool"] in {"route_task", "start_task", "get_context", "get_delta_context"}
+    assert "token_hint" in payload
 
 
 def test_route_task_impl_can_emit_toon(tmp_path):
@@ -109,11 +113,23 @@ def test_route_task_impl_can_emit_toon(tmp_path):
 
     with patch("agentpack.router.service.RouteService") as MockService:
         MockService.return_value.route_task.return_value = mocked
-        result = _route_task_impl(tmp_path, "fix auth", "toon")
+        result = _route_task_impl(tmp_path, "fix auth", "toon", "full")
 
     assert "@format toon" in result
     assert "task: fix auth" in result
     assert "selected_files[path|score]:" in result
+
+
+def test_route_task_impl_defaults_to_toon(tmp_path):
+    mocked = MagicMock()
+    mocked.model_dump.return_value = {"task": "fix auth"}
+
+    with patch("agentpack.router.service.RouteService") as MockService:
+        MockService.return_value.route_task.return_value = mocked
+        result = _route_task_impl(tmp_path, "fix auth", detail="full")
+
+    assert result.startswith("@format toon\n@root agentpack_route\n")
+    assert "task: fix auth" in result
 
 
 def test_route_task_impl_can_emit_json(tmp_path):
@@ -122,7 +138,7 @@ def test_route_task_impl_can_emit_json(tmp_path):
 
     with patch("agentpack.router.service.RouteService") as MockService:
         MockService.return_value.route_task.return_value = mocked
-        result = _route_task_impl(tmp_path, "fix auth", "json")
+        result = _route_task_impl(tmp_path, "fix auth", "json", "full")
 
     payload = json.loads(result)
     assert payload["task"] == "fix auth"
@@ -134,10 +150,134 @@ def test_mcp_compress_output_preserves_error(tmp_path):
     assert "ERROR src/app.py:10 failed" in result
 
 
+def test_mcp_validate_toon_accepts_content(tmp_path):
+    result = _validate_toon_impl(
+        tmp_path,
+        content="@format toon\n@root sample\nname: demo\nitems[]:\n  - one\n",
+        output_format="json",
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["root"] == "sample"
+    assert payload["parsed_type"] == "dict"
+
+
+def test_mcp_validate_toon_rejects_missing_format(tmp_path):
+    result = _validate_toon_impl(tmp_path, content="name: demo\n", output_format="json")
+
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert "missing required @format toon" in payload["error"]
+
+
+def test_mcp_validate_toon_accepts_schema_json_fallback(tmp_path):
+    result = _validate_toon_impl(
+        tmp_path,
+        content=json.dumps({"findings": [], "coverage": "complete"}),
+        schema="review-findings",
+        allow_json=True,
+        output_format="json",
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["schema"] == "review-findings"
+    assert payload["input_format"] == "json"
+    assert payload["canonical_available"] is True
+
+
+def test_mcp_validate_toon_can_return_canonical_toon(tmp_path):
+    result = _validate_toon_impl(
+        tmp_path,
+        content=json.dumps({"findings": [], "coverage": "complete"}),
+        schema="review-findings",
+        allow_json=True,
+        return_canonical=True,
+        output_format="json",
+    )
+
+    payload = json.loads(result)
+    assert payload["ok"] is True
+    assert payload["canonical_root"] == "review_findings"
+    assert payload["canonical_input_format"] == "json"
+    assert payload["canonical_toon"].startswith("@format toon\n@root review_findings\n")
+    assert "findings[]:" in payload["canonical_toon"]
+
+
+def test_mcp_validate_toon_requires_one_source(tmp_path):
+    result = _validate_toon_impl(tmp_path, output_format="json")
+
+    payload = json.loads(result)
+    assert payload["ok"] is False
+    assert "provide exactly one" in payload["error"]
+
+
 def test_mcp_retrieve_context_missing_registry(tmp_path):
     result = _retrieve_context_impl(tmp_path, path="src/app.py")
 
     assert "No pack registry found" in result
+
+
+def test_mcp_get_task_map_returns_json(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "pack_metadata.json").write_text(
+        json.dumps(
+            {
+                "task_map": {
+                    "schema_version": 1,
+                    "task": "fix auth",
+                    "files": [
+                        {
+                            "path": "src/auth.py",
+                            "kind": "selected",
+                            "risk_level": "medium",
+                            "retrieve_ref": "src__auth.py:abc123",
+                        }
+                    ],
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = json.loads(_get_task_map_impl(tmp_path, "json"))
+
+    assert payload["task"] == "fix auth"
+    assert payload["files"][0]["retrieve_ref"] == "src__auth.py:abc123"
+
+
+def test_mcp_retrieve_context_supports_targets_and_kind(tmp_path):
+    from agentpack.core.models import ContextPack, FileInfo, OmittedRelevantFile, SelectedFile
+    from agentpack.core.pack_registry import save_pack_registry
+    from agentpack.core.scanner import file_hash
+
+    source = tmp_path / "src.py"
+    source.write_text("def run():\n    return 1\n", encoding="utf-8")
+    pack = ContextPack(
+        task="test",
+        agent="generic",
+        mode="balanced",
+        budget=1000,
+        token_estimate=10,
+        raw_repo_tokens=100,
+        after_ignore_tokens=100,
+        estimated_savings_percent=90,
+        changed_files=["src.py"],
+        selected_files=[SelectedFile(path="src.py", score=100, include_mode="summary", reasons=["modified"], summary="selected")],
+        omitted_relevant_files=[
+            OmittedRelevantFile(path="src.py", score=80, estimated_tokens=10, suggested_mode="full", omission_reason="omitted")
+        ],
+        receipts=[],
+        freshness={"snapshot_root_hash": "abc", "generated_at": "2026-01-01T00:00:00+00:00"},
+    )
+    info = FileInfo(path="src.py", abs_path=source, size_bytes=source.stat().st_size, estimated_tokens=10, hash=file_hash(source))
+    save_pack_registry(tmp_path, pack, [info])
+
+    result = _retrieve_context_impl(tmp_path, targets=["src.py"], kind="omitted")
+
+    assert "- kind: omitted" in result
+    assert "omitted" in result
 
 
 # ---------------------------------------------------------------------------
@@ -197,6 +337,19 @@ def test_get_context_reads_thread_scoped_pack(tmp_path):
 
     assert "Context is fresh" in result
     assert "# scoped pack" in result
+
+
+def test_get_context_refuses_done_thread_context(tmp_path):
+    scoped = tmp_path / ".agentpack" / "threads" / "codex-local"
+    scoped.mkdir(parents=True)
+    (scoped / "context.md").write_text("# old done pack")
+    (scoped / "task_state.md").write_text("Status: done\nSummary: Finished\n", encoding="utf-8")
+
+    result = _get_context_impl(tmp_path, thread_id="codex-local")
+
+    assert "marked done" in result
+    assert "Completed context will not be reused" in result
+    assert "# old done pack" not in result
 
 
 def test_get_context_auto_refreshes_when_hashes_differ(tmp_path):
@@ -349,6 +502,18 @@ def test_resolve_mcp_task_reads_existing_task_md(tmp_path):
     (tmp_path / ".agentpack" / "task.md").write_text("fix cached context\n", encoding="utf-8")
 
     assert _resolve_mcp_task(tmp_path) == "fix cached context"
+
+
+def test_resolve_mcp_task_refuses_scoped_global_fallback(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "task.md").write_text("old global task\n", encoding="utf-8")
+
+    try:
+        _resolve_mcp_task(tmp_path, thread_id="claude-local")
+    except ValueError as exc:
+        assert "No task is set for AgentPack session claude-local" in str(exc)
+    else:
+        raise AssertionError("expected scoped MCP task resolution to refuse global task fallback")
 
 
 def test_pack_context_impl_uses_mcp_task_and_returns_context(tmp_path):

@@ -17,8 +17,14 @@ env/
 .agentpack/cache/
 .agentpack/snapshots/
 .agentpack/context*
+.agentpack/reviews/
+.agentpack/review-*.prompt.md
+.agentpack/review-*.template.toon
+.agentpack/review-preflight.json
+.agentpack/review.prompt.md
 .agentpack/metrics.jsonl
 .agentpack/session-events.jsonl
+.agentpack/learning-sessions.jsonl
 .agentpack/pack_metadata.json
 .agentpack/pack-registry.json
 .agentpack/learning.md
@@ -31,6 +37,7 @@ env/
 .agentpack/team-lessons.md
 .agentpack/learning-feedback.jsonl
 .agentpack/ranking-feedback.jsonl
+.agentpack/episodic-cases.jsonl
 .agentpack/learning-inputs.json
 .agentpack/activity.log
 .agentpack/.gitignore
@@ -50,3 +57,4 @@ env/
 .ruff_cache/
 
 *.dist-info/
+frontend/dashboard/node_modules/

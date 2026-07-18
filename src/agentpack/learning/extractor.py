@@ -8,6 +8,7 @@ from agentpack.learning.collector import LearningInputs
 from agentpack.learning.models import (
     AgentLesson,
     LearningCard,
+    LearningQuestion,
     LearningReport,
     LearningSourceFile,
     LearningTopic,
@@ -93,6 +94,42 @@ def build_learning_report(
         selected_hits=sorted(changed & selected),
         selected_misses=sorted(changed - selected) if selected else [],
     )
+
+
+def apply_learning_request(report: LearningReport, request: str) -> LearningReport:
+    clean = " ".join((request or "").split())
+    if not clean:
+        return report
+    mode = infer_learning_mode(clean)
+    topics = [
+        topic.model_copy(
+            update={
+                "prompt": _prompt_for_mode(report.task, topic.title, topic.concepts, topic.files, mode, clean),
+                "questions": _topic_questions(topic.title, topic.concepts, topic.files, mode=mode, task=report.task),
+            }
+        )
+        for topic in report.learning_topics
+    ]
+    return report.model_copy(update={"learning_request": clean, "coach_mode": mode, "learning_topics": topics})
+
+
+def infer_learning_mode(request: str) -> str:
+    lowered = request.lower()
+    if any(_has_learning_term(lowered, term) for term in ("interview", "principal", "senior engineer", "oral")):
+        return "interview"
+    if any(_has_learning_term(lowered, term) for term in ("quiz", "question", "ask me", "test me")):
+        return "quiz"
+    if any(_has_learning_term(lowered, term) for term in ("failure", "debug", "incident", "prod", "break")):
+        return "failure"
+    if any(_has_learning_term(lowered, term) for term in ("review", "pr", "reviewer")):
+        return "review"
+    if any(_has_learning_term(lowered, term) for term in ("system design", "architecture", "tradeoff", "scale")):
+        return "system-design"
+    return "study"
+
+
+def _has_learning_term(text: str, term: str) -> bool:
+    return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
 
 
 def _concepts_for_text(text: str) -> list[str]:
@@ -377,22 +414,132 @@ def _topic(
     files: list[str],
 ) -> LearningTopic:
     evidence = files[:5]
-    prompt = (
-        f"Teach me {title.lower()} using this recent coding task as context.\n"
-        f"Task: {inputs.task}\n"
-        f"Concepts detected: {', '.join(concepts)}\n"
-        f"Evidence files: {', '.join(evidence) or 'none'}\n\n"
-        "Explain the core idea, common implementation choices, failure modes, testing strategy, "
-        "and a small checklist I can apply before shipping. Do not assume code that is not implied by the task or evidence files."
-    )
+    prompt = _prompt_for_mode(inputs.task, title, concepts, evidence, "study", "")
     return LearningTopic(
         title=title,
         why=why,
         prompt=prompt,
         files=evidence,
         concepts=concepts,
+        questions=_topic_questions(title, concepts, evidence, mode="study", task=inputs.task),
         citations=_citations_for_files(evidence, f"learning-topic:{title}"),
     )
+
+
+def _prompt_for_mode(
+    task: str,
+    title: str,
+    concepts: list[str],
+    evidence: list[str],
+    mode: str,
+    request: str,
+) -> str:
+    base = [
+        f"Task: {task}",
+        f"Topic: {title}",
+        f"Concepts: {', '.join(concepts) or 'none'}",
+        f"Evidence files: {', '.join(evidence) or 'none'}",
+    ]
+    if request:
+        base.append(f"Developer request: {request}")
+    if mode == "quiz":
+        instruction = "Question me first. Wait for my answer, then score it against expected points and give one follow-up drill."
+    elif mode == "interview":
+        instruction = "Interview me like a senior engineering panel. Ask one task-grounded question at a time and press on tradeoffs, risk, and testing."
+    elif mode == "failure":
+        instruction = "Drop me into a realistic failure scenario from this task. Ask what signal I would inspect first before revealing the answer."
+    elif mode == "review":
+        instruction = "Act like a careful PR reviewer. Ask what could regress, what evidence proves safety, and what test would catch the bug."
+    elif mode == "system-design":
+        instruction = "Turn this task into system-design discussion: boundaries, state, failure modes, observability, rollback, and tradeoffs."
+    else:
+        instruction = "Teach the concept through this exact task. Focus on why it mattered, what can fail, and one shipping checklist."
+    return "\n".join([*base, "", instruction, "Do not invent files, technologies, or decisions not present in the task or evidence files."])
+
+
+def _topic_questions(
+    title: str,
+    concepts: list[str],
+    evidence: list[str],
+    *,
+    mode: str,
+    task: str,
+) -> list[LearningQuestion]:
+    concept_label = ", ".join(concepts) if concepts else title.lower()
+    files = evidence[:3]
+    if mode == "interview":
+        return [
+            LearningQuestion(
+                mode=mode,
+                question=f"Explain why {concept_label} mattered in `{task}` as if a staff engineer is probing your ownership.",
+                expected_points=["what changed", "risk boundary", "test or validation evidence"],
+                evidence_files=files,
+                difficulty="medium",
+            ),
+            LearningQuestion(
+                mode=mode,
+                question=f"What tradeoff would you defend for {title.lower()} if reviewer disagreed with the implementation path?",
+                expected_points=["alternative considered", "why current path is safer", "rollback or observability plan"],
+                evidence_files=files,
+                difficulty="hard",
+            ),
+        ]
+    if mode == "failure":
+        return [
+            LearningQuestion(
+                mode=mode,
+                question=f"Prod breaks after this {title.lower()} change. What signal proves whether the changed files are responsible?",
+                expected_points=["specific symptom", "source evidence", "first diagnostic command or test"],
+                evidence_files=files,
+                difficulty="hard",
+            ),
+        ]
+    if mode == "review":
+        return [
+            LearningQuestion(
+                mode=mode,
+                question=f"What would you flag in review before trusting this {title.lower()} change?",
+                expected_points=["behavioral regression", "missing test", "operational risk"],
+                evidence_files=files,
+                difficulty="medium",
+            ),
+        ]
+    if mode == "system-design":
+        return [
+            LearningQuestion(
+                mode=mode,
+                question=f"Where does {title.lower()} sit in the larger system boundary, and what state can become stale or inconsistent?",
+                expected_points=["system boundary", "state owner", "failure or rollback path"],
+                evidence_files=files,
+                difficulty="hard",
+            ),
+        ]
+    if mode == "quiz":
+        return [
+            LearningQuestion(
+                mode=mode,
+                question=f"What are the two highest-risk mistakes in this {title.lower()} task?",
+                expected_points=["risk from changed files", "test/validation check"],
+                evidence_files=files,
+                difficulty="medium",
+            ),
+            LearningQuestion(
+                mode=mode,
+                question=f"Which evidence file would you open first to explain {concept_label}, and why?",
+                expected_points=["file choice", "behavior explained", "uncertainty named"],
+                evidence_files=files,
+                difficulty="easy",
+            ),
+        ]
+    return [
+        LearningQuestion(
+            mode="study",
+            question=f"What should you understand about {title.lower()} before shipping this task?",
+            expected_points=["core idea", "failure mode", "testing strategy"],
+            evidence_files=files,
+            difficulty="easy",
+        )
+    ]
 
 
 def _source_citation(path: str, claim_id: str) -> Citation:

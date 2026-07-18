@@ -1,4 +1,5 @@
 from pathlib import Path
+from agentpack.application.pack_service import _boost_semantic_graph_neighbors
 from agentpack.analysis.ranking import (
     ambiguous_task_terms,
     build_keyword_plan,
@@ -27,6 +28,33 @@ def _fi(path: str, tokens: int = 100, language: str = "python") -> FileInfo:
         estimated_tokens=tokens,
         language=language,
     )
+
+
+def test_semantic_graph_neighbor_boost_reads_nested_locators_and_evidence() -> None:
+    changed = _fi("src/changed.py")
+    related = _fi("src/related.py")
+
+    class Graph:
+        def neighbors(self, _path: str, *, limit: int) -> list[dict]:
+            assert limit == 200
+            return [
+                {
+                    "node": {"locator": {"path": "src/related.py"}},
+                    "relationship": "imports",
+                    "edge_key": "edge-1",
+                    "evidence": [{"path": "src/imports.py", "start_line": 12}],
+                }
+            ]
+
+    scored = _boost_semantic_graph_neighbors(
+        [(changed, 1.0, []), (related, 1.0, [])],
+        Graph(),
+        {"src/changed.py"},
+    )
+
+    scores = {file_info.path: (score, reasons) for file_info, score, reasons in scored}
+    assert scores["src/related.py"][0] > scores["src/changed.py"][0]
+    assert "src/imports.py:12" in scores["src/related.py"][1][0]
 
 
 def test_extract_keywords_basic():
@@ -1103,6 +1131,54 @@ def test_changed_noise_file_is_labeled_workspace_context_only():
     )
 
     assert "modified workspace context only" in scored[0][2]
+
+
+def test_broad_root_go_symbol_carrier_is_dampened():
+    hub = _fi("gin.go", language="go")
+    hub.content = "func updateRouteTree() {}\nfunc unrelated() {}\n"
+
+    scored = score_files(
+        [hub],
+        changed_paths=set(),
+        staged_paths=set(),
+        recently_modified=[],
+        dep_graph={},
+        keywords=build_keyword_plan("ci update go version support"),
+        summaries={
+            hub.path: {
+                "symbols": [{"name": "updateRouteTree"}],
+                "defines": ["updateRouteTree"],
+                "ranking_keywords": ["version"],
+            },
+        },
+    )
+
+    assert "broad Go symbol carrier dampening" in scored[0][2]
+    assert scored[0][1] < 120
+
+
+def test_go_action_owner_path_signal_is_not_dampened():
+    owner = _fi("binding/bson.go", language="go")
+    owner.content = "func EncodeBSON() {}\n"
+
+    scored = score_files(
+        [owner],
+        changed_paths=set(),
+        staged_paths=set(),
+        recently_modified=[],
+        dep_graph={},
+        keywords=build_keyword_plan("upgrade bson mongo driver"),
+        summaries={
+            owner.path: {
+                "symbols": [{"name": "EncodeBSON"}],
+                "defines": ["EncodeBSON"],
+                "external_systems": ["MongoDB/Mongoose"],
+            },
+        },
+    )
+
+    assert "broad Go symbol carrier dampening" not in scored[0][2]
+    assert scored[0][1] >= 120
 
 
 def test_generated_agent_artifacts_are_quiet_without_direct_need():

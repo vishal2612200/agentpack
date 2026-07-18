@@ -14,6 +14,7 @@ from agentpack.core.ignore import (
     agentignore_sync_status,
     format_import_summary,
 )
+from agentpack.core.project_index import project_index_path, register_project
 from agentpack.commands._shared import console, _root
 from agentpack.integrations.agents import check_agent_integration, install_agent_integration
 from agentpack.session.state import load_session, create_session, SESSION_FILE, TASK_FILE
@@ -55,8 +56,14 @@ def _repo_gitignore_entries(share_cache: bool = False, agent: str = "generic") -
         [
             ".agentpack/snapshots/",
             ".agentpack/context*",
+            ".agentpack/reviews/",
+            ".agentpack/review-*.prompt.md",
+            ".agentpack/review-*.template.toon",
+            ".agentpack/review-preflight.json",
+            ".agentpack/review.prompt.md",
             ".agentpack/metrics.jsonl",
             ".agentpack/session-events.jsonl",
+            ".agentpack/learning-sessions.jsonl",
             ".agentpack/pack_metadata.json",
             ".agentpack/pack-registry.json",
             ".agentpack/learning.md",
@@ -107,8 +114,14 @@ def _agentpack_gitignore_content(share_cache: bool = False) -> str:
         [
             "snapshots/",
             "context.*",
+            "reviews/",
+            "review-*.prompt.md",
+            "review-*.template.toon",
+            "review-preflight.json",
+            "review.prompt.md",
             "metrics.jsonl",
             "session-events.jsonl",
+            "learning-sessions.jsonl",
             "pack_metadata.json",
             "pack-registry.json",
             "learning.md",
@@ -476,6 +489,13 @@ def register(app: typer.Typer) -> None:
                 results.append(InitResult(".vscode/tasks.json", action))
             else:
                 results.append(InitResult(key, action))
+
+        index_path = project_index_path()
+        try:
+            register_project(root, index_path)
+            results.append(InitResult(str(index_path), "indexed"))
+        except Exception as exc:
+            results.append(InitResult(str(index_path), f"index warning: {exc}"))
 
         if backups:
             _print_init_summary("Backups", backups)

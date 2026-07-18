@@ -127,17 +127,22 @@ def test_route_json_returns_stable_keys_and_does_not_write_context(tmp_path, mon
         "task_mode_confidence",
         "task_mode_signals",
         "selected_files",
+        "selection_explanations",
+        "omitted_files",
         "selected_skills",
         "applied_rules",
         "suggested_commands",
         "evidence_checklist",
         "routing_notes",
+        "observer_notes",
         "prompt_quality_warnings",
         "recommended_prompt_template",
         "safety_warnings",
         "agent_prompt",
     }
     assert data["selected_files"]
+    assert data["selection_explanations"]
+    assert data["selection_explanations"][0]["why_selected"]
     assert data["selected_skills"][0]["skill"]["name"] == "django-pytest"
     assert data["applied_rules"][0]["rule"]["path"] == "AGENTS.md"
     assert "pytest" in data["suggested_commands"][0]["command"]
@@ -161,6 +166,37 @@ def test_route_json_flag_alias_returns_machine_readable_output(tmp_path, monkeyp
     assert data["task"] == "fix flaky payment webhook test"
     assert data["selected_files"]
     assert data["agent_prompt"]
+
+
+def test_route_surfaces_observer_prior_as_advisory_context(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    _write_route_fixture(tmp_path)
+    (tmp_path / "src").mkdir(exist_ok=True)
+    (tmp_path / "src" / "router.py").write_text("def route_task():\n    return []\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "observer-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-03T00:00:00Z",
+                "task": "improve route explainability",
+                "payload": {
+                    "changed_files": ["src/router.py"],
+                    "selected_files": [],
+                    "selected_misses": ["src/router.py"],
+                },
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(app, ["route", "--task", "route explainability", "--format", "json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["observer_notes"][0]["path"] == "src/router.py"
+    assert any(item["path"] == "src/router.py" for item in data["selected_files"])
+    assert "Observer priors are advisory" in "\n".join(data["routing_notes"])
 
 
 def test_route_invalid_format_exits_nonzero_and_mentions_json_alias(tmp_path, monkeypatch):
@@ -317,6 +353,59 @@ def test_route_uses_codex_env_over_multi_agent_repo_files(tmp_path, monkeypatch)
     assert "src/agentpack/adapters/detect.py" in selected
 
 
+def test_route_uses_codex_project_markers_over_antigravity_repo_files(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    for name in ("CODEX_CI", "CODEX_ENVIRONMENT", "CODEX_SHELL", "CODEX_THREAD_ID", "OPENAI_CODEX", "ANTIGRAVITY", "CLAUDECODE"):
+        monkeypatch.delenv(name, raising=False)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+    (tmp_path / ".codex").mkdir()
+    (tmp_path / ".codex" / "hooks.json").write_text("{}", encoding="utf-8")
+    (tmp_path / "GEMINI.md").write_text("antigravity instructions\n", encoding="utf-8")
+    (tmp_path / ".agent" / "skills").mkdir(parents=True)
+    for path in (
+        "src/agentpack/adapters/detect.py",
+        "src/agentpack/commands/review_cmd.py",
+        "src/agentpack/commands/toon_validate.py",
+        "src/agentpack/core/toon_validator.py",
+        "src/agentpack/mcp_server.py",
+        "src/agentpack/router/service.py",
+        "tests/test_mcp_server.py",
+        "tests/test_review_cmd.py",
+        "tests/test_route_command.py",
+        "tests/test_toon_validator.py",
+        "src/agentpack/learning/extractor.py",
+        "src/agentpack/commands/workflow_cmd.py",
+    ):
+        target = tmp_path / path
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(f"# {path}\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "route",
+            "--task",
+            "Fix remaining AgentPack gaps: PR review post dry-run/E2E safety, MCP TOON canonical output, routing active-agent/noise, and stricter review schema validation.",
+            "--format",
+            "json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    selected = [item["path"] for item in data["selected_files"][:10]]
+    assert data["current_agent"] == "codex"
+    assert data["reviewer_agent"] == "claude"
+    assert data["task_mode"] == "integration_readiness"
+    assert "src/agentpack/adapters/detect.py" in selected
+    assert "src/agentpack/commands/review_cmd.py" in selected
+    assert "src/agentpack/core/toon_validator.py" in selected
+    assert "src/agentpack/mcp_server.py" in selected
+    assert "src/agentpack/learning/extractor.py" not in selected
+    assert "src/agentpack/commands/workflow_cmd.py" not in selected
+
+
 def test_route_refreshes_stale_skills_index(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     _write_route_fixture(tmp_path)
@@ -399,6 +488,9 @@ def test_route_pr_review_suppresses_noisy_metadata(tmp_path, monkeypatch) -> Non
     assert data["task_mode"] == "pr_review"
     assert paths[0] == "src/auth.py"
     assert ".gitignore" not in paths
+    omitted = {item["path"]: item for item in data["omitted_files"]}
+    assert ".gitignore" in omitted
+    assert any("noisy" in reason for reason in omitted[".gitignore"]["why_not_selected"])
 
 
 def test_route_pr_review_keeps_changed_workflow_diff_file(tmp_path, monkeypatch) -> None:
@@ -534,3 +626,24 @@ def test_pack_planner_uses_github_pr_files_as_changed_context(tmp_path, monkeypa
     selected = {item.path: item for item in plan.selected}
     assert "backend/customerio_events.py" in selected
     assert "GitHub PR file" in selected["backend/customerio_events.py"].reasons
+
+
+def test_perf_json_returns_stable_top_level_keys(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+
+    result = CliRunner().invoke(app, ["perf", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"summary", "history"}
+    assert set(data["summary"]) >= {
+        "events",
+        "raw_tokens",
+        "packed_tokens",
+        "estimated_saved_tokens",
+        "retrievals",
+        "output_compressions",
+    }
+    assert isinstance(data["history"], list)

@@ -1,0 +1,4 @@
+[scanner]
+# AgentPack generates local context/cache artifacts while agents work. They are
+# ignored by Git and should not affect repository-level HOL scanner results.
+ignore_paths = [".agentpack/**"]

@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "java",
+  "entities": ["TokenStore", "lookup", "AuthService", "validate"],
+  "relationships": [],
+  "paths": [],
+  "ambiguity_cases": [],
+  "unresolved_cases": ["String"],
+  "deletion": {"path": "source.java", "expected_absent": ["source.java"]}
+}

@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "kotlin",
+  "entities": ["TokenStore", "lookup", "AuthService"],
+  "relationships": [{"source": "AuthService", "relationship": "implements", "target": "TokenStore", "path": "source.kt", "start_line": 3, "end_line": 3}],
+  "paths": [{"source": "AuthService", "target": "TokenStore", "relationships": ["implements"]}],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.kt", "expected_absent": ["source.kt"]}
+}

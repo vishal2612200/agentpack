@@ -15,6 +15,11 @@ from agentpack.commands.init import (
 )
 
 
+@pytest.fixture(autouse=True)
+def isolate_agentpack_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+
+
 def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     block = _repo_gitignore_block()
     lines = block.splitlines()
@@ -24,11 +29,17 @@ def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     assert ".agentignore" in lines
     assert ".agentpack/cache/" in lines
     assert ".agentpack/context*" in lines
+    assert ".agentpack/reviews/" in lines
+    assert ".agentpack/review-*.prompt.md" in lines
+    assert ".agentpack/review-*.template.toon" in lines
+    assert ".agentpack/review-preflight.json" in lines
+    assert ".agentpack/review.prompt.md" in lines
     assert ".agentpack/.gitignore" in lines
     assert ".agentpack/.mcp_reminded" in lines
     assert ".agentpack/session.json" in lines
     assert ".agentpack/task.md" in lines
     assert ".agentpack/session-events.jsonl" in lines
+    assert ".agentpack/learning-sessions.jsonl" in lines
     assert ".agentpack/pack-registry.json" in lines
     assert ".agentpack/learning.md" in lines
     assert ".agentpack/daily-summary.md" in lines
@@ -47,6 +58,15 @@ def test_repo_gitignore_block_ignores_generated_artifacts() -> None:
     assert ".agent/skills/agentpack/" in lines
     assert ".vscode/tasks.json" not in lines
     assert "GEMINI.md" not in lines
+
+
+def test_checked_in_gitignore_matches_default_agentpack_block() -> None:
+    root = Path(__file__).resolve().parents[1]
+    content = (root / ".gitignore").read_text(encoding="utf-8")
+    block = content[content.index("# agentpack:start") : content.index("# agentpack:end")]
+    lines = [line for line in block.splitlines() if line and not line.startswith("#")]
+
+    assert lines == _repo_gitignore_block().splitlines()[2:-1]
 
 
 def test_repo_gitignore_block_adds_agent_specific_entries() -> None:
@@ -164,6 +184,7 @@ def test_patch_agentignore_force_backs_up_even_when_content_is_unchanged(tmp_pat
 
 def test_init_writes_repo_gitignore_block(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
     runner = CliRunner()
 
     result = runner.invoke(app, ["init", "--yes"])
@@ -187,6 +208,10 @@ def test_init_writes_repo_gitignore_block(tmp_path, monkeypatch) -> None:
     assert "[loop]" in config
     assert "enabled = true" in config
     assert 'runner = ""' in config
+
+    index = json.loads((tmp_path / "home" / ".agentpack" / "projects.json").read_text(encoding="utf-8"))
+    assert index["schema_version"] == 1
+    assert index["projects"][0]["path"] == str(tmp_path.resolve())
 
 
 def test_init_writes_agent_specific_gitignore_entries(tmp_path, monkeypatch) -> None:
@@ -216,6 +241,11 @@ def test_init_share_cache_unignores_cache(tmp_path, monkeypatch) -> None:
     assert "!.agentpack/cache/" in repo_lines
     assert "!.agentpack/cache/**" in repo_lines
     assert "cache/" not in agentpack_lines
+    assert "reviews/" in agentpack_lines
+    assert "review-*.prompt.md" in agentpack_lines
+    assert "review-*.template.toon" in agentpack_lines
+    assert "review-preflight.json" in agentpack_lines
+    assert "review.prompt.md" in agentpack_lines
 
 
 def test_init_imports_safe_gitignore_rules_into_agentignore(tmp_path, monkeypatch) -> None:

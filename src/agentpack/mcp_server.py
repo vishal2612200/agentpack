@@ -25,14 +25,26 @@ Tools exposed:
     refresh             — refresh using the current task.md
     explain_file        — show score breakdown + symbols for a specific file
     get_related_files   — return import-graph neighbours of a file
+    query_graph         — bounded semantic graph search
+    get_graph_node      — one graph node and its evidence
+    get_graph_neighbors — bounded semantic graph neighbours
+    shortest_path       — shortest semantic relationship path
+    explain_graph_edge  — relationship evidence receipt
     get_delta_context   — return selected-file delta since the previous pack
+    validate_toon       — validate TOON syntax from content or a repo-relative path
     get_stats           — token/saving stats for the latest pack
+    create_handoff      — package a structured report and complete Git-visible patch
+    list_handoffs       — list pending or historical project handoffs
+    get_handoff         — inspect one handoff by memorable name
+    accept_handoff      — atomically claim, apply, and resume a handoff
+    release_handoff     — release the current session's claim
 """
 from __future__ import annotations
 
 import json
 import sys
 from pathlib import Path
+from typing import Any, cast
 
 from agentpack import __version__
 from agentpack.core import git
@@ -40,8 +52,10 @@ from agentpack.core.command_surface import available_cli_commands, fallback_agen
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.structured_format import StructuredFormat, to_llm
 from agentpack.core.task_freshness import read_task_md, task_freshness, write_task_md
-from agentpack.core.thread_context import resolve_thread_option, thread_paths
+from agentpack.core.thread_context import resolve_session_thread_option, read_task_status, task_is_terminal, thread_paths
 from agentpack.core.token_estimator import estimate_tokens
+from agentpack.control_plane import build_control_plane_snapshot, plan_next_actions
+from agentpack.control_plane.renderer import token_hint
 
 
 def _repo_root() -> Path:
@@ -65,16 +79,32 @@ MCP_TOOL_NAMES = (
     "refresh",
     "explain_file",
     "get_related_files",
+    "query_graph",
+    "get_graph_node",
+    "get_graph_neighbors",
+    "shortest_path",
+    "explain_graph_edge",
     "get_delta_context",
+    "get_task_map",
     "retrieve_context",
     "compress_output",
+    "validate_toon",
     "get_stats",
+    "create_handoff",
+    "list_handoffs",
+    "get_handoff",
+    "accept_handoff",
+    "release_handoff",
 )
 
 
 def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str:
     metadata = load_pack_metadata(root) or {}
     freshness = metadata.get("freshness") or {}
+    thread_id = resolve_session_thread_option("")
+    snapshot = build_control_plane_snapshot(root, thread_id=thread_id, check_files=False)
+    recommendations = plan_next_actions(snapshot)
+    recommended_next_tool = _recommended_mcp_tool(snapshot, [item.kind for item in recommendations])
     payload = {
         "ok": True,
         "proof": "This response proves the current host can call AgentPack MCP tools.",
@@ -86,6 +116,17 @@ def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str
         "mcp_tools": list(MCP_TOOL_NAMES),
         "cli_commands": list(available_cli_commands()),
         "refresh_command": refresh_commands("auto").primary,
+        "recommended_next_tool": recommended_next_tool,
+        "reason": recommendations[0].reason if recommendations else "context is ready for the current task",
+        "avoid": _mcp_avoid_list(snapshot, [item.kind for item in recommendations]),
+        "token_hint": token_hint(snapshot),
+        "control_plane": {
+            "thread_id": snapshot.task.thread_id,
+            "context_status": snapshot.context.status,
+            "context_reason": snapshot.context.reason,
+            "token_contract": snapshot.tokens.model_dump(mode="json"),
+            "next_actions": [item.model_dump(mode="json") for item in recommendations[:5]],
+        },
         "latest_context": {
             "task": metadata.get("task"),
             "generated_at": metadata.get("generated_at"),
@@ -94,7 +135,31 @@ def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str
             "worktree_path": freshness.get("worktree_path"),
         },
     }
-    return to_llm(root, payload, requested=output_format, root_name="agentpack_readiness")
+    requested = "toon" if output_format == "auto" else output_format
+    return to_llm(root, payload, requested=requested, root_name="agentpack_readiness")
+
+
+def _recommended_mcp_tool(snapshot, kinds: list[str]) -> str:
+    if "init" in kinds:
+        return "route_task"
+    if "missing_task" in kinds or "done_task" in kinds:
+        return "start_task"
+    if "stale_context" in kinds or snapshot.context.status != "fresh":
+        return "get_context"
+    if snapshot.tokens.estimated_tokens and snapshot.tokens.budget and snapshot.tokens.usage_ratio >= 0.85:
+        return "get_delta_context"
+    return "get_context"
+
+
+def _mcp_avoid_list(snapshot, kinds: list[str]) -> list[str]:
+    avoid: list[str] = []
+    if snapshot.context.status == "fresh":
+        avoid.append("pack_context unless task text changed")
+    if "missing_task" in kinds or "done_task" in kinds:
+        avoid.append("get_context until a concrete active task is set")
+    if snapshot.tokens.estimated_tokens and snapshot.tokens.budget and snapshot.tokens.usage_ratio >= 0.85:
+        avoid.append("full pack_context for small follow-up reads")
+    return avoid
 
 
 def _metadata_provenance(root: Path, metadata: dict | None) -> dict[str, object]:
@@ -182,6 +247,14 @@ def _truncate_to_budget(text: str, max_tokens: int = 20000) -> str:
 def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
     """Read the latest context pack, blocking to refresh when task.md changed."""
     scoped = thread_paths(root, thread_id)
+    if task_is_terminal(root, scoped.thread_id if scoped else None):
+        label = f"AgentPack session {scoped.thread_id}" if scoped else "AgentPack task"
+        status = read_task_status(root, scoped.thread_id if scoped else None)
+        terminal_description = "Completed context" if status == "done" else "Handed-off context"
+        return (
+            f"> {label} is marked {status}. {terminal_description} will not be reused.\n\n"
+            "Start a new task/session with `agentpack start \"describe the task\"` or MCP `start_task(...)`."
+        )
     pack_path = None
     candidates = (
         (scoped.context_claude, scoped.context) if scoped else (root / ".agentpack" / "context.claude.md", root / ".agentpack" / "context.md")
@@ -258,7 +331,9 @@ def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
 
 def _task_md_body(root: Path, thread_id: str | None = None) -> str | None:
     scoped = thread_paths(root, thread_id)
-    if scoped and scoped.task.exists():
+    if scoped:
+        if not scoped.task.exists():
+            return None
         raw = scoped.task.read_text(encoding="utf-8").strip()
         return raw or None
     return read_task_md(root)
@@ -281,6 +356,11 @@ def _resolve_mcp_task(root: Path, task: str = "", thread_id: str | None = None) 
     task_md = _task_md_body(root, thread_id)
     if task_md:
         return task_md
+    if thread_id:
+        raise ValueError(
+            f"No task is set for AgentPack session {thread_id}. "
+            "Call start_task(task=...) or pack_context(task=...) before requesting context."
+        )
     inferred, _source = git.infer_task_with_source(root) if git.is_git_repo(root) else ("general", "fallback")
     return inferred
 
@@ -298,9 +378,11 @@ def _pack_context_impl(
     from agentpack.application.pack_service import PackService, PackRequest
     from agentpack.adapters.detect import detect_agent
     from agentpack.renderers.markdown import render_claude
+    from agentpack.learning.task_memory import record_task_start_snapshot
 
     provided_task = bool(task.strip())
     had_task_md = _task_md_body(root, thread_id or None) is not None
+    dirty_files_before = sorted(git.dirty_files(root)) if provided_task and git.is_git_repo(root) else []
     resolved_task = _resolve_mcp_task(root, task, thread_id or None)
     agent = detect_agent(root)
     result = PackService().run(PackRequest(
@@ -314,18 +396,29 @@ def _pack_context_impl(
         task_source="mcp" if provided_task else ("task.md" if had_task_md else "git"),
         thread_id=thread_id or None,
     ))
+    if provided_task:
+        try:
+            record_task_start_snapshot(
+                root,
+                task=resolved_task,
+                thread=thread_id or "",
+                agent=agent,
+                context_path=result.out_path,
+                dirty_files_before=dirty_files_before,
+            )
+        except Exception:
+            pass
     return _truncate_to_budget(render_claude(result.pack), max_tokens)
 
 
-def _explain_file_impl(root: Path, path: str, task: str = "") -> str:
+def _explain_file_impl(root: Path, path: str, task: str = "", thread_id: str | None = None) -> str:
     """Testable core of the explain_file MCP tool."""
     from agentpack.application.pack_service import PackPlanner, PackRequest, _sf_tokens
     from agentpack.adapters.detect import detect_agent
 
     resolved_task = task
     if not resolved_task:
-        task_md = root / ".agentpack" / "task.md"
-        resolved_task = task_md.read_text(encoding="utf-8").strip() if task_md.exists() else "general"
+        resolved_task = _task_md_body(root, thread_id) or "general"
 
     plan = PackPlanner().plan(PackRequest(
         root=root,
@@ -392,14 +485,13 @@ def _explain_file_impl(root: Path, path: str, task: str = "") -> str:
     return "\n".join(lines)
 
 
-def _get_related_files_impl(root: Path, path: str, depth: int = 1) -> str:
+def _get_related_files_impl(root: Path, path: str, depth: int = 1, thread_id: str | None = None) -> str:
     """Testable core of the get_related_files MCP tool."""
     from agentpack.application.pack_service import PackPlanner, PackRequest
     from agentpack.adapters.detect import detect_agent
 
     depth = max(1, min(depth, 2))
-    task_md = root / ".agentpack" / "task.md"
-    task = task_md.read_text(encoding="utf-8").strip() if task_md.exists() else "general"
+    task = _task_md_body(root, thread_id) or "general"
 
     plan = PackPlanner().plan(PackRequest(
         root=root,
@@ -443,6 +535,164 @@ def _get_related_files_impl(root: Path, path: str, depth: int = 1) -> str:
     for rel_path, rel_type in sorted(seen.items(), key=lambda x: x[1]):
         lines.append(f"- `{rel_path}` — {rel_type}")
     return "\n".join(lines)
+
+
+def _graph_index(root: Path):
+    from agentpack.architecture.index import SemanticGraphIndex
+    from agentpack.architecture.service import build_snapshot_for_ref
+
+    return SemanticGraphIndex(build_snapshot_for_ref(root))
+
+
+def _graph_output(root: Path, payload: dict, output_format: str = "toon") -> str:
+    requested = "toon" if output_format == "auto" else output_format
+    return to_llm(root, payload, requested=requested, root_name="agentpack_graph")
+
+
+def _graph_detail(detail: str) -> str:
+    if detail not in {"compact", "full"}:
+        raise ValueError("detail must be 'compact' or 'full'")
+    return detail
+
+
+_GRAPH_RELATIONSHIPS = {
+    "contains", "imports", "calls", "references", "inherits", "implements",
+    "tested_by", "documents", "configures", "reads_from", "writes_to",
+    "publishes", "consumes", "declared_dependency",
+}
+
+
+def _graph_limit(value: int, maximum: int, name: str) -> int:
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    return min(value, maximum)
+
+
+def _graph_relationship(value: str) -> str:
+    if value and value not in _GRAPH_RELATIONSHIPS:
+        raise ValueError(f"unsupported graph relationship: {value}")
+    return value
+
+
+def _compact_graph_node(node: dict) -> dict:
+    locator = node.get("locator") or {}
+    evidence_refs = []
+    for evidence in (node.get("evidence") or [])[:2]:
+        evidence_refs.append({
+            "path": evidence.get("path"),
+            "start_line": evidence.get("start_line"),
+            "end_line": evidence.get("end_line"),
+            "source": evidence.get("source"),
+            "source_hash": evidence.get("source_hash"),
+        })
+    return {
+        "entity_key": node.get("entity_key"),
+        "type": node.get("entity_type"),
+        "name": node.get("qualified_name") or node.get("display_name"),
+        "path": locator.get("path"),
+        "line": locator.get("start_line"),
+        "language": node.get("language"),
+        "confidence_tier": node.get("confidence_tier"),
+        "evidence_refs": evidence_refs,
+    }
+
+
+def _compact_graph_edge(row: dict) -> dict:
+    node = row.get("node") or {}
+    return {
+        "edge_key": row.get("edge_key"),
+        "relationship": row.get("relationship"),
+        "confidence_tier": row.get("confidence_tier"),
+        "node": _compact_graph_node(node),
+        "evidence": (row.get("evidence") or [])[:1],
+    }
+
+
+def _query_graph_impl(root: Path, text: str, relationship: str = "", limit: int = 20, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not text.strip():
+        raise ValueError("text must not be empty")
+    relationship = _graph_relationship(relationship)
+    limit = _graph_limit(limit, 100, "limit")
+    index = _graph_index(root)
+    hits = index.query(text, limit=limit)
+    if relationship:
+        related_keys = {
+            key
+            for edge in index.snapshot.edges
+            if edge.edge_type == relationship
+            for key in (edge.source_entity_key, edge.target_entity_key)
+        }
+        hits = [hit for hit in hits if hit.entity.entity_key in related_keys]
+    rows = []
+    for hit in hits:
+        entity = hit.entity.model_dump(mode="json")
+        rows.append({"score": hit.score, "entity": entity if detail == "full" else _compact_graph_node(entity)})
+    return _graph_output(root, {"query": text, "relationship": relationship, "results": rows, "snapshot": {"schema_version": index.snapshot.schema_version, "commit_sha": index.snapshot.commit_sha, "unresolved_entities": sum(1 for entity in index.snapshot.entities if entity.entity_type in {"external", "unresolved"})}}, output_format)
+
+
+def _get_graph_node_impl(root: Path, name: str, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not name.strip():
+        raise ValueError("name must not be empty")
+    index = _graph_index(root)
+    rows = []
+    for entity in index.resolve(name)[:20]:
+        payload = entity.model_dump(mode="json")
+        if detail != "full":
+            payload = {"entity_key": payload["entity_key"], "type": payload["entity_type"], "qualified_name": payload["qualified_name"], "path": payload["locator"]["path"], "line": payload["locator"]["start_line"], "confidence_tier": payload["confidence_tier"], "evidence": payload["evidence"][:2]}
+        rows.append(payload)
+    return _graph_output(root, {"name": name, "nodes": rows}, output_format)
+
+
+def _get_graph_neighbors_impl(root: Path, name: str, relationship: str = "", direction: str = "both", limit: int = 50, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not name.strip():
+        raise ValueError("name must not be empty")
+    relationship = _graph_relationship(relationship)
+    limit = _graph_limit(limit, 100, "limit")
+    index = _graph_index(root)
+    rows = index.neighbors(name, relationship=relationship, direction=direction, limit=limit)
+    if detail != "full":
+        rows = [
+            {
+                "edge_key": row["edge_key"],
+                "relationship": row["relationship"],
+                "confidence_tier": row["confidence_tier"],
+                "node": _compact_graph_node(row["node"]),
+                "evidence": row["evidence"][:1],
+            }
+            for row in rows
+        ]
+    return _graph_output(root, {"name": name, "neighbors": rows}, output_format)
+
+
+def _shortest_path_impl(root: Path, source: str, target: str, max_hops: int = 8, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not source.strip() or not target.strip():
+        raise ValueError("source and target must not be empty")
+    max_hops = _graph_limit(max_hops, 32, "max_hops")
+    index = _graph_index(root)
+    rows = index.shortest_path(source, target, max_hops=max_hops)
+    if detail != "full":
+        rows = [_compact_graph_edge(row) for row in rows]
+    return _graph_output(root, {"source": source, "target": target, "path": rows}, output_format)
+
+
+def _explain_graph_edge_impl(root: Path, edge_key: str, detail: str = "compact", output_format: str = "toon") -> str:
+    detail = _graph_detail(detail)
+    if not edge_key.strip():
+        raise ValueError("edge_key must not be empty")
+    index = _graph_index(root)
+    explanation = index.explain_edge(edge_key)
+    if detail != "full" and explanation is not None:
+        explanation = {
+            "edge": _compact_graph_edge(explanation["edge"]),
+            "source": _compact_graph_node(explanation["source"]),
+            "target": _compact_graph_node(explanation["target"]),
+            "evidence": explanation["evidence"][:1],
+        }
+    return _graph_output(root, {"edge_key": edge_key, "explanation": explanation}, output_format)
 
 
 def _get_stats_impl(root: Path) -> str:
@@ -502,6 +752,35 @@ def _get_stats_impl(root: Path) -> str:
     return "\n".join(lines)
 
 
+def _get_pr_context_impl(
+    root: Path,
+    *,
+    pr: str = "",
+    focus: str = "",
+    output_format: StructuredFormat = "toon",
+    allow_local_fallback: bool = False,
+) -> str:
+    """Testable implementation for the MCP PR-context contract."""
+    from agentpack.application.pr_context import PRContextError, resolve_pr_context
+
+    try:
+        context = resolve_pr_context(
+            root,
+            pr=pr or None,
+            focus=focus,
+            allow_local_fallback=allow_local_fallback,
+        )
+    except PRContextError as exc:
+        payload = {"ok": False, "error": str(exc), "allow_local_fallback": allow_local_fallback}
+        return to_llm(root, payload, requested=output_format, root_name="agentpack_pr_context")
+    return to_llm(
+        root,
+        {"ok": True, "pr_context": context.model_dump(mode="json")},
+        requested=output_format,
+        root_name="agentpack_pr_context",
+    )
+
+
 def _get_delta_context_impl(root: Path, max_files: int = 12) -> str:
     """Return the latest saved delta summary and selected-file changes."""
     metadata_path = root / ".agentpack" / "pack_metadata.json"
@@ -529,25 +808,71 @@ def _get_delta_context_impl(root: Path, max_files: int = 12) -> str:
     return "\n".join(lines)
 
 
-def _retrieve_context_impl(root: Path, path: str = "", block_id: str = "", mode: str = "as_stored", allow_stale: bool = False) -> str:
+def _get_task_map_impl(root: Path, output_format: StructuredFormat = "auto", max_files: int = 50) -> str:
+    metadata = load_pack_metadata(root) or {}
+    task_map = metadata.get("task_map") if isinstance(metadata, dict) else {}
+    if not isinstance(task_map, dict) or not task_map:
+        return "No task map found. Run `agentpack pack` or MCP `pack_context()` first."
+    files = task_map.get("files")
+    if isinstance(files, list) and max_files > 0:
+        task_map = {**task_map, "files": files[:max_files]}
+    requested = "toon" if output_format == "auto" else output_format
+    return to_llm(root, task_map, requested=requested, root_name="agentpack_task_map")
+
+
+def _retrieve_context_impl(
+    root: Path,
+    path: str = "",
+    block_id: str = "",
+    mode: str = "as_stored",
+    allow_stale: bool = False,
+    *,
+    targets: list[str] | None = None,
+    kind: str = "any",
+) -> str:
     from agentpack.core.config import load_config
     from agentpack.core.pack_registry import retrieve_from_registry
     from agentpack.session.events import record_event
 
     cfg = load_config(root)
-    result = retrieve_from_registry(
-        root,
-        path=path,
-        block_id=block_id,
-        mode=mode,
-        allow_stale=allow_stale,
-        max_chars=cfg.runtime.max_retrieve_chars,
-        registry_file=root / cfg.runtime.pack_registry_output,
-    )
+    clean_kind = kind if kind in {"any", "selected", "omitted"} else "any"
+    target_paths = [item for item in (targets or []) if item]
+    if target_paths:
+        results = [
+            retrieve_from_registry(
+                root,
+                path=target,
+                mode=mode,
+                allow_stale=allow_stale,
+                kind=clean_kind,  # type: ignore[arg-type]
+                max_chars=cfg.runtime.max_retrieve_chars,
+                registry_file=root / cfg.runtime.pack_registry_output,
+            )
+            for target in target_paths[:12]
+        ]
+        result = "\n\n---\n\n".join(results)
+    else:
+        result = retrieve_from_registry(
+            root,
+            path=path,
+            block_id=block_id,
+            mode=mode,
+            allow_stale=allow_stale,
+            kind=clean_kind,  # type: ignore[arg-type]
+            max_chars=cfg.runtime.max_retrieve_chars,
+            registry_file=root / cfg.runtime.pack_registry_output,
+        )
     record_event(
         root,
         "retrieve",
-        {"path": path, "block_id": block_id, "mode": mode, "allow_stale": allow_stale},
+        {
+            "path": path,
+            "block_id": block_id,
+            "targets": target_paths,
+            "mode": mode,
+            "kind": clean_kind,
+            "allow_stale": allow_stale,
+        },
         output_path=cfg.runtime.session_events_output,
     )
     return result
@@ -569,15 +894,147 @@ def _compress_output_impl(root: Path, content: str, kind: str = "auto") -> str:
     return result
 
 
-def _route_task_impl(root: Path, task: str, output_format: StructuredFormat = "auto") -> str:
-    """Return read-only task route payload; does not write task/context files."""
+def _validate_toon_impl(
+    root: Path,
+    *,
+    content: str = "",
+    path: str = "",
+    require_format: bool = True,
+    schema: str = "",
+    allow_json: bool = False,
+    return_canonical: bool = False,
+    output_format: StructuredFormat = "toon",
+) -> str:
+    from agentpack.core.toon_validator import canonicalize_to_toon_text, validate_toon_file, validate_toon_text
+
+    raw_text = ""
+    if bool(content) == bool(path):
+        payload = {
+            "ok": False,
+            "source": path or "<string>",
+            "root": None,
+            "parsed_type": None,
+            "error": "provide exactly one of content or path",
+            "warnings": [],
+            "schema": schema,
+            "input_format": "",
+            "repair_hint": "",
+            "canonical_available": False,
+        }
+    elif path:
+        target = (root / path).resolve()
+        try:
+            target.relative_to(root.resolve())
+        except ValueError:
+            payload = {
+                "ok": False,
+                "source": path,
+                "root": None,
+                "parsed_type": None,
+                "error": "path must stay inside repo root",
+                "warnings": [],
+                "schema": schema,
+                "input_format": "",
+                "repair_hint": "",
+                "canonical_available": False,
+            }
+        else:
+            result = validate_toon_file(
+                target,
+                require_format=require_format,
+                schema=schema,
+                allow_json=allow_json,
+            )
+            payload = result.as_dict()
+            if result.ok and return_canonical:
+                raw_text = target.read_text(encoding="utf-8")
+    else:
+        result = validate_toon_text(
+            content,
+            source="<content>",
+            require_format=require_format,
+            schema=schema,
+            allow_json=allow_json,
+        )
+        payload = result.as_dict()
+        if result.ok and return_canonical:
+            raw_text = content
+    if return_canonical and payload.get("ok") and raw_text:
+        try:
+            canonical = canonicalize_to_toon_text(
+                raw_text,
+                schema=schema,
+                source=str(payload.get("source") or path or "<content>"),
+                allow_json=allow_json,
+            )
+        except ValueError as exc:
+            payload["ok"] = False
+            payload["error"] = f"unable to render canonical TOON: {exc}"
+        else:
+            payload["canonical_toon"] = canonical.text
+            payload["canonical_root"] = canonical.root
+            payload["canonical_input_format"] = canonical.input_format
+    return to_llm(root, payload, requested=output_format, root_name="agentpack_toon_validation")
+
+
+def _route_task_impl(
+    root: Path,
+    task: str,
+    output_format: StructuredFormat = "toon",
+    detail: str = "compact",
+) -> str:
+    """Return a compact read-only route payload; full details remain opt-in."""
     from agentpack.router.service import RouteService
 
     result = RouteService().route_task(root, task)
-    return to_llm(root, result.model_dump(mode="json"), requested=output_format, root_name="agentpack_route")
+    if detail == "full":
+        payload = result.model_dump(mode="json")
+    elif detail == "compact":
+        payload = _compact_route_payload(result)
+    else:
+        raise ValueError("detail must be 'compact' or 'full'")
+    return to_llm(root, payload, requested=output_format, root_name="agentpack_route")
 
 
-def _get_skills_impl(root: Path, output_format: StructuredFormat = "auto") -> str:
+def _compact_route_payload(result) -> dict:
+    """Keep routing useful to an agent without duplicating the generated prompt."""
+    return {
+        "task": result.task,
+        "recommended_interaction_mode": result.recommended_interaction_mode,
+        "mode_reason": result.mode_reason,
+        "current_agent": result.current_agent,
+        "reviewer_agent": result.reviewer_agent,
+        "task_mode": result.task_mode,
+        "task_mode_confidence": result.task_mode_confidence,
+        "task_mode_signals": result.task_mode_signals,
+        "selected_files": result.selected_files[:12],
+        "selected_skills": [
+            {
+                "name": item.skill.name,
+                "path": item.skill.path,
+                "score": item.score,
+                "confidence": item.confidence,
+                "reasons": item.reasons[:3],
+            }
+            for item in result.selected_skills[:8]
+        ],
+        "baseline_skills": [
+            {"name": item.skill.name, "path": item.skill.path}
+            for item in result.baseline_skills[:8]
+        ],
+        "applied_rules": [
+            {"name": item.rule.name, "path": item.rule.path, "reasons": item.reasons[:3]}
+            for item in result.applied_rules[:8]
+        ],
+        "suggested_commands": [item.model_dump(mode="json") for item in result.suggested_commands[:8]],
+        "evidence_checklist": result.evidence_checklist[:8],
+        "routing_notes": result.routing_notes[:8],
+        "prompt_quality_warnings": result.prompt_quality_warnings[:8],
+        "safety_warnings": result.safety_warnings[:12],
+    }
+
+
+def _get_skills_impl(root: Path, output_format: StructuredFormat = "toon") -> str:
     """Return discovered skill/rule inventory payload."""
     from agentpack.router.service import RouteService
 
@@ -592,7 +1049,7 @@ def _get_skill_impl(root: Path, name_or_path: str) -> str:
     return RouteService().get_skill(root, name_or_path)
 
 
-def _explain_route_impl(root: Path, task: str, output_format: StructuredFormat = "auto") -> str:
+def _explain_route_impl(root: Path, task: str, output_format: StructuredFormat = "toon") -> str:
     """Return task route payload including all positive skill scores."""
     from agentpack.router.service import RouteService
 
@@ -619,7 +1076,7 @@ def serve() -> None:
     mcp = FastMCP("agentpack")
 
     @mcp.tool()
-    def readiness(format: str = "auto") -> str:
+    def readiness(format: str = "toon") -> str:
         """Prove this host exposes AgentPack MCP tools and report server/CLI status.
 
         If an agent can call this tool and read the response, live MCP exposure is confirmed.
@@ -629,17 +1086,28 @@ def serve() -> None:
 
     @mcp.tool()
     def start_task(task: str, mode: str = "balanced", budget: int = 0, max_tokens: int = 20000, thread_id: str = "") -> str:
-        """Start a new coding task: write task.md, pack context, and return it.
+        """Start a new coding task: write session task.md, pack context, and return it.
 
         This is the recommended MCP-first entry point at the start of a task.
         """
+        root = _repo_root()
+        resolved_thread = resolve_session_thread_option(thread_id) or ""
+        from agentpack.adapters.detect import detect_agent
+        from agentpack.session.events import record_event
+
+        record_event(
+            root,
+            "task_started",
+            {"task": task, "thread_id": resolved_thread, "agent": detect_agent(root)},
+            source="mcp",
+        )
         return _pack_context_impl(
-            _repo_root(),
+            root,
             task=task,
             mode=mode,
             budget=budget,
             max_tokens=max_tokens,
-            thread_id=resolve_thread_option(thread_id) or "",
+            thread_id=resolved_thread,
         )
 
     @mcp.tool()
@@ -647,8 +1115,8 @@ def serve() -> None:
         """Generate a ranked context pack.
 
         Args:
-            task: Optional task text. If provided, AgentPack writes it to .agentpack/task.md.
-                  If omitted, AgentPack reads task.md or infers from git.
+            task: Optional task text. If provided, AgentPack writes it to the current session task.md.
+                  If omitted, scoped sessions require an existing session task; legacy global mode may infer from git.
             mode: lite | balanced (default) | deep.
             budget: Token budget, 0 = config default (usually 40000).
             max_tokens: Maximum tokens to return (default 20000). Increase for deep context.
@@ -661,20 +1129,106 @@ def serve() -> None:
             mode=mode,
             budget=budget,
             max_tokens=max_tokens,
-            thread_id=resolve_thread_option(thread_id) or "",
+            thread_id=resolve_session_thread_option(thread_id) or "",
         )
 
     @mcp.tool()
-    def route_task(task: str, format: str = "auto") -> str:
-        """Route a task to files, rules, skills, command suggestions, and safety warnings.
+    def create_handoff(report: dict[str, Any], name: str = "", target_provider: str = "", target_session_id: str = "") -> str:
+        """Create a single-consumer handoff with the complete Git-visible worktree patch."""
+        from agentpack.core.handoff import create_handoff as create
 
-        Read-only: does not write task.md or context files. Use pack_context when full
-        context content is needed.
-        """
-        return _route_task_impl(_repo_root(), task, format)
+        record = create(
+            _repo_root(),
+            report,
+            name=name,
+            target_provider=target_provider,
+            target_session_id=target_session_id,
+        )
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(_repo_root(), payload, requested="toon", root_name="handoff")
 
     @mcp.tool()
-    def get_skills(format: str = "auto") -> str:
+    def list_handoffs(status: str = "ready", format: str = "toon") -> str:
+        """List project handoffs without exposing internal UUIDs."""
+        from agentpack.core.handoff import HandoffStore
+
+        if format not in {"toon", "json"}:
+            raise ValueError("format must be toon or json")
+        statuses = None if status in {"", "all"} else {status}
+        records = []
+        for record in HandoffStore(_repo_root()).list(statuses):
+            records.append({
+                "name": record.name,
+                "status": record.status,
+                "created_at": record.created_at.isoformat(),
+                "source_provider": record.source.provider,
+                "task": record.report.task,
+                "summary": record.report.summary,
+                "next_action": record.report.next_action,
+            })
+        return to_llm(_repo_root(), records, requested=cast(StructuredFormat, format), root_name="handoffs")
+
+    @mcp.tool()
+    def get_handoff(name: str, format: str = "toon") -> str:
+        """Return one handoff by its memorable project-scoped name."""
+        from agentpack.core.handoff import HandoffStore, render_markdown
+
+        record = HandoffStore(_repo_root()).load(name)
+        if format == "markdown":
+            return render_markdown(record)
+        if format not in {"toon", "json"}:
+            raise ValueError("format must be toon, json, or markdown")
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(_repo_root(), payload, requested=cast(StructuredFormat, format), root_name="handoff")
+
+    @mcp.tool()
+    def accept_handoff(name: str = "", latest: bool = False, max_tokens: int = 20000) -> str:
+        """Atomically claim a handoff, apply its patch, and return bounded fresh context."""
+        from agentpack.core.handoff import accept_handoff as accept
+
+        record, warnings = accept(_repo_root(), name, latest=latest)
+        context = _pack_context_impl(
+            _repo_root(),
+            task=record.report.task,
+            max_tokens=max_tokens,
+            thread_id=record.claim.thread_id if record.claim else "",
+        )
+        payload = record.model_dump(mode="json")
+        payload.pop("handoff_id", None)
+        return to_llm(
+            _repo_root(),
+            {"handoff": payload, "warnings": warnings, "context": context},
+            requested="toon",
+            root_name="handoff_resume",
+        )
+
+    @mcp.tool()
+    def release_handoff(name: str) -> str:
+        """Release the current session's claim so another session can resume it."""
+        from agentpack.core.handoff import release_handoff as release
+
+        record = release(_repo_root(), name)
+        return to_llm(
+            _repo_root(),
+            {"name": record.name, "status": record.status},
+            requested="toon",
+            root_name="handoff",
+        )
+
+    @mcp.tool()
+    def route_task(task: str, format: str = "toon", detail: str = "compact") -> str:
+        """Route a task to files, rules, skills, command suggestions, and safety warnings.
+
+        Read-only: does not write task.md or context files. The default compact response
+        contains top files, reasons, actions, and warnings. Use detail='full' or
+        explain_route when full routing evidence is needed.
+        """
+        return _route_task_impl(_repo_root(), task, format, detail)
+
+    @mcp.tool()
+    def get_skills(format: str = "toon") -> str:
         """Return the discovered Agentpack skill/rule inventory as TOON or JSON."""
         return _get_skills_impl(_repo_root(), format)
 
@@ -687,22 +1241,22 @@ def serve() -> None:
         return _get_skill_impl(_repo_root(), name_or_path)
 
     @mcp.tool()
-    def explain_route(task: str, format: str = "auto") -> str:
+    def explain_route(task: str, format: str = "toon") -> str:
         """Return a route_task-style payload with skill scoring reasons."""
         return _explain_route_impl(_repo_root(), task, format)
 
     @mcp.tool()
     def get_context(thread_id: str = "") -> str:
-        """Return the latest context pack, auto-refreshing when task.md changed.
+        """Return the latest session context pack, auto-refreshing when task.md changed.
 
         Fast for fresh packs. Blocks for one refresh if the current task differs from the packed task.
         Returns empty string if no pack exists yet.
         """
-        return _get_context_impl(_repo_root(), resolve_thread_option(thread_id))
+        return _get_context_impl(_repo_root(), resolve_session_thread_option(thread_id))
 
     @mcp.tool()
     def refresh() -> str:
-        """Refresh context using the current task.md (or git-inferred task).
+        """Refresh context using the current ambient session task file.
 
         Equivalent to running `agentpack session refresh`.
         Returns summary of what was packed.
@@ -716,7 +1270,8 @@ def serve() -> None:
         agent = state.agent if state else detect_agent(root)
         mode = state.mode if state else "balanced"
 
-        result = run_refresh(root, agent, mode, 0)
+        thread = resolve_session_thread_option("")
+        result = run_refresh(root, agent, mode, 0, thread_id=thread)
         if result is None:
             return "Refresh failed."
         return (
@@ -726,19 +1281,19 @@ def serve() -> None:
         )
 
     @mcp.tool()
-    def explain_file(path: str, task: str = "") -> str:
+    def explain_file(path: str, task: str = "", thread_id: str = "") -> str:
         """Return score breakdown and symbol list for a specific file.
 
         Args:
             path: Repo-relative file path (e.g. "src/auth/session.py").
-            task: Optional task description to score against. Defaults to current task.md.
+            task: Optional task description to score against. Defaults to current session task.md.
 
         Returns a markdown string with score signals, include mode, token count, and symbols.
         """
-        return _explain_file_impl(_repo_root(), path, task)
+        return _explain_file_impl(_repo_root(), path, task, resolve_session_thread_option(thread_id))
 
     @mcp.tool()
-    def get_related_files(path: str, depth: int = 1) -> str:
+    def get_related_files(path: str, depth: int = 1, thread_id: str = "") -> str:
         """Return import-graph neighbours of a file (files it imports + files that import it).
 
         Args:
@@ -747,7 +1302,7 @@ def serve() -> None:
 
         Returns a markdown list of related files with their relationship type.
         """
-        return _get_related_files_impl(_repo_root(), path, depth)
+        return _get_related_files_impl(_repo_root(), path, depth, resolve_session_thread_option(thread_id))
 
     @mcp.tool()
     def get_delta_context(max_files: int = 12) -> str:
@@ -761,21 +1316,105 @@ def serve() -> None:
         return _get_delta_context_impl(_repo_root(), max_files)
 
     @mcp.tool()
-    def retrieve_context(path: str = "", block_id: str = "", mode: str = "as_stored", allow_stale: bool = False) -> str:
+    def get_task_map(format: str = "toon", max_files: int = 50) -> str:
+        """Return risk-aware task map for the latest pack without loading full context.
+
+        Args:
+            format: auto | toon | json.
+            max_files: Maximum task-map rows to include. Default 50.
+        """
+        return _get_task_map_impl(_repo_root(), output_format=format, max_files=max_files)
+
+    @mcp.tool()
+    def retrieve_context(
+        path: str = "",
+        block_id: str = "",
+        mode: str = "as_stored",
+        allow_stale: bool = False,
+        targets: list[str] | None = None,
+        kind: str = "any",
+    ) -> str:
         """Retrieve full or stored content for a selected/omitted pack registry record.
 
         Args:
             path: Repo-relative path to retrieve.
             block_id: Stable block id from the pack registry. Optional if path is set.
-            mode: as_stored | full | skeleton | summary.
+            mode: as_stored | full | skeleton | symbols | summary.
             allow_stale: If false, refuse retrieval when file changed since the latest pack.
+            targets: Optional list of repo-relative paths to retrieve in one call.
+            kind: any | selected | omitted.
         """
-        return _retrieve_context_impl(_repo_root(), path=path, block_id=block_id, mode=mode, allow_stale=allow_stale)
+        return _retrieve_context_impl(
+            _repo_root(),
+            path=path,
+            block_id=block_id,
+            mode=mode,
+            allow_stale=allow_stale,
+            targets=targets,
+            kind=kind,
+        )
 
     @mcp.tool()
     def compress_output(content: str, kind: str = "auto") -> str:
         """Summarize noisy command output while preserving errors, failures, paths, and diffs."""
         return _compress_output_impl(_repo_root(), content=content, kind=kind)
+
+    @mcp.tool()
+    def validate_toon(
+        content: str = "",
+        path: str = "",
+        require_format: bool = True,
+        schema: str = "",
+        allow_json: bool = False,
+        return_canonical: bool = False,
+        format: str = "toon",
+    ) -> str:
+        """Validate TOON syntax from inline content or a repo-relative file path.
+
+        Args:
+            content: Inline TOON content. Mutually exclusive with path.
+            path: Repo-relative TOON file path. Mutually exclusive with content.
+            require_format: Require the first non-empty line to be @format toon.
+            schema: Optional schema: review-understanding | review-findings.
+            allow_json: Accept JSON fallback when schema is provided.
+            return_canonical: Include canonical_toon in the response when validation succeeds.
+            format: auto | toon | json.
+        """
+        return _validate_toon_impl(
+            _repo_root(),
+            content=content,
+            path=path,
+            require_format=require_format,
+            schema=schema,
+            allow_json=allow_json,
+            return_canonical=return_canonical,
+            output_format=format,
+        )
+
+    @mcp.tool()
+    def query_graph(text: str, relationship: str = "", limit: int = 20, detail: str = "compact", format: str = "toon") -> str:
+        """Search canonical semantic graph entities with bounded output."""
+        return _query_graph_impl(_repo_root(), text, relationship, limit, detail, format)
+
+    @mcp.tool()
+    def get_graph_node(name: str, detail: str = "compact", format: str = "toon") -> str:
+        """Return a graph node and source evidence receipt."""
+        return _get_graph_node_impl(_repo_root(), name, detail, format)
+
+    @mcp.tool()
+    def get_graph_neighbors(name: str, relationship: str = "", direction: str = "both", limit: int = 50, detail: str = "compact", format: str = "toon") -> str:
+        """Return bounded graph neighbours and edge evidence."""
+        return _get_graph_neighbors_impl(_repo_root(), name, relationship, direction, limit, detail, format)
+
+    @mcp.tool()
+    def shortest_path(source: str, target: str, max_hops: int = 8, detail: str = "compact", format: str = "toon") -> str:
+        """Return a bounded shortest path between graph entities."""
+        return _shortest_path_impl(_repo_root(), source, target, max_hops, detail, format)
+
+    @mcp.tool()
+    def explain_graph_edge(edge_key: str, detail: str = "compact", format: str = "toon") -> str:
+        """Return the source-line evidence for one graph edge."""
+        return _explain_graph_edge_impl(_repo_root(), edge_key, detail, format)
 
     @mcp.tool()
     def get_stats() -> str:
@@ -784,5 +1423,25 @@ def serve() -> None:
         Returns a markdown summary: packed tokens, raw tokens, saving %, selected files, task, generated_at.
         """
         return _get_stats_impl(_repo_root())
+
+    @mcp.tool()
+    def get_pr_context(
+        pr: str = "",
+        focus: str = "",
+        format: str = "toon",
+        allow_local_fallback: bool = False,
+    ) -> str:
+        """Return immutable PR evidence shared by local review entry points.
+
+        GitHub PR refs are fetched and verified against GitHub's base/head SHAs.
+        Local commits are used only when allow_local_fallback is explicitly true.
+        """
+        return _get_pr_context_impl(
+            _repo_root(),
+            pr=pr,
+            focus=focus,
+            output_format=format,
+            allow_local_fallback=allow_local_fallback,
+        )
 
     mcp.run()

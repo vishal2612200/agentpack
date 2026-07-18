@@ -8,6 +8,13 @@ AgentPack remains a local context engine, not a coding agent.
 
 ## Current Distribution Paths
 
+Canonical short description for directories and listings:
+
+```text
+AgentPack is a local context engine for AI coding agents: ranked files,
+tests, rules, skills, and compact task context without hosted indexing.
+```
+
 | Host | Current path | What it does |
 |---|---|---|
 | Codex | `.codex-plugin/` and `skills/` | Adds `$agentpack-*` skills for local routing, packing, refresh, PR review, skill review/eval generation, comment resolution, and learning |
@@ -21,6 +28,28 @@ AgentPack remains a local context engine, not a coding agent.
 | OpenCode | `.opencode/agentpack.md` | Portable OpenCode rule file |
 | Antigravity | `agentpack init --agent antigravity` | Writes `GEMINI.md`, VS Code task, git hooks, and generated skill guidance |
 | Generic agents | `agentpack init --agent generic` | Uses `.agentpack/context.md` directly |
+
+## Public Directory Placement
+
+Treat public directories as pointers to the same local CLI/MCP engine, not as
+separate products. Each listing should use the canonical short description,
+link to the install docs, and avoid claims that go beyond the public benchmark
+evidence.
+
+| Directory surface | Status | Next action |
+|---|---|---|
+| npm | Live wrapper package | Keep README synced with PyPI version, release evidence, and troubleshooting |
+| PyPI | Live core CLI package | Keep long description aligned with root README and release evidence |
+| GitHub Releases | Live release notes | Keep release-check, benchmark, wheel, and registry receipts in each release body |
+| HOL plugin registry | Live Codex plugin listing | Keep packaged metadata, privacy/terms URLs, lockfiles, and scanner workflow current |
+| Codex plugin directories | Local packaged plugin today | Reuse `.codex-plugin/plugin.json`, icon, screenshots, and `skills/` bundle for submissions |
+| MCP directories | Candidate | List AgentPack as local MCP context engine; link to `mcp-context-engine.md` |
+| Agent-tool awesome lists | Candidate | Submit only after install transcript and E2E proof page are easy to verify |
+| Comparison pages | Live docs pages | Keep comparisons scoped to context selection, not coding-agent success claims |
+
+Distribution submissions should include the same boundaries: local-first, no
+hosted indexing, no LLM calls for scan/rank/pack, and selected files are a
+starting map rather than proof.
 
 ## Shared Plugin Contract
 
@@ -54,11 +83,18 @@ agentpack benchmark --misses
 Use `<agent>` values such as `codex`, `claude`, `cursor`, `windsurf`, `antigravity`, or `auto`.
 `auto` detects the active host and does not default to Codex.
 
-`agentpack review` prepares the local two-stage PR review bundle. It writes a
-preflight file, a runbook, stage prompts, and branch-scoped
-`*_understanding.toon` / `*_findings.toon` outputs. The optional review context
-is a lens, not source evidence; reviewers still need `gh pr view`, `git diff`,
-and direct code reads.
+`agentpack review` prepares the local Anchor, Judge, Critic, Actor PR review bundle. It writes a
+preflight file, a runbook, stage prompts, copy-fill TOON templates, run-scoped
+`understanding.toon` / `findings.toon` / `critique.toon` outputs, an Actor-only
+`approved-findings.toon` handoff, and optional `posted-review.json`
+post state. The optional review context is a lens, not source evidence;
+reviewers still need `gh pr view`, `git diff`, and direct code reads. The final
+check canonicalizes safe schema-matching JSON or fenced output to TOON, and
+writes a repair guide for malformed artifacts. For PR-bound reviews,
+`agentpack review --check --dry-run-post` writes the exact inline review payload
+without calling GitHub, while `agentpack review --check --post-inline-comments`
+posts only Critic-approved findings as inline GitHub PR review comments and fails closed if
+a finding cannot map to a right-side PR diff line.
 
 ### Scriptable JSON Routing
 

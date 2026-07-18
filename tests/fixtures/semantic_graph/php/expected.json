@@ -1,0 +1,10 @@
+{
+  "fixture_version": "semantic-core-v2",
+  "language": "php",
+  "entities": ["TokenStore", "lookup", "AuthService"],
+  "relationships": [{"source": "AuthService", "relationship": "implements", "target": "TokenStore", "path": "source.php", "start_line": 4, "end_line": 4}],
+  "paths": [{"source": "AuthService", "target": "TokenStore", "relationships": ["implements"]}],
+  "ambiguity_cases": [],
+  "unresolved_cases": [],
+  "deletion": {"path": "source.php", "expected_absent": ["source.php"]}
+}

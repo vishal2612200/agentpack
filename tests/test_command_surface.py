@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import typer.main
+from typer.testing import CliRunner
 
 from agentpack.cli import app
 from agentpack.core.command_surface import (
@@ -40,6 +41,30 @@ def test_available_cli_commands_match_typer_registry() -> None:
 
     assert set(available_cli_commands()) == set(click_cmd.commands)
     assert "pack" in available_cli_commands()
+
+
+def test_root_help_puts_first_run_commands_first() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+    click_cmd = typer.main.get_command(app)
+    commands = list(click_cmd.commands)
+
+    assert result.exit_code == 0, result.output
+    assert commands[:7] == ["quickstart", "start", "next", "doctor", "init", "route", "pack"]
+    assert commands.index("quickstart") < commands.index("benchmark")
+
+
+def test_root_help_groups_advanced_commands_without_hiding_them() -> None:
+    result = CliRunner().invoke(app, ["--help"])
+
+    assert result.exit_code == 0, result.output
+    assert "Core loop" in result.output
+    assert "Advanced, diagnostics, and release" in result.output
+    assert "release-check" in result.output
+    release_command = typer.main.get_command(app).commands["release-check"]
+    assert release_command.name == "release-check"
+    release_help = CliRunner().invoke(app, ["release-check", "--help"]).output
+    assert "release-check" in release_help
+    assert "--skip-benchmark" in release_help
 
 
 def test_commands_from_help_handles_rich_table_rows() -> None:
@@ -93,6 +118,19 @@ def test_refresh_commands_fall_back_when_guard_missing(monkeypatch) -> None:
     for block in [codex_block(), claude_block(), _cursor_rule(), _windsurf_rule(), _gemini_block()]:
         assert "agentpack guard" not in block
         assert "--repair-stale" not in block
+
+
+def test_refresh_commands_make_global_guard_explicit(monkeypatch) -> None:
+    monkeypatch.setattr("agentpack.core.command_surface.available_cli_commands", lambda: ("guard",))
+
+    commands = refresh_commands("codex")
+
+    assert commands.primary == "agentpack guard --agent codex --repair-stale --refresh-context --thread global"
+    assert commands.repair == commands.primary
+    assert commands.thread_auto == (
+        "AGENTPACK_THREAD_ID=<stable-id> "
+        "agentpack guard --agent codex --repair-stale --refresh-context --thread auto"
+    )
 
 
 def test_static_refresh_guidance_uses_portable_commands() -> None:

@@ -14,10 +14,12 @@ This is the first concrete packaged plugin. The broader plugin and IDE distribut
 - `$agentpack-route <task>` runs read-only task routing.
 - `$agentpack-pack <task>` writes the task and builds `.agentpack/context.md`.
 - `$agentpack-refresh [task]` refreshes stale context through the Codex guard path.
-- `$agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged understanding and judge prompts to inspect the current PR or diff.
-- `$agentpack-resolve [PR and context]` runs the local `agentpack resolve` wrapper, then validates, fixes, verifies, and posts cited replies for PR comments.
+- `$agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged review prompts to inspect the current PR or diff.
+- `$agentpack-resolve [PR and context]` validates, fixes, verifies, and replies to PR review comments with citations.
 - `$agentpack-skill-review <skill path or name>` audits a `SKILL.md` and creates a balanced trigger/non-trigger eval workspace.
 - `$agentpack-learn <statement>` turns current local AgentPack session context into an interactive learning prompt.
+- `$agentpack-handoff [name]` packages the structured task report and complete Git-visible patch.
+- `$agentpack-resume [name]` atomically claims and resumes a pending handoff.
 
 ## Install
 
@@ -103,9 +105,11 @@ $agentpack-review focus on backward compatibility
 ```
 
 Review should use `.agentpack/review.prompt.md`, inspect `gh pr view`, `git
-diff`, and exact changed code, then report only grounded findings plus exact
-validation status. The reviewer context is only a prioritization lens; it must
-not replace source evidence.
+diff`, and exact changed code, then run
+`agentpack review --check --post-inline-comments` after Stage 2 for PR-bound
+reviews. It reports grounded findings only after validation and any inline PR
+comment post succeed. The reviewer context is only a prioritization lens; it
+must not replace source evidence.
 
 The workflow writes:
 
@@ -113,23 +117,35 @@ The workflow writes:
 - `.agentpack/review.prompt.md`
 - `.agentpack/review-understanding.prompt.md`
 - `.agentpack/review-judge.prompt.md`
+- `.agentpack/review-understanding.template.toon`
+- `.agentpack/review-findings.template.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/preflight.json`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/runbook.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.prompt.md`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/judge.prompt.md`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.template.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/findings.template.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/understanding.toon`
 - `.agentpack/reviews/<branch-prefix>/<run_id>/findings.toon`
+- `.agentpack/reviews/<branch-prefix>/<run_id>/posted-review.json` when inline PR comments are posted or skipped because there are no findings
 
 The run-scoped preflight artifact remains JSON, while the LLM-stage artifacts are `understanding.toon` and
 `findings.toon`; only their location moved out of the repo root and into the
 review run directory. This replaces the legacy root outputs
 `<branch-prefix>_understanding.toon` and `<branch-prefix>_findings.toon`.
+The generated `.template.toon` files are copy-fill examples for agents that do
+not know TOON well. If an older model writes valid JSON or fenced output to a
+stage output path, `agentpack review --check` canonicalizes it to TOON before
+the citation gates run; malformed output gets a local repair guide.
 
 The understanding stage records the factual model of the PR. The judge stage
 uses that model plus direct repository reads to produce evidence-backed
-findings. Fresh runs are the default, and interrupted work is resumed only with
-`agentpack review --resume <run_id>`, so an abandoned partial review does not
-silently become the next run's input.
+findings. The final check can post findings as inline GitHub PR review comments
+when every finding location maps to a right-side PR diff line. Use
+`agentpack review --check --dry-run-post` to validate and write the same inline
+payload without calling GitHub. Fresh runs are the default, and interrupted work
+is resumed only with `agentpack review --resume <run_id>`, so an abandoned
+partial review does not silently become the next run's input.
 
 For learning from the current local context:
 
@@ -138,6 +154,9 @@ $agentpack-learn explain the router scoring changes from this session
 ```
 
 The learning command keeps a stable prompt prefix for caching and appends the user learning statement at the end.
+It also asks the local CLI for `agentpack learn "<statement>" --json` first, so
+plugin lessons can use recent task memory, changed-file evidence, and Task
+Coach questions without adding another command.
 
 ## Rules For Codex
 

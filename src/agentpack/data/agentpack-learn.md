@@ -30,7 +30,7 @@ Use only local files first:
 
 ```bash
 test -f .agentpack/context.compact.md && sed -n '1,220p' .agentpack/context.compact.md
-test -f .agentpack/task.md && sed -n '1,40p' .agentpack/task.md
+agentpack task show || true
 test -f .agentpack/session.json && sed -n '1,120p' .agentpack/session.json
 test -f .agentpack/learning.md && sed -n '1,220p' .agentpack/learning.md
 test -f .agentpack/agent-lessons.md && sed -n '1,160p' .agentpack/agent-lessons.md
@@ -40,6 +40,16 @@ test -f .agentpack/session-events.jsonl && tail -n 40 .agentpack/session-events.
 
 Use `.agentpack/context.md` only when compact context lacks needed detail.
 Do not invent repo facts not present in local context or checked files.
+
+## On-Demand Task Coach Payload
+
+Before teaching, try to generate a bounded local learning payload for the exact user request:
+
+```bash
+agentpack learn "<user learning statement>" --json
+```
+
+If this fails, continue from the local files above and say the generated payload was unavailable. Do not run providers or dashboard rendering unless the user explicitly asks.
 
 ## Teaching Modes
 

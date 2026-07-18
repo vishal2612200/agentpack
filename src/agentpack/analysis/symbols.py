@@ -99,6 +99,20 @@ _JS_EXPORTED_VAR = re.compile(
 _JS_CLASS = re.compile(r"(?:export\s+)?class\s+(\w+)")
 _GO_FUNC = re.compile(r"^func\s+(?:\(([^)]+)\)\s*)?(\w+)\s*\(([^)]*)\)")
 _GO_TYPE = re.compile(r"^type\s+(\w+)\s+(struct|interface)\b")
+# Rust: optional `pub` / `pub(crate)` visibility, then modifiers, then the keyword.
+_RUST_VIS = r"(?:pub(?:\s*\([^)]*\))?\s+)?"
+_RUST_FN = re.compile(
+    rf"^{_RUST_VIS}(?:default\s+)?(?:async\s+)?(?:unsafe\s+)?(?:const\s+)?"
+    r"(?:extern\s+\"[^\"]*\"\s+)?fn\s+(\w+)"
+)
+_RUST_STRUCT = re.compile(rf"^{_RUST_VIS}struct\s+(\w+)")
+_RUST_ENUM = re.compile(rf"^{_RUST_VIS}enum\s+(\w+)")
+_RUST_TRAIT = re.compile(rf"^{_RUST_VIS}(?:unsafe\s+)?trait\s+(\w+)")
+# `impl Type`, `impl<T> Type<T>`, or `impl Trait for Type` — capture the type
+# that receives the methods (the name after `for`, else the name after `impl`).
+_RUST_IMPL = re.compile(
+    r"^impl(?:\s*<[^>]*>)?\s+(?:[\w:]+(?:\s*<[^>]*>)?\s+for\s+)?(\w+)"
+)
 
 
 def extract_js_symbols(path: Path) -> list[Symbol]:
@@ -157,7 +171,7 @@ def extract_go_symbols(path: Path) -> list[Symbol]:
                     name=symbol_name,
                     kind="method" if receiver else "function",
                     start_line=i,
-                    end_line=_go_symbol_end_line(lines, i),
+                    end_line=_brace_block_end_line(lines, i),
                     signature=stripped[:120],
                     body="\n".join(lines[i - 1 : min(i + 49, len(lines))]),
                 )
@@ -171,7 +185,7 @@ def extract_go_symbols(path: Path) -> list[Symbol]:
                     name=name,
                     kind="class",
                     start_line=i,
-                    end_line=_go_symbol_end_line(lines, i),
+                    end_line=_brace_block_end_line(lines, i),
                     signature=stripped[:120],
                     summary=f"Go {type_kind}",
                     body="\n".join(lines[i - 1 : min(i + 49, len(lines))]),
@@ -187,7 +201,7 @@ def _go_receiver_name(receiver: str | None) -> str:
     return parts[-1] if parts else receiver.strip()
 
 
-def _go_symbol_end_line(lines: list[str], start_line: int) -> int:
+def _brace_block_end_line(lines: list[str], start_line: int) -> int:
     depth = 0
     saw_open = False
     for index in range(start_line - 1, len(lines)):
@@ -199,13 +213,104 @@ def _go_symbol_end_line(lines: list[str], start_line: int) -> int:
     return start_line
 
 
+def _rust_symbol_end_line(lines: list[str], start_line: int, signature: str) -> int:
+    # Declarations without a body (unit/tuple structs, trait method signatures)
+    # end on their own line; only brace-delimited items span multiple lines.
+    if "{" not in signature and signature.rstrip().endswith(";"):
+        return start_line
+    return _brace_block_end_line(lines, start_line)
+
+
+def extract_rust_symbols(path: Path) -> list[Symbol]:
+    try:
+        lines = path.read_text(errors="replace").splitlines()
+    except OSError:
+        return []
+
+    symbols: list[Symbol] = []
+    depth = 0
+    # Stack of (owner_type, brace_depth_at_open) for open impl/trait blocks so
+    # nested `fn` items can be qualified as `Type.method`.
+    containers: list[tuple[str, int]] = []
+
+    for i, line in enumerate(lines, 1):
+        stripped = line.strip()
+        while containers and depth <= containers[-1][1]:
+            containers.pop()
+        owner = containers[-1][0] if containers else None
+
+        fn_match = _RUST_FN.match(stripped)
+        impl_match = _RUST_IMPL.match(stripped)
+        if fn_match:
+            name = fn_match.group(1)
+            symbols.append(
+                Symbol(
+                    name=f"{owner}.{name}" if owner else name,
+                    kind="method" if owner else "function",
+                    start_line=i,
+                    end_line=_rust_symbol_end_line(lines, i, stripped),
+                    signature=stripped[:120],
+                    body="\n".join(lines[i - 1 : min(i + 49, len(lines))]),
+                )
+            )
+        elif impl_match:
+            # `impl` blocks contribute methods but are not named symbols.
+            containers.append((impl_match.group(1), depth))
+        else:
+            for pattern, type_kind in ((_RUST_STRUCT, "struct"), (_RUST_ENUM, "enum"), (_RUST_TRAIT, "trait")):
+                type_match = pattern.match(stripped)
+                if type_match:
+                    name = type_match.group(1)
+                    symbols.append(
+                        Symbol(
+                            name=name,
+                            kind="class",
+                            start_line=i,
+                            end_line=_rust_symbol_end_line(lines, i, stripped),
+                            signature=stripped[:120],
+                            summary=f"Rust {type_kind}",
+                            body="\n".join(lines[i - 1 : min(i + 49, len(lines))]),
+                        )
+                    )
+                    if type_kind == "trait":
+                        containers.append((name, depth))
+                    break
+
+        depth += line.count("{") - line.count("}")
+
+    return symbols
+
+
 def extract_symbols(path: Path, language: str | None) -> list[Symbol]:
+    # Optional tree-sitter path: activates only when the `[tree-sitter]` extra
+    # is installed and the language has no first-class extractor here. Failures
+    # fall through so behavior with the extra installed can never be worse than
+    # without it.
+    if language is not None:
+        try:
+            from agentpack.analysis.tree_sitter_backend import (
+                TS_SYMBOL_LANGS,
+                extract_symbols_ts,
+                is_available,
+            )
+            # Go and Rust retain their first-class legacy summary extractors;
+            # the canonical semantic graph uses extract_semantic_facts directly
+            # and therefore still gets Tree-sitter relationships for both.
+            if language in TS_SYMBOL_LANGS - {"go", "rust"} and is_available():
+                ts_syms = extract_symbols_ts(path, language)
+                if ts_syms:
+                    return ts_syms
+        except Exception:
+            pass
+
     if language == "python":
         return extract_python_symbols(path)
     if language in ("javascript", "typescript"):
         return extract_js_symbols(path)
     if language == "go":
         return extract_go_symbols(path)
+    if language == "rust":
+        return extract_rust_symbols(path)
     return []
 
 

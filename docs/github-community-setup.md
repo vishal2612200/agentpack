@@ -19,7 +19,7 @@ Target repository topics:
 
 ## Labels
 
-The canonical contributor labels live in [`.github/contributor-labels.json`](../.github/contributor-labels.json).
+The canonical contributor labels live in [`.github/contributor-labels.json`](https://github.com/vishal2612200/agentpack/blob/main/.github/contributor-labels.json).
 They include:
 
 - `good first issue`
@@ -34,7 +34,7 @@ They include:
 
 ## Starter Issues
 
-The starter issue queue lives in [`.github/contributor-issues.json`](../.github/contributor-issues.json).
+The starter issue queue lives in [`.github/contributor-issues.json`](https://github.com/vishal2612200/agentpack/blob/main/.github/contributor-issues.json).
 It contains 15 issues, including first-time contributor tasks and three high
 impact pin candidates.
 
@@ -45,13 +45,14 @@ issues by language. Its published criteria include at least three open issues
 with `good first issue`, at least ten contributors, setup instructions,
 `CONTRIBUTING.md`, recent activity, and a license.
 
-Current live status checked before this file was updated:
+Current live status checked on 2026-07-06:
 
-- open starter issues: `15` (`#20` through `#34`)
-- open issues with `good first issue`: `9`
+- open issues: `9`
+- open issues with `good first issue`: `5`
+- open issues with `help wanted`: `5`
 - open issues with `first-timers-only`: `2`
-- contributor count from GitHub contributors API: `4`
-- license detected by GitHub license endpoint: `MIT`
+- contributor count from GitHub contributors API: `11`
+- license detected by GitHub license endpoint: `AGPL-3.0`
 - repository permission with the personal `gh` token: `ADMIN`
 - target topics present: `good-first-issue`, `help-wanted`, `first-timers-only`, `developer-tools`, `cli`, `python`
 - specialized labels present: `first-timers-only`, `docs`, `benchmark`,
@@ -59,14 +60,18 @@ Current live status checked before this file was updated:
 - pinned issues: `#20`, `#32`, `#33`
 - seeded discussions: Roadmap `#36`, Ideas `#37`, Help wanted `#38`
 
-AgentPack should be submitted to Good First Issue after the contributor-count
-criterion is met.
+Good First Issue submission status: submitted on 2026-07-06 through the
+official Google Form linked from
+[`DeepSourceCorp/good-first-issue`](https://github.com/DeepSourceCorp/good-first-issue#adding-a-new-project).
+The form response page returned: "Your response has been recorded." Approval is
+now external to this repository.
 
 First Contributions is a contributor education project with a project discovery
 website. AgentPack has been submitted to that project list:
 
 - First Contributions website PR: <https://github.com/firstcontributions/firstcontributions.github.io/pull/718>
-  with `Good First Issue` and `First Timers Only` tags
+  with `Good First Issue` and `First Timers Only` tags. Live status checked on
+  2026-07-06: `OPEN`.
 
 For any follow-up there, use the same readiness bar before proposing AgentPack
 in another project list:
@@ -88,7 +93,7 @@ GitHub Discussions are enabled. Seeded discussions:
 - Ideas: <https://github.com/vishal2612200/agentpack/discussions/37>
 - Help wanted: <https://github.com/vishal2612200/agentpack/discussions/38>
 
-Discussion form templates live in [`.github/DISCUSSION_TEMPLATE/`](../.github/DISCUSSION_TEMPLATE/).
+Discussion form templates live in [`.github/DISCUSSION_TEMPLATE/`](https://github.com/vishal2612200/agentpack/tree/main/.github/DISCUSSION_TEMPLATE).
 The public API enabled discussions and created seed discussions, but custom
 discussion category creation is still a GitHub UI task if exact category names
 are required.

@@ -71,6 +71,10 @@ def test_verify_wheel_json_uses_existing_wheel(tmp_path: Path, monkeypatch) -> N
 def test_release_prepare_json_orchestrates(monkeypatch, tmp_path: Path) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text(
+        "# Changelog\n\n## [1.2.3] — 2026-05-26\n\n### Added\n- Added release notes.\n",
+        encoding="utf-8",
+    )
     calls: list[list[str]] = []
 
     class Result:
@@ -93,8 +97,54 @@ def test_release_prepare_json_orchestrates(monkeypatch, tmp_path: Path) -> None:
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["passed"] is True
-    assert [stage["name"] for stage in payload["stages"]] == ["release-check", "benchmark-public-table", "verify-wheel:build"]
+    assert [stage["name"] for stage in payload["stages"]] == [
+        "release-check",
+        "benchmark-public-table",
+        "verify-wheel:build",
+        "github-release-notes",
+    ]
+    notes_path = Path(payload["release_notes"])
+    assert notes_path.name == "github-release-notes-v1.2.3.md"
+    notes_text = notes_path.read_text(encoding="utf-8")
+    assert "AgentPack v1.2.3" in notes_text
+    assert "Added release notes." in notes_text
+    assert "gh release create v1.2.3" in notes_text
     assert "--check-release-branch" in calls[0]
     assert "--check-registry" in calls[0]
     assert "--tag" in calls[0]
     assert "v1.2.3" in calls[0]
+
+
+def test_release_check_json_emits_stable_top_level_keys(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[project]\nversion = "0.0.1"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [0.0.1] — 2026-01-01\n\n### Added\n- init.\n", encoding="utf-8")
+
+    class Result:
+        returncode = 0
+        stdout = "ok"
+        stderr = ""
+
+    monkeypatch.setattr("agentpack.commands.release_check.subprocess.run", lambda *a, **kw: Result())
+
+    result = CliRunner().invoke(app, ["release-check", "--skip-benchmark", "--skip-build", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"passed", "profile", "stages"}
+    assert isinstance(data["passed"], bool)
+    assert isinstance(data["stages"], list)
+    assert all({"name", "status"} <= set(stage) for stage in data["stages"])
+
+
+def test_ci_init_json_emits_stable_top_level_keys(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    result = CliRunner().invoke(app, ["ci", "init", "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert set(data) >= {"path", "written", "overwritten"}
+    assert data["written"] is True
+    assert data["overwritten"] is False
+    assert data["path"].endswith("agentpack.yml")

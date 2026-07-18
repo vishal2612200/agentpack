@@ -2,7 +2,7 @@ from pathlib import Path
 import subprocess
 
 from agentpack.learning.collector import LearningInputs, collect_learning_inputs
-from agentpack.learning.extractor import build_learning_report
+from agentpack.learning.extractor import build_learning_report, infer_learning_mode
 
 
 def _git(repo: Path, *args: str) -> None:
@@ -89,7 +89,9 @@ def test_build_learning_report_creates_copy_ready_rate_limit_redis_topic():
     assert topic.title == "Implementing Rate Limits With Redis"
     assert "Redis-backed counters" in topic.why
     assert "src/rate_limit.py" in topic.files
-    assert "Teach me implementing rate limits with redis" in topic.prompt
+    assert "Topic: Implementing Rate Limits With Redis" in topic.prompt
+    assert topic.questions
+    assert topic.questions[0].expected_points
     assert "Evidence files: src/rate_limit.py" in topic.prompt
 
 
@@ -107,3 +109,15 @@ def test_build_learning_report_stays_bounded():
     assert len(report.learning_topics) <= 3
     assert len(report.quiz) <= 2
     assert len(report.agent_lessons) <= 3
+
+
+def test_infer_learning_mode_uses_word_boundaries_for_short_terms():
+    assert infer_learning_mode("improve this implementation") == "study"
+    assert infer_learning_mode("deprecate the old command") == "study"
+    assert infer_learning_mode("plan the next sprint approach") == "study"
+    assert infer_learning_mode("walk me through the PR") == "review"
+    assert infer_learning_mode("debug a prod incident") == "failure"
+    assert infer_learning_mode("explain the breakthrough") == "study"
+    assert infer_learning_mode("take a break after deploy") == "failure"
+    assert infer_learning_mode("rescale the image") == "study"
+    assert infer_learning_mode("scale the worker architecture") == "system-design"

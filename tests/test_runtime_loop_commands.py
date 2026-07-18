@@ -102,6 +102,87 @@ def test_memory_command_outputs_json(tmp_path: Path, monkeypatch):
     assert payload["top_issue_references"] == [["#123", 1]]
 
 
+def test_memory_timeline_outputs_timestamped_graph_rows(tmp_path: Path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / "src.py").write_text("current\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "task-starts.jsonl").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "task_id": "task:abc",
+                "started_at": "2026-01-01T00:00:00+00:00",
+                "snapshot_version": "task:abc@2026-01-01T00:00:00+00:00",
+                "visible_reason": "task-start map captured before agent edits",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agentpack" / "episodic-cases.jsonl").write_text(
+        json.dumps(
+            {
+                "schema_version": 2,
+                "episode_id": "episode:abc",
+                "task_id": "task:abc",
+                "completed_at": "2026-01-01T00:01:00+00:00",
+                "episode_version": "episode:abc@2026-01-01T00:01:00+00:00",
+                "path_hashes": {"src.py": "old-hash"},
+                "visible_reason": "completed task episode with source hashes",
+                "confidence": 0.9,
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agentpack" / "procedures.jsonl").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "procedure_id": "procedure:retry",
+                "version": 2,
+                "version_key": "procedure:retry@v2",
+                "procedure_hash": "procedure-hash",
+                "updated_at": "2026-01-01T00:02:00+00:00",
+                "title": "Retry safely",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    (tmp_path / ".agentpack" / "memory-edges.jsonl").write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "edge_version": "edge:abc",
+                "edge_type": "episode_procedure",
+                "from_id": "episode:abc",
+                "to_id": "procedure:retry",
+                "observed_at": "2026-01-01T00:03:00+00:00",
+                "confidence": 0.8,
+                "reason": "procedure linked by completed episode",
+                "relationship_hash": "relationship-hash",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["memory", "--timeline", "--json", "--limit", "10"])
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.stdout)
+    rows = payload["timeline"]
+    assert [row["kind"] for row in rows] == ["task_start", "episode", "procedure", "memory_edge"]
+    assert rows[1]["version"] == "episode:abc@2026-01-01T00:01:00+00:00"
+    assert rows[1]["is_stale"] is True
+    assert rows[1]["stale_paths"] == ["src.py"]
+    assert rows[2]["record_hash"] == "procedure-hash"
+    assert rows[3]["from_id"] == "episode:abc"
+    assert rows[3]["to_id"] == "procedure:retry"
+    assert rows[3]["record_hash"] == "relationship-hash"
+
+
 def test_memory_prune_retains_configured_tail(tmp_path: Path, monkeypatch):
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".agentpack").mkdir()

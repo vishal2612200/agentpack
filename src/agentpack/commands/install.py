@@ -294,6 +294,8 @@ def _install_slash_command(root: Path, global_install: bool) -> dict[str, str]:
         "/agentpack-resolve": _install_slash_command_file(commands_dir, "agentpack-resolve.md"),
         "/agentpack-skill-review": _install_slash_command_file(commands_dir, "agentpack-skill-review.md"),
         "/agentpack-learn": _install_slash_command_file(commands_dir, "agentpack-learn.md"),
+        "/agentpack-handoff": _install_slash_command_file(commands_dir, "agentpack-handoff.md"),
+        "/agentpack-resume": _install_slash_command_file(commands_dir, "agentpack-resume.md"),
     }
 
 

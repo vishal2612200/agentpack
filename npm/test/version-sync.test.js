@@ -21,6 +21,22 @@ const packagedCodexPlugin = require(path.join(
   ".codex-plugin",
   "plugin.json"
 ));
+const packagedCodexPluginPackage = require(path.join(
+  repoRoot,
+  "src",
+  "agentpack",
+  "data",
+  "codex_plugin",
+  "package.json"
+));
+const packagedCodexPluginPackageLock = require(path.join(
+  repoRoot,
+  "src",
+  "agentpack",
+  "data",
+  "codex_plugin",
+  "package-lock.json"
+));
 
 const pyprojectVersion = pyproject.match(/^version = "([^"]+)"/m)?.[1];
 const initVersion = initPy.match(/__version__ = "([^"]+)"/)?.[1];
@@ -35,5 +51,20 @@ assert.equal(
 assert.equal(packageJson.version, initVersion, "npm package version must match src/agentpack/__init__.py");
 assert.equal(codexPlugin.version, packageJson.version, "Codex plugin version must match npm package version");
 assert.equal(packagedCodexPlugin.version, packageJson.version, "packaged Codex plugin version must match npm package version");
+assert.equal(
+  packagedCodexPluginPackage.version,
+  packageJson.version,
+  "packaged Codex plugin package version must match npm package version"
+);
+assert.equal(
+  packagedCodexPluginPackageLock.version,
+  packageJson.version,
+  "packaged Codex plugin package-lock version must match npm package version"
+);
+assert.equal(
+  packagedCodexPluginPackageLock.packages[""].version,
+  packageJson.version,
+  "packaged Codex plugin package-lock root package must match npm package version"
+);
 assert.equal(launcher.PACKAGE_VERSION, packageJson.version, "launcher version must match npm package version");
 assert.equal(launcher.PYPI_PACKAGE, `agentpack-cli==${packageJson.version}`);

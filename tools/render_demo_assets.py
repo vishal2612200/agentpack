@@ -35,17 +35,21 @@ LINES: tuple[tuple[str, str], ...] = (
     ("", "text"),
     ('$ agentpack route --task "fix billing webhook retry handling"', "muted"),
     ("Task mode: backend_bugfix", "accent"),
+    ("Read: src/billing/webhooks.py + tests/test_webhook_retries.py", "text"),
+    ("Skill recommendations: review, debugging, test strategy", "accent"),
+    ("Warnings: verify idempotency and retry ordering", "warn"),
     ("", "text"),
-    ("Read these files first:", "accent"),
-    ("  1. src/billing/webhooks.py", "text"),
-    ("  2. src/billing/retry_queue.py", "text"),
-    ("  3. tests/test_webhook_retries.py", "text"),
+    ("$ agentpack review --check --dry-run-post", "muted"),
+    ("review preflight: payload checked, no live post", "ok"),
+    ('$ agentpack learn "retry ordering + idempotency"', "muted"),
+    ("lesson saved: .agentpack/agent-lessons.md", "ok"),
     ("", "text"),
-    ("Warnings:", "accent"),
-    ("  - verify idempotency and retry ordering", "warn"),
-    ("", "text"),
-    ("Suggested command:", "accent"),
-    ("  pytest tests/test_webhook_retries.py -q", "text"),
+    ("$ agentpack memory --timeline --limit 3", "muted"),
+    ("kind          confidence  reason", "accent"),
+    ("task_start    1.00        map before edits", "text"),
+    ("episode       0.95        source hash current", "text"),
+    ("memory_edge   0.90        review -> learn", "text"),
+    ("stale_paths: 0 | live source stays authority", "ok"),
     ("", "text"),
     ("$ pytest tests/test_webhook_retries.py -q", "muted"),
     ("6 passed in 0.42s", "ok"),
@@ -114,7 +118,7 @@ def _render_frame(frame_index: int, total_frames: int) -> Image.Image:
 
     draw.text(
         (margin + 115, terminal_top + 17),
-        "AgentPack demo: fresh context -> ranked files -> focused test",
+        "AgentPack demo: route -> skills -> review/learn -> memory",
         fill=PALETTE["title"],
         font=title_font,
     )
@@ -146,7 +150,7 @@ def _render_frame(frame_index: int, total_frames: int) -> Image.Image:
     )
     draw.text(
         (margin, HEIGHT - 62),
-        "Local preflight map. No cloud index. Agent still verifies code and tests.",
+        "Local preflight map. Skills, review, learn, and memory stay advisory.",
         fill=PALETTE["muted"],
         font=small_font,
     )

@@ -11,6 +11,94 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ### Added
 - No changes yet.
 
+## [0.4.0] — 2026-07-15
+
+### Added
+- Added deterministic architecture snapshots, PR context, and CI checks so changed ownership and dependency context can be inspected and validated with stable artifacts.
+- Added an optional tree-sitter backend for Java, Ruby, and PHP symbol and import extraction while retaining the established fallback behavior.
+- Added typed ownership evidence, comparative owner features, and calibration reporting to strengthen context-selection diagnostics.
+- Added the Anchor -> Judge -> Critic -> Actor review pipeline: candidate findings require a per-finding critic verdict before the Actor can publish approved inline comments.
+- Added graph observability and a context cockpit for inspecting selection state.
+
+### Changed
+- Improved review output so non-inline findings remain visible in the review body and inline comments can include AgentPack badges.
+- Improved task maps with risk-aware context selection and strengthened dashboard graph observability.
+
+### Fixed
+- Stabilized benchmark release-gate execution and allowed confirmed dirty task targets during guard refreshes.
+
+### Documentation
+- Refreshed distribution, trust, and contributor guidance for the packaged plugin and project listings.
+
+## [0.3.39] — 2026-07-06
+
+### Added
+- Broadened the scoped `mypy` gate beyond the initial three-file set to cover the entire `src/agentpack/analysis/` package (import extraction, dependency graph, ranking, monorepo, and task classification), with behavior-preserving type fixes in `analysis/ranking.py` and `analysis/task_classifier.py` and a `tomllib`/`tomli` import override for the optional TOML backends.
+- Added a Rust symbol extraction slice: `extract_rust_symbols` pulls free functions (including `async`/`const fn`), `impl`/`trait` methods qualified by their owning type, and `struct`/`enum`/`trait` as class-like constructs, wired through `extract_symbols` and the offline summary path (`_rust_summary`). Documented the supported slice and its regex-based limits in `docs/limitations.md`.
+- Added JSON-output smoke coverage for scriptable `route`, `next`, and release-check flows.
+
+### Changed
+- Improved the release benchmark and memory-gate diagnostics with stronger precision accounting, activation analysis, and regression coverage for context selection.
+- Tightened ranked carrier compaction for lower-action support files, clearing the official public release gate at 107 scored cases, 67.2% recall, and 50.6% average token precision.
+
+### Fixed
+- Forced generated guard fallback commands and repair output to use global context unless thread mode is explicit, avoiding stale ambient Codex session missing-task failures when `.agentpack/task.md` is the intended source.
+
+## [0.3.38] — 2026-07-04
+
+### Fixed
+- Hardened guard and review checks so default guard refreshes use global context unless scoped threading is explicit, stale active review preflight is blocked before artifact validation, and review prompts steer agents toward JSON authoring instead of fragile multiline TOON.
+- Canonicalized schema-valid review JSON into checked TOON handoff files, preserving `understanding.toon` as the Stage 2 input while making Stage 1/Stage 2 easier for agents to write and validate.
+- Added guard/review git preflight metadata so agents decide whether to sync, inspect dirty state, or proceed before refreshing context or starting edits.
+- Skipped expensive prompt-hook work for chat-only prompts and ignored stale review state from other branches, reducing UserPromptSubmit timeout noise and unrelated missing-artifact failures.
+
+## [0.3.37] — 2026-07-03
+
+### Added
+- Added a GitHub-ready release notes artifact step to `agentpack release prepare`, including release metadata, validation evidence, the matching changelog entry, and the publish command.
+- Included the locked Python dependency graph in the packaged Codex plugin snapshot so plugin trust scans see a lockfile in the distributable surface.
+
+## [0.3.36] — 2026-07-03
+
+### Documentation
+- Refreshed the README demo GIF/MP4 and packaged plugin screenshot so public assets show the full AgentPack workflow: route, skill recommendations, review preflight, learning capture, advisory memory timeline, and focused validation.
+- Added docs social preview and icon assets, then wired MkDocs logo, favicon, and social preview metadata to those checked-in assets.
+- Updated demo documentation so generated media and static distribution assets are discoverable and reproducible.
+
+### Validation
+- Added docs/plugin tests that keep route-demo, social preview, icon, GIF, MP4, and packaged Codex plugin assets aligned with the full workflow.
+- Ran `python -m agentpack.cli release-check --profile docs --json`.
+- Ran `python -m py_compile tools/render_demo_assets.py`, `git diff --check`, SVG parse checks, a generated GIF frame inspection, and `mkdocs build`.
+
+## [0.3.35] — 2026-07-03
+
+### Added
+- Added `agentpack review --check --dry-run-post` so inline GitHub review payloads can be validated and hashed before any live post.
+- Added MCP `validate_toon(..., return_canonical=true)` for agents that need canonical TOON returned without rewriting files.
+- Added route `selection_explanations` and `omitted_files` so `route`, MCP route results, and generated prompts explain both why files were selected and why plausible candidates were skipped.
+- Added learning/session context surfaces for local task memory, dashboard learning rows, and AgentPack learn guidance.
+
+### Changed
+- Simplified first-run developer UX across `agentpack --help`, `quickstart`, and `next` so new users get one primary path before optional diagnostics.
+- Clarified `doctor` versus `repair`: `doctor` diagnoses and can apply safe local repairs with `--fix`, while `repair` remains the explicit mutation command.
+- Improved `doctor`, `guard`, and `review --check` action output with what failed, why it matters, the exact repair command, and whether it is safe to continue.
+- Improved AgentPack tooling route classification and active-agent detection for Codex versus Antigravity project markers.
+
+### Fixed
+- Fixed review inline posting so live GitHub comments require a matching fresh dry-run payload instead of posting unchecked findings.
+- Tightened review TOON schema validation for enum values, nested shapes, location/evidence fields, and citation support.
+- Fixed Python 3.10 docs-link test collection by falling back to `tomli` when stdlib `tomllib` is unavailable.
+
+### Documentation
+- Updated README current-release notes for onboarding, repair guidance, review posting safety, route explainability, and refreshed agent integration behavior.
+- Updated command docs and packaged skills for review dry-run payload shape, cleanup guidance, MCP/TOON output, and route explanation fields.
+
+### Validation
+- PR #48 passed GitHub Actions across Python 3.10, 3.11, 3.12, 3.13, and 3.14 plus `dev-check`, `pack`, `scan`, `npm-wrapper`, `agent-integration-matrix`, and `plugin-scanner`.
+- Ran `python -m pytest tests/ -q -m "not slow"` locally with `1335 passed, 2 deselected`.
+- Ran focused review, TOON, MCP, route, quickstart, doctor, guard, and command-surface tests during the release tranche.
+- Ran `ruff` and `git diff --check`.
+
 ## [0.3.34] — 2026-06-29
 
 ### Added
