@@ -128,6 +128,8 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     assert "do not perform the review inline" in combined.lower()
     assert "stop and report blocked" in combined.lower()
     assert "read that understanding toon from disk" in combined.lower()
+    assert "report every validated finding in one pass" in combined.lower()
+    assert "suggested fix" in combined.lower()
     assert "Reveal answer only after at least two tries" in combined
     assert "not a coding agent" in combined.lower()
     assert "map, not proof" in combined.lower()
@@ -190,6 +192,8 @@ def test_agentpack_review_slash_command_matches_tracked_copy() -> None:
     assert "do not perform the review inline" in command.lower()
     assert "stop and report blocked" in command.lower()
     assert "read that understanding toon from disk" in command.lower()
+    assert "report every validated finding in one pass" in command.lower()
+    assert "suggested fix" in command.lower()
 
 
 def test_agent_plugin_distribution_docs_cover_supported_hosts() -> None:

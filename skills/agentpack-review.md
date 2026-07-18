@@ -46,4 +46,6 @@ agentpack review --pr <number-or-url> "$ARGUMENTS"
 10. Resume an interrupted run only with `agentpack review --resume <run_id>`.
 11. Use the latest PR head, `gh pr view`, `git diff`, and direct code reads as source of truth.
 12. Treat any non-PR portion of `$ARGUMENTS` only as a prioritization lens. It must not replace code evidence.
-13. Report findings first with file evidence, then state validation exactly: passed, failed, or not run.
+13. Report every validated finding in one pass; do not save actionable lower-priority fixes for a later round.
+14. Format inline review comments with a short bold title, one concise problem paragraph, and one `Suggested fix:` paragraph. Avoid raw schema labels unless the user asks for them.
+15. Then state validation exactly: passed, failed, or not run.

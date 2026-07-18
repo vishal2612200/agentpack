@@ -51,4 +51,6 @@ agentpack review --pr <number-or-url> "$ARGUMENTS"
 9. Stage 2 must read that understanding TOON from disk and then write the run-scoped findings TOON declared by `agentpack review`.
 10. Run `agentpack review --check`; do not produce a final review summary unless the findings TOON exists and validates.
 11. Resume an interrupted run only with `agentpack review --resume <run_id>`.
-12. In the final response, report findings first with file evidence, then state validation exactly: passed, failed, or not run.
+12. In the final response, report every validated finding in one pass; do not save actionable lower-priority fixes for a later round.
+13. Format inline review comments with a short bold title, one concise problem paragraph, and one `Suggested fix:` paragraph. Avoid raw schema labels unless the user asks for them.
+14. Then state validation exactly: passed, failed, or not run.

@@ -244,6 +244,8 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     assert f"Output path: {preflight['paths']['findings_output']}" in judge_prompt
     assert judge_prompt.rstrip().endswith("reviewer is worried about prompt latency")
     assert '"findings"' in judge_prompt
+    assert "Make one complete pass" in judge_prompt
+    assert "Do not hold back lower-priority fixes" in judge_prompt
 
 
 def test_review_check_gates_stage_outputs(tmp_path, monkeypatch) -> None:
