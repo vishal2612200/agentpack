@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from datetime import datetime, timezone
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,9 @@ from agentpack.dashboard.project_overview import (
     ProjectConfigConflict,
     ProjectValidationError,
     append_project_event,
+    build_project_overview,
+    build_project_status_brief,
+    build_project_timeline,
     declared_outcomes,
     deterministic_entity_id,
     discover_project_workspaces,
@@ -21,6 +25,9 @@ from agentpack.dashboard.project_overview import (
     select_project_workspaces,
     update_project_profile,
 )
+from agentpack.learning.models import LearningSession
+from agentpack.learning.sessions import append_learning_session
+from agentpack.session.events import record_event
 
 
 def _git(root: Path, *args: str) -> str:
@@ -188,3 +195,273 @@ def test_load_profile_uses_legacy_empty_defaults(tmp_path: Path) -> None:
     assert profile.display_name == tmp_path.name
     assert profile.source == "declared"
     assert profile.config_revision == project_config_revision(tmp_path)
+
+
+def test_overview_folds_roadmap_state_and_progress_from_milestones(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    revision = project_config_revision(tmp_path)
+    profile = update_project_profile(
+        tmp_path,
+        {
+            "display_name": "Roadmap",
+            "outcomes": [
+                {
+                    "title": "Launch dashboard",
+                    "owner": "Product",
+                    "milestones": [
+                        {"title": "Backend", "owner": "Platform", "due_date": "2099-01-01"},
+                        {"title": "Frontend", "owner": "Web", "due_date": "2099-02-01"},
+                    ],
+                }
+            ],
+        },
+        expected_revision=revision,
+    )
+    outcome = declared_outcomes(tmp_path)[0]
+    append_project_event(
+        tmp_path,
+        "project_outcome_status",
+        mutation_id="outcome-status",
+        entity_id=outcome["id"],
+        values={"status": "on_track"},
+        evidence=[{"kind": "task", "ref": "task-roadmap"}],
+    )
+    append_project_event(
+        tmp_path,
+        "project_milestone_status",
+        mutation_id="milestone-status",
+        entity_id=outcome["milestones"][0]["id"],
+        values={"status": "done"},
+        evidence=[{"kind": "check", "ref": "check-1"}],
+    )
+
+    overview = build_project_overview(tmp_path)
+
+    assert overview.profile.project_id == profile.project_id
+    assert overview.outcomes[0].status == "on_track"
+    assert overview.outcomes[0].progress_pct == 50.0
+    assert overview.metrics.milestone_completion_pct == 50.0
+    assert overview.metrics.outcome_count == 1
+    assert overview.health.dimensions[0].status == "healthy"
+
+
+def test_initiative_suggestions_require_two_tasks_and_respect_dismissal(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    for index in range(2):
+        record_event(
+            tmp_path,
+            "task_memory",
+            {
+                "task": f"Improve dashboard flow {index}",
+                "concepts": ["dashboard workflow"],
+                "changed_files": [f"src/agentpack/dashboard/view_{index}.py"],
+            },
+        )
+
+    first = build_project_overview(tmp_path)
+    suggestion = first.initiative_suggestions[0]
+    assert suggestion.score > 0
+    assert len(suggestion.task_ids) == 2
+    assert len(suggestion.evidence) >= 2
+
+    append_project_event(
+        tmp_path,
+        "project_initiative_dismissed",
+        mutation_id="dismiss-suggestion",
+        entity_id=suggestion.suggestion_id,
+        values={"evidence_task_ids": suggestion.task_ids},
+    )
+    assert suggestion.suggestion_id not in {
+        item.suggestion_id for item in build_project_overview(tmp_path).initiative_suggestions
+    }
+
+    record_event(
+        tmp_path,
+        "task_memory",
+        {
+            "task": "Improve dashboard flow with project health",
+            "concepts": ["dashboard workflow"],
+            "changed_files": ["src/agentpack/dashboard/health.py"],
+        },
+    )
+    reranked = build_project_overview(tmp_path)
+    reappeared = next(item for item in reranked.initiative_suggestions if item.suggestion_id == suggestion.suggestion_id)
+    assert len(reappeared.task_ids) == 3
+
+
+@pytest.mark.parametrize(
+    ("check_kind", "status", "git_sha", "expected"),
+    [
+        ("development", "passed", "current", "healthy"),
+        ("development", "failed", "current", "blocked"),
+        ("development", "passed", "old", "stale"),
+        ("release", "passed", "current", "healthy"),
+        ("release", "failed", "current", "blocked"),
+    ],
+)
+def test_health_check_transitions(
+    tmp_path: Path,
+    check_kind: str,
+    status: str,
+    git_sha: str,
+    expected: str,
+) -> None:
+    root = _repository(tmp_path / "repo")
+    (root / ".agentpack").mkdir()
+    current = _git(root, "rev-parse", "HEAD")
+    record_event(
+        root,
+        "check_completed",
+        {
+            "check_kind": check_kind,
+            "status": status,
+            "returncode": 0 if status == "passed" else 1,
+            "git_sha": current if git_sha == "current" else "0" * 40,
+            "command": "agentpack check",
+        },
+    )
+
+    dimensions = {item.dimension: item for item in build_project_overview(root).health.dimensions}
+    dimension = "validation" if check_kind == "development" else "release"
+    assert dimensions[dimension].status == expected
+
+
+def test_architecture_and_delivery_health_transitions(tmp_path: Path) -> None:
+    root = _repository(tmp_path / "repo")
+    (root / ".agentpack").mkdir()
+    update_project_profile(
+        root,
+        {
+            "outcomes": [
+                {
+                    "title": "Ship",
+                    "milestones": [{"title": "Gate", "due_date": "2099-01-01"}],
+                }
+            ]
+        },
+        expected_revision=project_config_revision(root),
+    )
+    milestone_id = declared_outcomes(root)[0]["milestones"][0]["id"]
+    append_project_event(
+        root,
+        "project_milestone_status",
+        mutation_id="block-gate",
+        entity_id=milestone_id,
+        values={"status": "blocked"},
+    )
+    record_event(
+        root,
+        "check_completed",
+        {
+            "check_kind": "architecture",
+            "status": "passed",
+            "git_sha": _git(root, "rev-parse", "HEAD"),
+            "blocking_violations": 0,
+            "advisory_violations": 2,
+        },
+    )
+
+    dimensions = {item.dimension: item for item in build_project_overview(root).health.dimensions}
+
+    assert dimensions["delivery"].status == "blocked"
+    assert dimensions["architecture"].status == "attention"
+
+
+def test_context_and_knowledge_keep_missing_or_unassessed_unknown(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    unassessed = LearningSession(
+        session_id="session-unassessed",
+        topic_id="topic-context",
+        task="Understand context",
+        topic="Context",
+        question="What makes context fresh?",
+    )
+    append_learning_session(tmp_path, unassessed)
+
+    dimensions = {item.dimension: item for item in build_project_overview(tmp_path).health.dimensions}
+    assert dimensions["context"].status == "unknown"
+    assert dimensions["knowledge"].status == "unknown"
+
+    (tmp_path / ".agentpack" / "task.md").write_text("Understand context\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "pack_metadata.json").write_text(
+        json.dumps({"task": "Understand context", "generated_at": datetime.now(timezone.utc).isoformat()}),
+        encoding="utf-8",
+    )
+    append_learning_session(
+        tmp_path,
+        unassessed.model_copy(
+            update={
+                "session_id": "session-needs-practice",
+                "score": 50,
+                "self_assessment": "needs-practice",
+                "status": "completed",
+            }
+        ),
+    )
+    dimensions = {item.dimension: item for item in build_project_overview(tmp_path).health.dimensions}
+    assert dimensions["context"].status == "healthy"
+    assert dimensions["knowledge"].status == "attention"
+
+
+def test_timeline_is_deduplicated_filterable_and_bounded(tmp_path: Path) -> None:
+    root = _repository(tmp_path / "repo")
+    (root / ".agentpack").mkdir()
+    record_event(root, "task_started", {"task": "Timeline task", "summary": "Started"})
+    record_event(
+        root,
+        "check_completed",
+        {"check_kind": "review", "status": "passed", "git_sha": _git(root, "rev-parse", "HEAD")},
+    )
+
+    timeline = build_project_timeline(root, limit=2)
+    reviews = build_project_timeline(root, kind="review", limit=50)
+
+    assert len(timeline) == 2
+    assert len({item.event_id for item in timeline}) == len(timeline)
+    assert reviews and all(item.kind == "review" for item in reviews)
+
+
+def test_briefs_are_deterministic_redacted_and_mode_specific(tmp_path: Path) -> None:
+    root = _repository(tmp_path / "repo")
+    (root / ".agentpack").mkdir()
+    secret = "a" * 44
+    update_project_profile(
+        root,
+        {
+            "display_name": "AgentPack",
+            "purpose": f"Project status token={secret}",
+            "owners": ["Platform"],
+        },
+        expected_revision=project_config_revision(root),
+    )
+    summary = build_project_status_brief(root, mode="summary")
+    engineering = build_project_status_brief(root, mode="engineering")
+
+    assert "[REDACTED:api-key]" in summary.markdown
+    assert str(root) not in summary.markdown
+    assert "## Engineering Evidence" not in summary.markdown
+    assert "## Engineering Evidence" in engineering.markdown
+    assert len(engineering.markdown.encode("utf-8")) <= 20 * 1024
+
+
+def test_selected_worktree_config_is_authoritative(tmp_path: Path) -> None:
+    root = _repository(tmp_path / "repo")
+    (root / ".agentpack").mkdir()
+    update_project_profile(
+        root,
+        {"display_name": "Authoritative"},
+        expected_revision=project_config_revision(root),
+    )
+    linked = tmp_path / "linked"
+    _git(root, "worktree", "add", "-b", "feature/profile", str(linked))
+    (linked / ".agentpack").mkdir()
+    update_project_profile(
+        linked,
+        {"display_name": "Other worktree"},
+        expected_revision=project_config_revision(linked),
+    )
+
+    overview = build_project_overview(root, workspace="all")
+
+    assert overview.profile.display_name == "Authoritative"
+    assert len(overview.workspaces) == 2
