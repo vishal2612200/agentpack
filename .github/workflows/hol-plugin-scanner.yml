@@ -16,7 +16,7 @@ jobs:
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
       - name: HOL Plugin Scanner
-        uses: hashgraph-online/ai-plugin-scanner-action@b4ca70a7342b42e712df83f832b464110cb81f18
+        uses: hashgraph-online/ai-plugin-scanner-action@8f0a503ca2a70c1968a9a883e11fdff5737b7909
         with:
           plugin_dir: "src/agentpack/data/codex_plugin"
           mode: scan
