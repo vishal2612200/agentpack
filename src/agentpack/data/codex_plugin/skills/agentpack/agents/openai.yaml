@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack"
+  short_description: "Orient a repository task with local context"
+  default_prompt: "Use $agentpack to choose the next AgentPack context step."

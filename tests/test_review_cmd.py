@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import subprocess
+from types import SimpleNamespace
 from pathlib import Path
 
 import pytest
@@ -11,6 +12,7 @@ from typer.testing import CliRunner
 from agentpack.cli import app
 from agentpack.commands.review_cmd import (
     _ReviewPreflightError,
+    _build_review_context_pack,
     _build_review_preflight,
     _findings_to_inline_comments,
     _load_review_template,
@@ -53,6 +55,49 @@ def _write_critique(repo: Path, preflight: dict, decisions: list[dict]) -> Path:
     return critique
 
 
+def test_review_context_pack_falls_back_to_changed_files(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    outputs = _review_output_paths(repo, branch_prefix="pr-6", run_id="run")
+
+    class EmptyPackService:
+        def run(self, request):
+            request.output_path.parent.mkdir(parents=True, exist_ok=True)
+            request.output_path.write_text("# empty\n", encoding="utf-8")
+            return SimpleNamespace(
+                out_path=request.output_path,
+                packed_tokens=0,
+                pack=SimpleNamespace(selected_files=[], broad_context=None),
+            )
+
+    monkeypatch.setattr("agentpack.commands.review_cmd.PackService", EmptyPackService)
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._changed_paths",
+        lambda _root, _diff_range: ["src/foo.py"],
+    )
+    monkeypatch.setattr(
+        "agentpack.commands.review_cmd._git_show_file",
+        lambda _root, _ref, path: "def foo():\n    return 2\n" if path == "src/foo.py" else None,
+    )
+
+    warnings: list[str] = []
+    context = _build_review_context_pack(
+        repo,
+        "focus on changed behavior",
+        {
+            "range": "refs/remotes/origin/main...refs/remotes/origin/pr/6",
+            "head_ref": "refs/remotes/origin/pr/6",
+            "target_label": "PR #6",
+        },
+        outputs,
+        warnings,
+    )
+
+    assert context["selected_files"] == 1
+    assert context["fallback"] == "changed-files"
+    assert "src/foo.py" in (outputs["run_dir"] / "context.md").read_text(encoding="utf-8")
+    assert any("selected no files" in warning for warning in warnings)
+
+
 def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
     monkeypatch.setattr(
@@ -89,9 +134,9 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
     assert preflight["git"]["head_sha"] == "pr-head-sha"
     assert preflight["citation_source"]["mode"] == "git-head"
     assert preflight["review"]["scaffold"] == "light"
-    assert preflight["diff"]["base_ref"] == "origin/main"
-    assert preflight["diff"]["head_ref"] == "origin/pr/6"
-    assert preflight["diff"]["range"] == "origin/main...origin/pr/6"
+    assert preflight["diff"]["base_ref"] == "refs/remotes/origin/main"
+    assert preflight["diff"]["head_ref"] == "refs/remotes/origin/pr/6"
+    assert preflight["diff"]["range"] == "refs/remotes/origin/main...refs/remotes/origin/pr/6"
     assert preflight["diff"]["source"] == "pr-target"
     assert preflight["paths"]["run_dir"].startswith(".agentpack/reviews/pr-6/")
     assert preflight["paths"]["understanding_authoring_output"].endswith("/understanding.json")
@@ -174,7 +219,7 @@ def test_review_command_explicit_pr_binds_diff_and_run_dir(tmp_path, monkeypatch
     assert preflight["review_context"] == "focus latency"
     assert preflight["review"]["branch_prefix"] == "pr-98"
     assert preflight["review"]["target"]["number"] == 98
-    assert preflight["diff"]["range"] == "origin/main...origin/pr/98"
+    assert preflight["diff"]["range"] == "refs/remotes/origin/main...refs/remotes/origin/pr/98"
     assert preflight["diff"]["source"] == "pr-target"
     assert preflight["paths"]["run_dir"].startswith(".agentpack/reviews/pr-98/")
     assert (repo / ".agentpack" / "review-state.json").exists()
@@ -509,6 +554,27 @@ def test_critic_requires_one_known_decision_per_judge_finding_and_promotes_only_
     assert (tmp_path / preflight["paths"]["approved_findings_output"]).exists()
     assert (tmp_path / ".agentpack" / "review-approved-findings.toon").exists()
 
+    nit_findings = {
+        **findings,
+        "findings": [{**findings["findings"][0], "severity": "nit"}],
+    }
+    with pytest.raises(ValueError, match="already nit; use accept or reject"):
+        _validate_critique_against_findings(
+            {
+                "head_sha": "abc123",
+                "decisions": [
+                    {
+                        "finding_id": "f1",
+                        "verdict": "downgrade",
+                        "rationale": "lower impact",
+                        "severity": "nit",
+                    }
+                ],
+            },
+            nit_findings,
+            preflight,
+        )
+
 
 def test_review_check_canonicalizes_json_and_fenced_outputs(tmp_path, monkeypatch) -> None:
     repo = _init_repo(tmp_path)
@@ -610,6 +676,34 @@ def test_review_validation_uses_pr_head_citation_source_when_worktree_drifts(tmp
     assert payload["findings"][0]["id"] == "f1"
 
 
+def test_review_validation_checks_evidence_span_against_finding_claim(tmp_path) -> None:
+    repo = _init_repo(tmp_path)
+    findings = repo / ".agentpack" / "findings-claim.toon"
+    findings.parent.mkdir(parents=True, exist_ok=True)
+    findings.write_text(
+        json.dumps(
+            {
+                "findings": [
+                    {
+                        "id": "f1",
+                        "unit": "cu1",
+                        "location": "src/foo.py:2",
+                        "claim": "foo returns a changed value",
+                        "evidence": "src/foo.py:2 implementation detail",
+                        "severity": "should-fix",
+                    }
+                ],
+                "coverage": "complete",
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    payload = _validate_review_artifact(findings, kind="findings")
+
+    assert payload["findings"][0]["id"] == "f1"
+
+
 def test_review_validation_report_suggests_nearby_repair_line(tmp_path) -> None:
     repo = _init_repo(tmp_path)
     invalid = repo / ".agentpack" / "findings-repair.toon"
@@ -633,6 +727,7 @@ def test_review_validation_report_suggests_nearby_repair_line(tmp_path) -> None:
     try:
         _validate_review_artifact(invalid, kind="findings")
     except ValueError as exc:
+        assert "finding 1.evidence" in str(exc)
         assert "suggested=src/foo.py:2" in str(exc)
     else:
         raise AssertionError("unsupported evidence should fail citation validation")

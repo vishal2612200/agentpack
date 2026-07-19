@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Learn"
+  short_description: "Learn from the current local session"
+  default_prompt: "Use $agentpack-learn to turn the current AgentPack session into a learning prompt."

@@ -17,7 +17,7 @@ tests, rules, skills, and compact task context without hosted indexing.
 
 | Host | Current path | What it does |
 |---|---|---|
-| Codex | `.codex-plugin/` and `skills/` | Adds `@agentpack-*` commands for local routing, packing, refresh, review, and learning |
+| Codex | `.codex-plugin/` and `skills/` | Adds `$agentpack-*` skills for local routing, packing, refresh, PR review, skill review/eval generation, comment resolution, and learning |
 | Codex repo setup | `agentpack init --agent auto` or `agentpack init --agent codex` | Auto-detects Codex or explicitly writes `AGENTS.md`, `.codex/hooks.json`, git hooks, MCP config, enables `agentpack@local`, and refreshes the local plugin cache package |
 | Claude Code | `agentpack init --agent claude` | Writes `CLAUDE.md`, Claude hooks, and MCP config |
 | Cursor | `.cursorrules`, `.cursor/rules/agentpack.mdc`, and `native-integrations/cursor-extension/` | Portable Cursor rules, repo installer, VS Code task, git hooks, and extension skeleton |
@@ -71,6 +71,7 @@ Use these local commands from any agent or IDE:
 ```bash
 agentpack route --task "<task>"
 agentpack review "<review context>"
+agentpack resolve --pr <number>
 agentpack task set "<task>"
 agentpack pack --task auto
 agentpack upgrade --agent auto
@@ -146,7 +147,7 @@ skills/
 Codex setup installs the package under
 `~/.codex/plugins/cache/local/agentpack/<version>/`, enables
 `agentpack@local`, and disables older enabled AgentPack marketplace copies so
-new skills such as `@agentpack-review` come from the same version as the local
+new skills such as `$agentpack-review` come from the same version as the local
 CLI. Run `agentpack doctor --agent codex` after upgrades to verify the active
 plugin source.
 

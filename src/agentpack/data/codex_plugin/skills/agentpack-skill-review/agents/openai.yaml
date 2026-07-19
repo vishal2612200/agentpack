@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Skill Review"
+  short_description: "Review a skill and generate eval cases"
+  default_prompt: "Use $agentpack-skill-review to audit a SKILL.md and generate a balanced eval set."

@@ -391,8 +391,8 @@ def register(app: typer.Typer) -> None:
             console.print("  [green]✓[/] npm publish token available in environment")
 
         # --- Slash commands ---
-        console.print("\n[bold]Slash commands (/agentpack, /agentpack-review, /agentpack-learn, /agentpack-handoff, /agentpack-resume)[/]")
-        for filename in ("agentpack.md", "agentpack-review.md", "agentpack-learn.md", "agentpack-handoff.md", "agentpack-resume.md"):
+        console.print("\n[bold]Slash commands (/agentpack, /agentpack-review, /agentpack-resolve, /agentpack-skill-review, /agentpack-learn, /agentpack-handoff, /agentpack-resume)[/]")
+        for filename in ("agentpack.md", "agentpack-review.md", "agentpack-resolve.md", "agentpack-skill-review.md", "agentpack-learn.md", "agentpack-handoff.md", "agentpack-resume.md"):
             local_cmd = root / ".claude" / "commands" / filename
             global_cmd = Path.home() / ".claude" / "commands" / filename
             if local_cmd.exists():

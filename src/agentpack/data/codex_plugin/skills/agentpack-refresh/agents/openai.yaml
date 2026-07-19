@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Refresh"
+  short_description: "Refresh stale repository context"
+  default_prompt: "Use $agentpack-refresh to refresh stale AgentPack context for this task."

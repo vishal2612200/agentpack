@@ -19,7 +19,7 @@ workflow, release, learning, or diagnostic surface.
 
 - [Integrations](integrations.md): setup paths for Claude Code, Codex, Cursor, Windsurf, Antigravity, and generic agents.
 - [Agent and IDE plugins](agent-plugins.md): thin plugin/rule distribution layer for Codex, Cursor, Windsurf, Copilot, Cline, Kiro, OpenCode, and more.
-- [Codex plugin](codex-plugin.md): packaged Codex plugin skeleton and `@agentpack-*` commands.
+- [Codex plugin](codex-plugin.md): packaged Codex plugin skeleton and `$agentpack-*` skills.
 - [Claude Code context engine](claude-code-context-engine.md): Claude Code setup and MCP-first context.
 - [Cursor context packing](cursor-context-packing.md): Cursor setup and context workflows.
 - [MCP context engine](mcp-context-engine.md): MCP tools for fresh task context.

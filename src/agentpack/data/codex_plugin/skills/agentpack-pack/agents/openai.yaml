@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Pack"
+  short_description: "Build focused repository context"
+  default_prompt: "Use $agentpack-pack to build focused AgentPack context for this task."

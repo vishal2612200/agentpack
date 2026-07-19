@@ -13,6 +13,7 @@ The Actor can publish only the approved artifact generated from your decisions. 
 3. Every decision needs a concrete rationale. Reassess evidence, severity, duplicate reports, reviewer usefulness, and whether the finding is actionable.
 4. Use `accept` only when the finding should be retained unchanged. Use `reject` for unsupported, duplicate, speculative, or unhelpful candidates. Use `downgrade` only when the finding remains valid but needs a lower severity; provide the replacement severity.
 5. A downgrade must lower the Judge severity: `blocker -> should-fix | nit` or `should-fix -> nit`. A `nit` cannot be downgraded.
+   Before writing the decision, check the original finding severity. For an existing `nit`, use `accept` or `reject`; do not emit `downgrade`.
 
 ## Output
 

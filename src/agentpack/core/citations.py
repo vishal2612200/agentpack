@@ -253,6 +253,7 @@ def validate_claim_support(
     *,
     label: str = "claim",
     min_overlap: int = 1,
+    ignored_claim_terms: object = None,
     semantic_judge: SemanticSupportJudge | None = None,
     content_resolver: CitationContentResolver | None = None,
 ) -> list[str]:
@@ -263,6 +264,7 @@ def validate_claim_support(
     existing path/range/hash validator responsible for citation validity.
     """
     claim_terms = _claim_terms(claim_text)
+    claim_terms -= _claim_terms(ignored_claim_terms)
     if not claim_terms:
         return []
     invalid: list[str] = []

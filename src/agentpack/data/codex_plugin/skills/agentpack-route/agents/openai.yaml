@@ -1,0 +1,4 @@
+interface:
+  display_name: "AgentPack Route"
+  short_description: "Route a task to relevant repository context"
+  default_prompt: "Use $agentpack-route to identify the files and checks relevant to this task."

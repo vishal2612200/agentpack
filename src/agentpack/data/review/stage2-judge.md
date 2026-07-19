@@ -27,7 +27,9 @@ Before judging, confirm AgentPack context was refreshed for this exact review ta
 
 5. **Calibrate severity honestly.** `blocker` = correctness, security, data integrity, or a broken caller. `should-fix` = a real issue that does not block. `nit` = minor. Do not inflate to seem thorough.
 
-6. **You may find nothing.** A correct, clean change yields few or zero findings. Do not manufacture findings to appear useful.
+6. **Make one complete pass.** Report every evidence-backed actionable finding you can identify in this run. Do not hold back lower-priority fixes for later rounds once they are grounded.
+
+7. **You may find nothing.** A correct, clean change yields few or zero findings. Do not manufacture findings to appear useful.
 
 ## Procedure
 
@@ -81,6 +83,11 @@ For PR-bound inline posting, `location` should be the changed PR diff line where
 the reviewer should see the finding. Supporting `evidence` may cite unchanged
 helpers, callers, or contracts, but a support-file-only `location` cannot become
 an inline GitHub comment and will be moved into the review body.
+
+Keep the fields distinct: `location` is the reviewer-facing diff line, while
+`evidence` is the supporting citation plus a short explanation. The validator
+checks the cited evidence span against the finding `claim`, so do not repeat
+the claim wording as a substitute for a real supporting line.
 
 Schema:
 

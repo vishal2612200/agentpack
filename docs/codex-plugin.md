@@ -10,14 +10,16 @@ This is the first concrete packaged plugin. The broader plugin and IDE distribut
 
 ## What It Adds
 
-- `@agentpack` checks whether context exists and suggests the next step.
-- `@agentpack-route <task>` runs read-only task routing.
-- `@agentpack-pack <task>` writes the task and builds `.agentpack/context.md`.
-- `@agentpack-refresh [task]` refreshes stale context through the Codex guard path.
-- `@agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged understanding and judge prompts to inspect the current PR or diff.
-- `@agentpack-learn <statement>` turns current local AgentPack session context into an interactive learning prompt.
-- `@agentpack-handoff [name]` packages the structured task report and complete Git-visible patch.
-- `@agentpack-resume [name]` atomically claims and resumes a pending handoff.
+- `$agentpack` checks whether context exists and suggests the next step.
+- `$agentpack-route <task>` runs read-only task routing.
+- `$agentpack-pack <task>` writes the task and builds `.agentpack/context.md`.
+- `$agentpack-refresh [task]` refreshes stale context through the Codex guard path.
+- `$agentpack-review [reviewer context]` runs the local `agentpack review` wrapper, then uses the generated runbook plus staged review prompts to inspect the current PR or diff.
+- `$agentpack-resolve [PR and context]` validates, fixes, verifies, and replies to PR review comments with citations.
+- `$agentpack-skill-review <skill path or name>` audits a `SKILL.md` and creates a balanced trigger/non-trigger eval workspace.
+- `$agentpack-learn <statement>` turns current local AgentPack session context into an interactive learning prompt.
+- `$agentpack-handoff [name]` packages the structured task report and complete Git-visible patch.
+- `$agentpack-resume [name]` atomically claims and resumes a pending handoff.
 
 ## Install
 
@@ -57,7 +59,7 @@ enabled = true
 If an older marketplace copy such as `agentpack@awesome-codex-plugins` is
 already enabled, AgentPack disables that stale entry so Codex loads the local
 bundle that matches the installed CLI. This matters for newly added skills such
-as `@agentpack-review`; copying the cache package alone is not enough if Codex
+as `$agentpack-review`; copying the cache package alone is not enough if Codex
 is still pointed at an older plugin source.
 
 Auto-detection does not default to Codex; pass `--agent codex` only when you
@@ -85,13 +87,13 @@ The Codex audit should report the local plugin as enabled, for example
 Start read-only:
 
 ```text
-@agentpack-route fix auth token expiry
+$agentpack-route fix auth token expiry
 ```
 
 Build context when Codex needs more than a route:
 
 ```text
-@agentpack-pack fix auth token expiry
+$agentpack-pack fix auth token expiry
 ```
 
 Then Codex should read `.agentpack/context.md`, inspect selected files, and verify with normal repo search before editing.
@@ -99,7 +101,7 @@ Then Codex should read `.agentpack/context.md`, inspect selected files, and veri
 After edits:
 
 ```text
-@agentpack-review focus on backward compatibility
+$agentpack-review focus on backward compatibility
 ```
 
 Review should use `.agentpack/review.prompt.md`, inspect `gh pr view`, `git
@@ -148,7 +150,7 @@ partial review does not silently become the next run's input.
 For learning from the current local context:
 
 ```text
-@agentpack-learn explain the router scoring changes from this session
+$agentpack-learn explain the router scoring changes from this session
 ```
 
 The learning command keeps a stable prompt prefix for caching and appends the user learning statement at the end.
