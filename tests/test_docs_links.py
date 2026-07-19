@@ -32,7 +32,32 @@ LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 def test_root_readme_is_lean() -> None:
     line_count = len((ROOT / "README.md").read_text(encoding="utf-8").splitlines())
 
-    assert line_count <= 500
+    assert line_count <= 300
+
+
+def test_root_readme_presents_agentpack_as_one_product() -> None:
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    product_story = readme_text.split("## Get Started", 1)[0]
+
+    assert "Make AI coding work easier to understand, verify, and continue." in readme_text
+    assert (
+        "AgentPack is the local, agent-neutral reliability layer for AI software development."
+        in readme_text
+    )
+    assert 'href="docs/index.md">Technical docs</a>' in readme_text
+    assert "## One Product Across the Workflow" in readme_text
+    for implementation_detail in (
+        "agentpack route",
+        "agentpack pack",
+        "agentpack review",
+        "agentpack memory",
+        "agentpack eval",
+        "Anchor",
+        "Judge",
+        "Critic",
+        "Actor",
+    ):
+        assert implementation_detail not in product_story
 
 
 def test_split_docs_exist() -> None:
@@ -85,14 +110,39 @@ def test_public_version_claims_match_package_metadata() -> None:
     assert f"Alpha: `{version}`." in readme_text
 
 
-def test_readme_explains_advisory_memory_timeline() -> None:
+def test_readme_keeps_advisory_source_of_truth_boundary() -> None:
     readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
 
-    assert "agentpack memory --timeline" in readme_text
-    assert "agentpack eval --memory-ab" in readme_text
-    assert "runtime evidence" in readme_text
-    assert "source of truth" in readme_text
-    assert "task text, paths, hashes, reasons, timestamps, and confidence" in readme_text
+    assert (
+        "Generated context, memory, observer state, and integration hints are advisory."
+        in readme_text
+    )
+    assert (
+        "Source files, diffs, tests, runtime evidence, and PR state remain the source of truth."
+        in readme_text
+    )
+
+
+def test_technical_docs_explain_advisory_memory_timeline() -> None:
+    commands_text = (ROOT / "docs/commands.md").read_text(encoding="utf-8")
+    runtime_text = (ROOT / "docs/runtime-loop.md").read_text(encoding="utf-8")
+
+    for snippet in (
+        "agentpack memory --timeline",
+        "agentpack eval --memory-ab",
+        "timestamped rows",
+        "confidence",
+        "visible reason",
+        "stale path flags",
+        "without treating memory as source of truth",
+    ):
+        assert snippet in commands_text
+    for snippet in (
+        "AgentPack's memory graph is append-only and advisory",
+        "source hash",
+        "live source and tests outrank",
+    ):
+        assert snippet in runtime_text
 
 
 def test_docs_visual_assets_cover_route_review_learn_and_memory() -> None:
