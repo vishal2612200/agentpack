@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 from datetime import datetime, timezone
+from pathlib import Path
 
-from agentpack.core.project_index import load_project_index, register_project
+from agentpack.core.project_index import load_project_index, project_id, register_project
 
 
 def test_register_project_writes_and_updates_global_index(tmp_path) -> None:
@@ -17,6 +18,8 @@ def test_register_project_writes_and_updates_global_index(tmp_path) -> None:
 
     rows = load_project_index(index)
     assert first["path"] == str(repo.resolve())
+    assert first["project_id"] == project_id(repo)
+    assert second["project_id"] == first["project_id"]
     assert second["first_seen_at"] == first["first_seen_at"]
     assert len(rows) == 1
     assert rows[0]["path"] == str(repo.resolve())
@@ -32,4 +35,4 @@ def test_load_project_index_ignores_missing_and_malformed_files(tmp_path) -> Non
     assert load_project_index(index) == []
 
     index.write_text(json.dumps({"projects": [{"path": ""}, {"path": "/repo"}]}), encoding="utf-8")
-    assert load_project_index(index) == [{"path": "/repo"}]
+    assert load_project_index(index) == [{"path": "/repo", "project_id": project_id(Path("/repo"))}]

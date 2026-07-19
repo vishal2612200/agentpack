@@ -410,11 +410,27 @@ def test_project_dashboard_summarizes_learning_weak_spots(tmp_path) -> None:
         evidence_files=["src/cache.py"],
         concepts=["caching"],
     )
-    agentpack.joinpath("learning-sessions.jsonl").write_text(
+    sessions_path = agentpack / "learning-sessions.jsonl"
+    sessions_path.write_text(
         json.dumps(queued.model_dump(mode="json")) + "\n",
         encoding="utf-8",
     )
 
+    snapshot = build_project_dashboard_snapshot(tmp_path)
+
+    assert snapshot.learning_weak_spots == []
+
+    scored = queued.model_copy(update={"score": 45, "self_assessment": "needs-practice", "status": "completed"})
+    sessions_path.write_text(
+        "\n".join(
+            [
+                json.dumps(queued.model_dump(mode="json")),
+                json.dumps(scored.model_dump(mode="json")),
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
     snapshot = build_project_dashboard_snapshot(tmp_path)
 
     assert snapshot.learning_weak_spots[0].concept == "caching"
