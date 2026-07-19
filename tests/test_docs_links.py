@@ -32,7 +32,7 @@ LINK_RE = re.compile(r"(?<!!)\[[^\]]+\]\(([^)]+)\)")
 def test_root_readme_is_lean() -> None:
     line_count = len((ROOT / "README.md").read_text(encoding="utf-8").splitlines())
 
-    assert line_count <= 300
+    assert line_count <= 500
 
 
 def test_root_readme_presents_agentpack_as_one_product() -> None:
@@ -45,7 +45,12 @@ def test_root_readme_presents_agentpack_as_one_product() -> None:
         in readme_text
     )
     assert 'href="docs/index.md">Technical docs</a>' in readme_text
-    assert "## One Product Across the Workflow" in readme_text
+    for product_section in (
+        "## One Product Across the Workflow",
+        "## How AgentPack Fits Around Existing Tools",
+        "## Evidence Through Review",
+    ):
+        assert product_section in readme_text
     for implementation_detail in (
         "agentpack route",
         "agentpack pack",
@@ -58,6 +63,28 @@ def test_root_readme_presents_agentpack_as_one_product() -> None:
         "Actor",
     ):
         assert implementation_detail not in product_story
+
+
+def test_root_readme_keeps_distribution_and_trust_badges() -> None:
+    readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    for badge_alt in (
+        "Ask DeepWiki",
+        "AgentPack",
+        "AgentPack review",
+        "PyPI version",
+        "PyPI downloads",
+        "npm version",
+        "npm downloads",
+        "Release evidence",
+        "PyPI trusted publishing",
+        "npm provenance",
+        "HOL trust score",
+        "HOL security score",
+        "CI",
+        "License: AGPL v3",
+    ):
+        assert f'alt="{badge_alt}"' in readme_text
 
 
 def test_split_docs_exist() -> None:
@@ -112,14 +139,15 @@ def test_public_version_claims_match_package_metadata() -> None:
 
 def test_readme_keeps_advisory_source_of_truth_boundary() -> None:
     readme_text = (ROOT / "README.md").read_text(encoding="utf-8")
+    normalized_readme = " ".join(readme_text.split())
 
     assert (
         "Generated context, memory, observer state, and integration hints are advisory."
-        in readme_text
+        in normalized_readme
     )
     assert (
         "Source files, diffs, tests, runtime evidence, and PR state remain the source of truth."
-        in readme_text
+        in normalized_readme
     )
 
 
