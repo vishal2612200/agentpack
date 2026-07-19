@@ -84,6 +84,11 @@ the reviewer should see the finding. Supporting `evidence` may cite unchanged
 helpers, callers, or contracts, but a support-file-only `location` cannot become
 an inline GitHub comment and will be moved into the review body.
 
+Keep the fields distinct: `location` is the reviewer-facing diff line, while
+`evidence` is the supporting citation plus a short explanation. The validator
+checks the cited evidence span against the finding `claim`, so do not repeat
+the claim wording as a substitute for a real supporting line.
+
 Schema:
 
 Do not answer inline from this stage. Read the understanding TOON from disk first. If you cannot read the input file or write the findings file, stop and report blocked instead of continuing in chat.

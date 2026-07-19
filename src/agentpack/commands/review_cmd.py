@@ -872,6 +872,9 @@ def _build_review_context_pack(
     task = f"review {target_label} with broad repo context"
     if review_context:
         task = f"{task}: {review_context[:200]}"
+    changed_paths = _changed_paths(root, str(diff_info.get("range") or "HEAD"))
+    if changed_paths:
+        task = f"{task}. Prioritize changed files: {', '.join(changed_paths[:80])}"
     try:
         result = PackService().run(PackRequest(
             root=root,
@@ -887,13 +890,69 @@ def _build_review_context_pack(
         ))
     except Exception as exc:
         warnings.append(f"Could not build broad AgentPack context for review: {exc}")
-        return {"path": "", "tokens": 0, "selected_files": 0, "broad_context": False}
+        if not changed_paths:
+            return {"path": "", "tokens": 0, "selected_files": 0, "broad_context": False}
+        result = None
+    if result is not None and (result.pack.selected_files or not changed_paths):
+        return {
+            "path": _rel_to_root(result.out_path, root),
+            "tokens": result.packed_tokens,
+            "selected_files": len(result.pack.selected_files),
+            "broad_context": result.pack.broad_context is not None,
+        }
+    warnings.append(
+        "AgentPack selected no files for the review context; writing a bounded changed-file fallback."
+    )
+    fallback_path = outputs["run_dir"] / "context.md"
+    fallback_text, fallback_file_count = _write_review_context_fallback(root, diff_info, changed_paths, fallback_path)
     return {
-        "path": _rel_to_root(result.out_path, root),
-        "tokens": result.packed_tokens,
-        "selected_files": len(result.pack.selected_files),
-        "broad_context": result.pack.broad_context is not None,
+        "path": _rel_to_root(fallback_path, root),
+        "tokens": len(fallback_text.split()),
+        "selected_files": fallback_file_count,
+        "broad_context": False,
+        "fallback": "changed-files",
     }
+
+
+def _write_review_context_fallback(
+    root: Path,
+    diff_info: dict[str, Any],
+    changed_paths: list[str],
+    output_path: Path,
+    *,
+    max_chars: int = 80_000,
+) -> tuple[str, int]:
+    """Keep review context useful when ranking cannot select a changed file."""
+    head_ref = str(diff_info.get("head_ref") or diff_info.get("head_sha") or "HEAD")
+    sections = [
+        "# Review Context Fallback",
+        "",
+        "AgentPack could not select changed files within the review context budget.",
+        "The following bounded snapshots are the PR changed files and should be treated as the primary review context.",
+        "",
+    ]
+    remaining = max_chars
+    included_files = 0
+    for path in changed_paths:
+        if remaining <= 0:
+            break
+        content = _git_show_file(root, head_ref, path)
+        if content is None:
+            try:
+                content = (root / path).read_text(encoding="utf-8", errors="replace")
+            except OSError:
+                continue
+        if "\x00" in content:
+            continue
+        snippet = content[: min(6_000, remaining)].rstrip()
+        truncated = "\n\n[truncated]" if len(snippet) < len(content) else ""
+        section = f"## {path}\n\n```text\n{snippet}{truncated}\n```\n"
+        sections.append(section)
+        remaining -= len(section)
+        included_files += 1
+    text = "\n".join(sections).rstrip() + "\n"
+    _atomic_write(output_path, text)
+    return text, included_files
 
 
 def _load_review_template(name: str) -> str:
@@ -966,8 +1025,8 @@ def _diff_base(
         if number and base_name:
             fetched = _fetch_pr_refs(root, int(number), base_name)
             if fetched["ok"]:
-                base_ref = f"origin/{base_name}"
-                head_ref = f"origin/pr/{number}"
+                base_ref = f"refs/remotes/origin/{base_name}"
+                head_ref = f"refs/remotes/origin/pr/{number}"
                 return {
                     "base_ref": base_ref,
                     "head_ref": head_ref,
@@ -1054,7 +1113,7 @@ def _fetch_pr_refs(root: Path, number: int, base_name: str) -> dict[str, Any]:
 
 def _rev_parse(root: Path, ref: str) -> str:
     result = subprocess.run(
-        ["git", "rev-parse", "--verify", ref],
+        ["git", "rev-parse", "--verify", _qualified_ref(ref)],
         cwd=root,
         capture_output=True,
         text=True,
@@ -1067,13 +1126,19 @@ def _rev_parse(root: Path, ref: str) -> str:
 def _base_candidates(base_name: str) -> list[str]:
     candidates: list[str] = []
     if base_name:
-        candidates.extend([f"origin/{base_name}", base_name])
+        candidates.extend([f"refs/remotes/origin/{base_name}", base_name])
     return candidates
+
+
+def _qualified_ref(ref: str) -> str:
+    if ref.startswith("origin/"):
+        return f"refs/remotes/{ref}"
+    return ref
 
 
 def _git_ref_exists(root: Path, ref: str) -> bool:
     result = subprocess.run(
-        ["git", "rev-parse", "--verify", ref],
+        ["git", "rev-parse", "--verify", _qualified_ref(ref)],
         cwd=root,
         capture_output=True,
         text=True,
@@ -1095,7 +1160,7 @@ def _blob_sha(root: Path, ref: str, path: str) -> str:
     if not ref or not path:
         return ""
     result = subprocess.run(
-        ["git", "ls-tree", ref, "--", path],
+        ["git", "ls-tree", _qualified_ref(ref), "--", path],
         cwd=root,
         capture_output=True,
         text=True,
@@ -1464,6 +1529,11 @@ def _validate_critique_against_findings(
         finding = findings_by_id[str(decision.get("finding_id") or "")]
         original = str(finding.get("severity") or "")
         replacement = str(decision.get("severity") or "")
+        if original == "nit":
+            raise ValueError(
+                f"Critic downgrade for {finding['id']} is invalid because it is already nit; "
+                "use accept or reject"
+            )
         if severity_rank.get(replacement, -1) >= severity_rank.get(original, -1):
             raise ValueError(
                 f"Critic downgrade for {finding['id']} must lower severity from {original} to a lower severity"
@@ -1748,7 +1818,7 @@ def _review_citation_content_resolver(root: Path, preflight: dict[str, Any] | No
 
 def _git_show_file(root: Path, ref: str, path: str) -> str | None:
     result = subprocess.run(
-        ["git", "show", f"{ref}:{path}"],
+        ["git", "show", f"{_qualified_ref(ref)}:{path}"],
         cwd=root,
         capture_output=True,
         text=True,
@@ -1767,7 +1837,7 @@ def _validate_findings_citations(
     raw_findings = payload.get("findings")
     if not isinstance(raw_findings, list):
         return CitationValidation(valid=[], invalid=["findings must be a list"], missing=[])
-    citations: list[Citation] = []
+    valid: list[Citation] = []
     invalid: list[str] = []
     missing: list[str] = []
     semantic_judge = _semantic_support_judge()
@@ -1777,28 +1847,32 @@ def _validate_findings_citations(
             continue
         location = parse_location(str(finding.get("location") or ""))
         if location is None:
-            missing.append(f"finding {index}: missing valid location path:line")
+            missing.append(f"finding {index}.location: missing valid location path:line")
         else:
             location.claim_id = f"finding:{index}:location"
-            citations.append(location)
+            location_validation = validate_citations(root, [location], content_resolver=content_resolver)
+            valid.extend(location_validation.valid)
+            invalid.extend(f"finding {index}.location: {item}" for item in location_validation.invalid)
         evidence_citations = extract_location_citations(finding.get("evidence"))
         if not evidence_citations:
-            missing.append(f"finding {index}: missing evidence path:line")
+            missing.append(f"finding {index}.evidence: missing evidence path:line")
         for citation in evidence_citations:
             citation.claim_id = f"finding:{index}:evidence"
-            citations.append(citation)
+        evidence_validation = validate_citations(root, evidence_citations, content_resolver=content_resolver)
+        valid.extend(evidence_validation.valid)
+        invalid.extend(f"finding {index}.evidence: {item}" for item in evidence_validation.invalid)
         invalid.extend(
             validate_claim_support(
                 root,
-                finding.get("evidence"),
+                finding.get("claim"),
                 evidence_citations,
                 label=f"finding {index}.evidence",
+                ignored_claim_terms=Path(location.path).stem if location is not None else None,
                 semantic_judge=semantic_judge,
                 content_resolver=content_resolver,
             )
         )
-    validation = validate_citations(root, citations, content_resolver=content_resolver)
-    return CitationValidation(valid=validation.valid, invalid=[*invalid, *validation.invalid], missing=[*missing, *validation.missing])
+    return CitationValidation(valid=valid, invalid=invalid, missing=missing)
 
 
 def _validate_understanding_citations(
