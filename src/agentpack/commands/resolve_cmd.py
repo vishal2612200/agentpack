@@ -103,7 +103,17 @@ def _build_preflight(
         "replies": str((run_dir / "replies.toon").relative_to(root)),
         "state": str((run_dir / "state.json").relative_to(root)),
     }
-    actionable = [comment for comment in comments if not comment.get("resolved") and not comment.get("outdated")]
+    actionable = [
+        comment
+        for comment in comments
+        if comment.get("thread_state", "known") == "known"
+        and not comment.get("resolved")
+        and not comment.get("outdated")
+    ]
+    unknown_thread_states = any(
+        comment.get("kind") == "inline" and comment.get("thread_state") == "unknown"
+        for comment in comments
+    )
     preflight = {
         "schema_version": 1,
         "generated_at": _now_iso(),
@@ -125,7 +135,7 @@ def _build_preflight(
             "inline": sum(comment["kind"] == "inline" for comment in comments),
             "issue": sum(comment["kind"] == "issue" for comment in comments),
             "actionable_candidates": len(actionable),
-            "thread_lookup": "complete" if threads else "unavailable",
+            "thread_lookup": "partial" if unknown_thread_states else "complete" if threads else "unavailable",
         },
         "execution_contract": {
             "phases": ["bind", "snapshot", "validate", "plan", "fix", "verify", "reply", "repeat"],
@@ -180,11 +190,12 @@ def _render_prompt(preflight: dict[str, Any], comments: list[dict[str, Any]]) ->
         "5. Apply all validated fixes in one pass. Keep unrelated work untouched.\n"
         "6. Run targeted tests, then the relevant project checks. Record exact commands and outcomes.\n"
         "7. Write one reply record per comment. Every reply must be concise, cite the changed source as `path:line`, and state validation as passed, failed, or not run.\n"
-        "8. Run `agentpack resolve --reply`. It refuses stale PR heads, missing citations, invalid comments, and duplicate replies in the same run.\n"
+        "8. Run `agentpack resolve --reply`. It refuses stale PR heads, missing citations, invalid comments, and duplicate replies in the same run. Issue-kind replies are posted as new top-level PR comments because GitHub does not support threaded replies for issue comments.\n"
         "9. Refresh with a new `agentpack resolve --pr <number>` run and repeat until no actionable unresolved comment remains or the max iteration limit is reached.\n\n"
         "## Safety Rules\n\n"
         "- Do not post a reply before the plan, code changes, citations, and validation pass.\n"
         "- Do not mark a comment fixed when the requested behavior is not verified. Use `blocked` and explain the blocker.\n"
+        "- For issue-kind comments, state in the reply that the response is a new top-level PR comment, not a threaded reply.\n"
         "- Do not resolve or hide a thread merely because a reply was posted. Marking GitHub threads resolved is a separate explicit action.\n"
         "- Do not invent line numbers. Use the current PR head and exact file evidence.\n\n"
         "## Plan TOON\n\n"
@@ -226,32 +237,135 @@ def _fetch_comments(
 
 def _fetch_review_threads(root: Path, repository: str, number: int) -> dict[str, dict[str, Any]]:
     owner, repo = repository.split("/", 1)
-    query = """query($owner:String!,$repo:String!,$number:Int!){repository(owner:$owner,name:$repo){pullRequest(number:$number){reviewThreads(first:100){nodes{id,isResolved,isOutdated,comments(first:100){nodes{databaseId}}}}}}}"""
-    payload = _gh_json(
-        root,
-        ["api", "graphql", "-f", f"query={query}", "-f", f"owner={owner}", "-f", f"repo={repo}", "-F", f"number={number}"],
-        allow_failure=True,
-    )
     result: dict[str, dict[str, Any]] = {}
-    for thread in ((payload or {}).get("data", {}).get("repository", {}).get("pullRequest", {}).get("reviewThreads", {}).get("nodes", []) if isinstance(payload, dict) else []):
-        if not isinstance(thread, dict):
-            continue
-        state = {"thread_id": thread.get("id", ""), "resolved": bool(thread.get("isResolved")), "outdated": bool(thread.get("isOutdated"))}
-        for comment in thread.get("comments", {}).get("nodes", []):
-            if isinstance(comment, dict) and comment.get("databaseId") is not None:
-                result[str(comment["databaseId"])] = state
+    threads_cursor: str | None = None
+    while True:
+        cursor_clause = ", $threadsCursor:String" if threads_cursor else ""
+        after_clause = ", after:$threadsCursor" if threads_cursor else ""
+        query = f"""
+        query($owner:String!, $repo:String!, $number:Int!{cursor_clause}) {{
+          repository(owner:$owner, name:$repo) {{
+            pullRequest(number:$number) {{
+              reviewThreads(first:100{after_clause}) {{
+                nodes {{ id isResolved isOutdated }}
+                pageInfo {{ hasNextPage endCursor }}
+              }}
+            }}
+          }}
+        }}
+        """
+        args = [
+            "api",
+            "graphql",
+            "-f",
+            f"query={query}",
+            "-f",
+            f"owner={owner}",
+            "-f",
+            f"repo={repo}",
+            "-F",
+            f"number={number}",
+        ]
+        if threads_cursor:
+            args.extend(["-f", f"threadsCursor={threads_cursor}"])
+        payload = _gh_json(root, args, allow_failure=True)
+        pull_request = (
+            ((payload or {}).get("data") or {}).get("repository", {}).get("pullRequest")
+            if isinstance(payload, dict)
+            else None
+        )
+        connection = _graphql_connection(pull_request, "reviewThreads")
+        if connection is None:
+            break
+        for thread in connection["nodes"]:
+            if not isinstance(thread, dict) or not thread.get("id"):
+                continue
+            state = {
+                "thread_id": thread["id"],
+                "resolved": bool(thread.get("isResolved")),
+                "outdated": bool(thread.get("isOutdated")),
+            }
+            comments_cursor: str | None = None
+            while True:
+                comments_page = _fetch_thread_comments(root, thread["id"], comments_cursor)
+                if comments_page is None:
+                    break
+                comments, page_info = comments_page
+                for comment in comments:
+                    if isinstance(comment, dict) and comment.get("databaseId") is not None:
+                        result[str(comment["databaseId"])] = state
+                if not page_info.get("hasNextPage"):
+                    break
+                next_cursor = str(page_info.get("endCursor") or "")
+                if not next_cursor or next_cursor == comments_cursor:
+                    break
+                comments_cursor = next_cursor
+        page_info = connection["page_info"]
+        if not page_info.get("hasNextPage"):
+            break
+        next_cursor = str(page_info.get("endCursor") or "")
+        if not next_cursor or next_cursor == threads_cursor:
+            break
+        threads_cursor = next_cursor
     return result
+
+
+def _fetch_thread_comments(
+    root: Path,
+    thread_id: str,
+    cursor: str | None,
+) -> tuple[list[Any], dict[str, Any]] | None:
+    cursor_clause = ", $commentsCursor:String" if cursor else ""
+    after_clause = ", after:$commentsCursor" if cursor else ""
+    query = f"""
+    query($threadId:ID!{cursor_clause}) {{
+      node(id:$threadId) {{
+        ... on PullRequestReviewThread {{
+          comments(first:100{after_clause}) {{
+            nodes {{ databaseId }}
+            pageInfo {{ hasNextPage endCursor }}
+          }}
+        }}
+      }}
+    }}
+    """
+    args = ["api", "graphql", "-f", f"query={query}", "-f", f"threadId={thread_id}"]
+    if cursor:
+        args.extend(["-f", f"commentsCursor={cursor}"])
+    payload = _gh_json(root, args, allow_failure=True)
+    if not isinstance(payload, dict):
+        return None
+    node = (payload.get("data") or {}).get("node")
+    connection = _graphql_connection(node, "comments")
+    if connection is None:
+        return None
+    return connection["nodes"], connection["page_info"]
+
+
+def _graphql_connection(payload: Any, name: str) -> dict[str, Any] | None:
+    if not isinstance(payload, dict):
+        return None
+    connection = payload.get(name)
+    if not isinstance(connection, dict):
+        return None
+    nodes = connection.get("nodes")
+    page_info = connection.get("pageInfo")
+    if not isinstance(nodes, list) or not isinstance(page_info, dict):
+        return None
+    return {"nodes": nodes, "page_info": page_info}
 
 
 def _normalize_inline(item: dict[str, Any], threads: dict[str, dict[str, Any]]) -> dict[str, Any]:
     comment_id = str(item.get("id", ""))
-    thread = threads.get(comment_id, {})
+    thread = threads.get(comment_id)
+    thread_data = thread or {}
     line = item.get("line") or item.get("original_line")
     location = f"{item.get('path')}:{line}" if item.get("path") and line else str(item.get("path") or "")
     return {
         "id": comment_id,
         "kind": "inline",
-        "thread_id": thread.get("thread_id", ""),
+        "thread_id": thread_data.get("thread_id", ""),
+        "thread_state": "known" if thread is not None else "unknown",
         "in_reply_to_id": str(item.get("in_reply_to_id") or ""),
         "author": (item.get("user") or {}).get("login", ""),
         "body": str(item.get("body") or ""),
@@ -261,8 +375,8 @@ def _normalize_inline(item: dict[str, Any], threads: dict[str, dict[str, Any]]) 
         "start_line": item.get("start_line") or item.get("original_start_line"),
         "side": item.get("side") or item.get("original_side") or "",
         "commit_id": str(item.get("commit_id") or ""),
-        "resolved": bool(thread.get("resolved", False)),
-        "outdated": bool(thread.get("outdated", False)),
+        "resolved": bool(thread_data.get("resolved", False)),
+        "outdated": bool(thread_data.get("outdated", False)),
         "created_at": str(item.get("created_at") or ""),
         "updated_at": str(item.get("updated_at") or ""),
         "url": str(item.get("html_url") or item.get("url") or ""),
@@ -352,11 +466,12 @@ def _check_active(root: Path, *, reply: bool) -> None:
     if not preflight_path.exists():
         console.print("[red]No active resolution preflight found.[/] Run `agentpack resolve --pr <number>` first.")
         raise typer.Exit(1)
+    preflight: dict[str, Any] = {}
     try:
         preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
         plan = _validate_toon(root / preflight["paths"]["plan"], "plan")
     except (OSError, json.JSONDecodeError, ValueError, ToonParseError) as exc:
-        _write_state(root, preflight if "preflight" in locals() else {}, "blocked", str(exc))
+        _write_state(root, preflight, "blocked", str(exc))
         console.print(f"[red]Resolution check blocked:[/] {exc}")
         raise typer.Exit(1) from exc
     if not reply:
@@ -368,7 +483,7 @@ def _check_active(root: Path, *, reply: bool) -> None:
         _assert_head_unchanged(root, preflight)
         results = _post_replies(root, preflight, replies)
     except (OSError, json.JSONDecodeError, ValueError, ToonParseError, _ResolveError) as exc:
-        _write_state(root, preflight, "blocked", str(exc))
+        _write_state(root, preflight, "blocked", str(exc), _load_posted_state(root))
         console.print(f"[red]Resolution reply blocked:[/] {exc}")
         raise typer.Exit(1) from exc
     _write_state(root, preflight, "replied", "", results)
@@ -500,11 +615,25 @@ def _post_replies(root: Path, preflight: dict[str, Any], payload: dict[str, Any]
             endpoint = f"repos/{preflight['pr']['repository']}/pulls/{preflight['pr']['number']}/comments/{comment_id}/replies"
         else:
             endpoint = f"repos/{preflight['pr']['repository']}/issues/{preflight['pr']['number']}/comments"
+            body = (
+                f"{body}\n\n"
+                "_This is a new top-level PR comment because GitHub does not support threaded replies for issue comments._"
+            )
         response = _gh_json(root, ["api", endpoint, "--method", "POST", "--field", f"body={body}"])
         if not isinstance(response, dict) or not response.get("html_url"):
             raise _ResolveError(f"GitHub did not return a reply URL for comment {comment_id}")
         posted[comment_id] = str(response["html_url"])
+        _write_state(root, preflight, "replying", f"posted reply for comment {comment_id}; continuing", posted)
     return posted
+
+
+def _load_posted_state(root: Path) -> dict[str, str]:
+    try:
+        payload = json.loads((root / _STATE).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    posted = payload.get("posted", {})
+    return {str(key): str(value) for key, value in posted.items()} if isinstance(posted, dict) else {}
 
 
 def _state(preflight: dict[str, Any], status: str, detail: str = "", posted: dict[str, str] | None = None) -> dict[str, Any]:

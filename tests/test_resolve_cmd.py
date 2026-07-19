@@ -4,9 +4,15 @@ import json
 import subprocess
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from agentpack.cli import app
+from agentpack.commands.resolve_cmd import (
+    _ResolveError,
+    _fetch_review_threads,
+    _post_replies,
+)
 from agentpack.commands.review_cmd import _parse_review_target
 
 
@@ -88,7 +94,96 @@ def test_resolve_writes_comment_snapshot_and_prompt(tmp_path, monkeypatch) -> No
     assert preflight["pr"]["head_sha"] == "head-sha"
     assert preflight["comments"]["actionable_candidates"] == 1
     assert "agentpack resolve --reply" in (repo / ".agentpack" / "resolve.prompt.md").read_text(encoding="utf-8")
-    assert json.loads((repo / ".agentpack" / "resolve-comments.json").read_text(encoding="utf-8"))[0]["id"] == "101"
+    snapshot = json.loads((repo / ".agentpack" / "resolve-comments.json").read_text(encoding="utf-8"))
+    assert snapshot[0]["id"] == "101"
+    assert snapshot[0]["resolved"] is False
+    assert snapshot[0]["outdated"] is False
+
+
+def test_fetch_review_threads_paginates_threads_and_comments(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    responses = [
+        {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{"id": "thread-1", "isResolved": False, "isOutdated": False}],
+                            "pageInfo": {"hasNextPage": True, "endCursor": "threads-1"},
+                        }
+                    }
+                }
+            }
+        },
+        {"data": {"node": {"comments": {"nodes": [{"databaseId": 101}], "pageInfo": {"hasNextPage": True, "endCursor": "comments-1"}}}}},
+        {"data": {"node": {"comments": {"nodes": [{"databaseId": 102}], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}},
+        {
+            "data": {
+                "repository": {
+                    "pullRequest": {
+                        "reviewThreads": {
+                            "nodes": [{"id": "thread-2", "isResolved": True, "isOutdated": False}],
+                            "pageInfo": {"hasNextPage": False, "endCursor": None},
+                        }
+                    }
+                }
+            }
+        },
+        {"data": {"node": {"comments": {"nodes": [{"databaseId": 201}], "pageInfo": {"hasNextPage": False, "endCursor": None}}}}},
+    ]
+    calls: list[list[str]] = []
+
+    def fake_gh(_root, args, *, allow_failure=False):
+        calls.append(args)
+        return responses.pop(0)
+
+    monkeypatch.setattr("agentpack.commands.resolve_cmd._gh_json", fake_gh)
+
+    threads = _fetch_review_threads(repo, "example/project", 42)
+
+    assert set(threads) == {"101", "102", "201"}
+    assert threads["101"]["thread_id"] == "thread-1"
+    assert threads["201"]["resolved"] is True
+    assert len(calls) == 5
+    assert not responses
+
+
+def test_post_replies_persists_partial_success_for_retry(tmp_path, monkeypatch) -> None:
+    repo = _init_repo(tmp_path)
+    (repo / ".agentpack").mkdir()
+    (repo / ".agentpack" / "resolve-comments.json").write_text(
+        json.dumps([
+            {"id": "101", "kind": "inline"},
+            {"id": "102", "kind": "inline"},
+        ]),
+        encoding="utf-8",
+    )
+    (repo / ".agentpack" / "resolve-state.json").write_text(
+        json.dumps({"run_id": "run-1", "status": "awaiting_replies", "posted": {}}),
+        encoding="utf-8",
+    )
+    preflight = {
+        "resolve": {"run_id": "run-1"},
+        "pr": {"repository": "example/project", "number": 42},
+    }
+    payload = {
+        "replies": [
+            {"comment_id": "101", "body": "Fixed. See src/foo.py:1."},
+            {"comment_id": "102", "body": "Fixed. See src/foo.py:1."},
+        ]
+    }
+    responses = [
+        {"html_url": "https://github.com/example/project/pull/42#reply-101"},
+        {},
+    ]
+    monkeypatch.setattr("agentpack.commands.resolve_cmd._gh_json", lambda *_args, **_kwargs: responses.pop(0))
+
+    with pytest.raises(_ResolveError, match="comment 102"):
+        _post_replies(repo, preflight, payload)
+
+    state = json.loads((repo / ".agentpack" / "resolve-state.json").read_text(encoding="utf-8"))
+    assert state["status"] == "replying"
+    assert state["posted"] == {"101": "https://github.com/example/project/pull/42#reply-101"}
 
 
 def test_resolve_reply_requires_cited_plan_and_posts_after_head_check(tmp_path, monkeypatch) -> None:
