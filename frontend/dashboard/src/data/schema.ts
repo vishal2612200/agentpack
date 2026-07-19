@@ -368,6 +368,167 @@ export interface DashboardAnalytics {
   unavailable_reason?: string;
 }
 
+export type ProjectRecordSource = "declared" | "observed" | "inferred";
+export type ProjectHealthStatus = "healthy" | "attention" | "blocked" | "stale" | "unknown";
+
+export interface ProjectEvidence {
+  kind: string;
+  ref: string;
+  summary: string;
+  path: string;
+  occurred_at: string;
+  workspace_id: string;
+}
+
+export interface ProjectDerivedRecord {
+  source: ProjectRecordSource;
+  confidence: number;
+  updated_at: string;
+  evidence: ProjectEvidence[];
+  workspace_id: string;
+  warnings: string[];
+}
+
+export interface ProjectWorkspace extends ProjectDerivedRecord {
+  workspace_id: string;
+  path: string;
+  branch: string;
+  git_sha: string;
+  is_current: boolean;
+  read_only: boolean;
+}
+
+export interface ProjectProfile extends ProjectDerivedRecord {
+  project_id: string;
+  config_revision: string;
+  display_name: string;
+  purpose: string;
+  audiences: string[];
+  owners: string[];
+  stage: string;
+  links: Record<string, string>;
+  environments: string[];
+  status_stale_days: number;
+}
+
+export interface ProjectMilestoneState extends ProjectDerivedRecord {
+  milestone_id: string;
+  outcome_id: string;
+  title: string;
+  owner: string;
+  due_date: string;
+  status: "planned" | "in_progress" | "blocked" | "done";
+}
+
+export interface ProjectOutcomeState extends ProjectDerivedRecord {
+  outcome_id: string;
+  title: string;
+  description: string;
+  owner: string;
+  target_date: string;
+  status: "planned" | "on_track" | "at_risk" | "achieved" | "paused";
+  progress_pct: number | null;
+  milestones: ProjectMilestoneState[];
+}
+
+export interface ProjectInitiative extends ProjectDerivedRecord {
+  initiative_id: string;
+  suggestion_id: string;
+  title: string;
+  description: string;
+  owner: string;
+  outcome_id: string;
+  status: string;
+}
+
+export interface ProjectInitiativeSuggestion extends ProjectDerivedRecord {
+  suggestion_id: string;
+  title: string;
+  rationale: string;
+  outcome_id: string;
+  score: number;
+  task_ids: string[];
+}
+
+export interface ProjectRisk extends ProjectDerivedRecord {
+  risk_id: string;
+  title: string;
+  description: string;
+  owner: string;
+  severity: "low" | "medium" | "high" | "critical";
+  status: "open" | "mitigating" | "accepted" | "resolved";
+  mitigation: string;
+}
+
+export interface ProjectDecision extends ProjectDerivedRecord {
+  decision_id: string;
+  title: string;
+  context: string;
+  decision: string;
+  owner: string;
+  status: "proposed" | "accepted" | "rejected" | "superseded";
+}
+
+export interface ProjectHealthDimension extends ProjectDerivedRecord {
+  dimension: "delivery" | "validation" | "architecture" | "release" | "context" | "knowledge";
+  status: ProjectHealthStatus;
+  summary: string;
+}
+
+export interface ProjectHealthSnapshot extends ProjectDerivedRecord {
+  dimensions: ProjectHealthDimension[];
+}
+
+export interface ProjectMetrics extends ProjectDerivedRecord {
+  outcome_count: number;
+  active_outcomes: number;
+  milestone_count: number;
+  completed_milestones: number;
+  milestone_completion_pct: number | null;
+  open_risks: number;
+  pending_decisions: number;
+  confirmed_initiatives: number;
+  recent_changes: number;
+  evidence_coverage: number | null;
+}
+
+export interface ProjectTimelineEvent extends ProjectDerivedRecord {
+  event_id: string;
+  kind: string;
+  title: string;
+  summary: string;
+  entity_id: string;
+  actor: string;
+  git_sha: string;
+  branch: string;
+  tags: string[];
+}
+
+export interface ProjectStatusBrief extends ProjectDerivedRecord {
+  mode: "summary" | "engineering";
+  markdown: string;
+  project_id: string;
+}
+
+export interface ProjectOverview extends ProjectDerivedRecord {
+  schema_version: number;
+  project_id: string;
+  generated_at: string;
+  selected_workspace: string;
+  profile: ProjectProfile;
+  workspaces: ProjectWorkspace[];
+  metrics: ProjectMetrics;
+  outcomes: ProjectOutcomeState[];
+  initiatives: ProjectInitiative[];
+  initiative_suggestions: ProjectInitiativeSuggestion[];
+  risks: ProjectRisk[];
+  decisions: ProjectDecision[];
+  health: ProjectHealthSnapshot;
+  recent_changes: ProjectTimelineEvent[];
+  partial: boolean;
+  read_only: boolean;
+}
+
 export interface DashboardSnapshot {
   schema_version: number;
   generated_at?: string;
@@ -377,6 +538,7 @@ export interface DashboardSnapshot {
     branch?: string;
     git_sha?: string;
   };
+  project_overview?: ProjectOverview | null;
   project_record?: DashboardProjectRecord | null;
   workspace?: DashboardWorkspaceRecord | null;
   project_tasks?: DashboardTaskRecord[];

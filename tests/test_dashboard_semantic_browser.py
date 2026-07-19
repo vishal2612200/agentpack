@@ -37,6 +37,26 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
     (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text(
+        "[project]\n"
+        'display_name = "AgentPack Browser Fixture"\n'
+        'purpose = "Keep project outcomes and engineering evidence connected."\n'
+        'owners = ["Platform"]\n'
+        'audiences = ["Developers", "Product"]\n'
+        'stage = "active"\n\n'
+        "[[project.outcomes]]\n"
+        'id = "outcome-dashboard"\n'
+        'title = "Ship project dashboard"\n'
+        'description = "Expose project progress without task-count proxies."\n'
+        'owner = "Platform"\n'
+        'target_date = "2026-08-01"\n\n'
+        "[[project.outcomes.milestones]]\n"
+        'id = "milestone-contracts"\n'
+        'title = "Project contracts"\n'
+        'owner = "Platform"\n'
+        'due_date = "2026-07-25"\n',
+        encoding="utf-8",
+    )
     (tmp_path / ".agentpack" / "task.md").write_text("trace auth validation\n", encoding="utf-8")
     (tmp_path / "src").mkdir()
     (tmp_path / "src" / "auth.py").write_text(
@@ -51,20 +71,54 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
         with sync_playwright() as playwright:
             executable = _chrome_path()
             browser = playwright.chromium.launch(headless=True, executable_path=executable or None, args=["--use-angle=swiftshader"])
-            page = browser.new_page(viewport={"width": 1440, "height": 900})
+            context = browser.new_context(
+                viewport={"width": 1440, "height": 900},
+                permissions=["clipboard-read", "clipboard-write"],
+                accept_downloads=True,
+            )
+            page = context.new_page()
             page.goto(f"http://127.0.0.1:{server.server_address[1]}/", wait_until="networkidle")
             workspace = page.get_by_test_id("dashboard-workspace")
-            page.get_by_role("button", name="Build", exact=True).click()
+            overview = page.get_by_test_id("project-overview-view")
+            overview.wait_for()
+            assert "AgentPack Browser Fixture" in overview.inner_text()
+            assert "Ship project dashboard" in overview.inner_text()
+            page.get_by_role("button", name="Engineering", exact=True).click()
             assert workspace.get_attribute("data-presentation-mode") == "build"
             page.reload(wait_until="networkidle")
             assert workspace.get_attribute("data-presentation-mode") == "build"
-            page.get_by_role("button", name="Explain", exact=True).click()
+            page.get_by_role("button", name="Summary", exact=True).click()
+            page.get_by_title("Copy Summary brief").click()
+            page.get_by_text("Status brief copied.", exact=True).wait_for()
+            assert "# AgentPack Browser Fixture Status" in page.evaluate("navigator.clipboard.readText()")
+            with page.expect_download() as download_info:
+                page.get_by_title("Download Summary brief").click()
+            assert download_info.value.suggested_filename.endswith("summary-status.md")
+
+            for name, test_id in (
+                ("Roadmap", "project-roadmap-view"),
+                ("Health", "project-health-view"),
+                ("Activity", "project-activity-view"),
+                ("Work", "project-work-view"),
+                ("Knowledge", "project-knowledge-summary"),
+            ):
+                page.get_by_role("button", name=name, exact=True).click()
+                page.get_by_test_id(test_id).wait_for()
+                if name == "Roadmap":
+                    assert "Project contracts" in page.get_by_test_id(test_id).inner_text()
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            page.get_by_role("button", name="Overview", exact=True).click()
+            overview.wait_for()
+            for viewport in ({"width": 1024, "height": 768}, {"width": 390, "height": 844}):
+                page.set_viewport_size(viewport)
+                assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            page.set_viewport_size({"width": 1440, "height": 900})
             screenshot_dir = os.environ.get("AGENTPACK_DASHBOARD_SCREENSHOT_DIR", "").strip()
             if screenshot_dir:
                 Path(screenshot_dir).mkdir(parents=True, exist_ok=True)
                 page.screenshot(path=str(Path(screenshot_dir) / "workspace-desktop.png"))
 
-            page.get_by_text("Observe", exact=True).click()
+            page.get_by_text("Explore", exact=True).click()
             page.get_by_role("button", name="Impact map", exact=True).click()
             canvas = page.locator(".city-canvas-wrap canvas")
             canvas.wait_for(timeout=15_000)
@@ -95,6 +149,7 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             for viewport in ({"width": 1024, "height": 768}, {"width": 390, "height": 844}):
                 page.set_viewport_size(viewport)
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            context.close()
             browser.close()
     finally:
         server.shutdown()
@@ -168,8 +223,7 @@ def test_dashboard_learning_recommendations_scope_and_copy(tmp_path: Path, monke
                 ),
             )
             page.goto(f"http://127.0.0.1:{server.server_address[1]}/", wait_until="networkidle")
-            page.get_by_text("Observe", exact=True).click()
-            page.get_by_role("button", name="Learning", exact=True).click()
+            page.get_by_role("button", name="Knowledge", exact=True).click()
 
             scope = page.get_by_role("group", name="Learning recommendation scope")
             scope.wait_for()
