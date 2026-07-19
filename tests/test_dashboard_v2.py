@@ -85,6 +85,50 @@ def test_dashboard_v2_envelope_is_versioned_and_hides_handoff_uuid(tmp_path: Pat
         thread.join(timeout=5)
 
 
+def test_learning_recommendations_endpoint_is_typed_and_read_only(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (agentpack / "config.toml").write_text("[context]\n", encoding="utf-8")
+    events = agentpack / "session-events.jsonl"
+    events.write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-19T10:00:00+00:00",
+                "task_id": "task-cli",
+                "task": "Improve CLI output",
+                "status": "done",
+                "concepts": ["CLI design"],
+                "changed_files": ["src/agentpack/commands/learn.py"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    before = events.read_text(encoding="utf-8")
+    server = create_dashboard_server(tmp_path, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        payload = _request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/learning/recommendations?scope=local",
+            server.state.token,
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+    assert payload["schema_version"] == 1
+    assert payload["scope"] == "local"
+    assert payload["topics"][0]["topic_id"].startswith("topic-")
+    assert payload["topics"][0]["start_command"].startswith("agentpack learn --topic")
+    assert set(payload["mastery_summary"]) == {"mastered", "developing", "needs_practice", "unassessed"}
+    _assert_schema(json.loads(SCHEMA_PATH.read_text(encoding="utf-8")), "learningRecommendationSet", payload)
+    assert events.read_text(encoding="utf-8") == before
+
+
 def test_dashboard_v2_envelope_matches_canonical_schema(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
     (tmp_path / ".agentpack").mkdir()

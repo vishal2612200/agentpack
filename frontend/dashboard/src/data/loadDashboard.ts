@@ -1,4 +1,4 @@
-import type { ActionHistoryRow, DashboardGraph, DashboardMap, DashboardSnapshot, DashboardV2AgentSession, DashboardV2Handoff, DashboardV2ImpactResponse, DashboardV2ActionInspection } from "./schema";
+import type { ActionHistoryRow, DashboardGraph, DashboardMap, DashboardSnapshot, DashboardV2AgentSession, DashboardV2Handoff, DashboardV2ImpactResponse, DashboardV2ActionInspection, LearningRecommendationSet, LearningScope } from "./schema";
 
 declare global {
   interface Window {
@@ -61,6 +61,12 @@ export async function loadDashboardImpact(params: URLSearchParams = new URLSearc
   const response = await fetch(apiUrl(`/api/dashboard/v2/impact?${params.toString()}`), { headers: authHeaders() });
   if (!response.ok) throw new Error(`Impact API failed: ${response.status}`);
   return await response.json() as DashboardImpactPayload;
+}
+
+export async function loadLearningRecommendations(scope: LearningScope = "local"): Promise<LearningRecommendationSet> {
+  const response = await fetch(apiUrl(`/api/learning/recommendations?scope=${scope}`), { headers: authHeaders() });
+  if (!response.ok) throw new Error(`Learning recommendations API failed: ${response.status}`);
+  return await response.json() as LearningRecommendationSet;
 }
 
 export function authHeaders(): HeadersInit {

@@ -30,6 +30,7 @@ All endpoints are loopback-only by default and require the dashboard token in
 | `POST` | `/api/dashboard/v2/actions/inspect` | Explain an action before execution |
 | `POST` | `/api/dashboard/v2/actions/run` | Run an approved action through the existing PTY runner |
 | `GET` | `/api/dashboard/v2/agents` | Public handoffs and detected agent sessions |
+| `GET` | `/api/learning/recommendations?scope=local\|global` | Read-only next-topic and mastery contract; dashboard reads do not record recommendation impressions |
 | `POST` | `/api/dashboard/v2/agents/resume` | Resume a named handoff |
 | `POST` | `/api/dashboard/v2/agents/release` | Release a claimed handoff |
 

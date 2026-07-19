@@ -96,6 +96,91 @@
         "worktree": { "type": "string" }
       }
     },
+    "learningRecommendationSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["schema_version", "recommendation_id", "scope", "generated_at", "topics", "warnings", "mastery_summary"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "recommendation_id": { "type": "string", "minLength": 1 },
+        "scope": { "enum": ["local", "global"] },
+        "generated_at": { "type": "string" },
+        "topics": { "type": "array", "maxItems": 3, "items": { "$ref": "#/$defs/learningRecommendationTopic" } },
+        "warnings": { "type": "array", "items": { "type": "string" } },
+        "mastery_summary": { "$ref": "#/$defs/learningMasterySummary" }
+      }
+    },
+    "learningRecommendationTopic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["topic_id", "lane", "project", "title", "why_now", "score", "score_reasons", "concepts", "evidence", "exercise", "completion_check", "default_mode", "prompt", "questions", "mastery_status", "start_command"],
+      "properties": {
+        "topic_id": { "type": "string", "minLength": 1 },
+        "lane": { "enum": ["now", "system", "weak_spot"] },
+        "project": { "$ref": "#/$defs/learningProjectRef" },
+        "title": { "type": "string" },
+        "why_now": { "type": "string" },
+        "score": { "type": "integer", "minimum": 0, "maximum": 100 },
+        "score_reasons": { "type": "object", "additionalProperties": { "type": "integer" } },
+        "concepts": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "array", "maxItems": 5, "items": { "$ref": "#/$defs/learningEvidence" } },
+        "exercise": { "type": "string" },
+        "completion_check": { "type": "string" },
+        "default_mode": { "type": "string" },
+        "prompt": { "type": "string" },
+        "questions": { "type": "array", "items": { "$ref": "#/$defs/learningQuestion" } },
+        "mastery_status": { "enum": ["mastered", "developing", "needs_practice", "unassessed"] },
+        "start_command": { "type": "string" }
+      }
+    },
+    "learningProjectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["project_id", "name", "root"],
+      "properties": {
+        "project_id": { "type": "string" },
+        "name": { "type": "string" },
+        "root": { "type": "string" }
+      }
+    },
+    "learningEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "task_id", "task", "path", "summary", "observed_at", "status", "stale"],
+      "properties": {
+        "kind": { "type": "string" },
+        "task_id": { "type": "string" },
+        "task": { "type": "string" },
+        "path": { "type": "string" },
+        "summary": { "type": "string" },
+        "observed_at": { "type": "string" },
+        "status": { "type": "string" },
+        "stale": { "type": "boolean" }
+      }
+    },
+    "learningQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "question", "expected_points", "evidence_files", "difficulty"],
+      "properties": {
+        "mode": { "type": "string" },
+        "question": { "type": "string" },
+        "expected_points": { "type": "array", "items": { "type": "string" } },
+        "evidence_files": { "type": "array", "items": { "type": "string" } },
+        "difficulty": { "type": "string" }
+      }
+    },
+    "learningMasterySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mastered", "developing", "needs_practice", "unassessed"],
+      "properties": {
+        "mastered": { "type": "integer", "minimum": 0 },
+        "developing": { "type": "integer", "minimum": 0 },
+        "needs_practice": { "type": "integer", "minimum": 0 },
+        "unassessed": { "type": "integer", "minimum": 0 }
+      }
+    },
     "impactResponse": {
       "type": "object",
       "additionalProperties": false,

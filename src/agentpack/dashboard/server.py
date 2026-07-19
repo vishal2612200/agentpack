@@ -27,6 +27,7 @@ from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
 from agentpack.dashboard.models import DashboardFeedback
 from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
+from agentpack.learning.recommender import recommend_learning_topics
 from agentpack.session.events import record_event
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 from agentpack.dashboard.v2 import (
@@ -219,6 +220,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             payload = build_dashboard_v2_payload(self.server.state.root, detail=detail)
             payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]
             self._send_json(payload)
+            return
+        if parsed.path == "/api/learning/recommendations":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            scope = urllib.parse.parse_qs(parsed.query).get("scope", ["local"])[0]
+            if scope not in {"local", "global"}:
+                self._send_json({"error": "scope must be local or global"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            recommendations = recommend_learning_topics(
+                self.server.state.root,
+                global_scope=scope == "global",
+            )
+            self._send_json(recommendations.model_dump(mode="json"))
             return
         if parsed.path == "/api/dashboard/v2/impact":
             if not self._authorized(parsed):

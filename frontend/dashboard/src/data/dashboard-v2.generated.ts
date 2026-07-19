@@ -93,6 +93,103 @@ export interface Session {
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningRecommendationSet".
+ */
+export interface LearningRecommendationSet {
+  schema_version: 1;
+  recommendation_id: string;
+  scope: "local" | "global";
+  generated_at: string;
+  /**
+   * @maxItems 3
+   */
+  topics:
+    | []
+    | [LearningRecommendationTopic]
+    | [LearningRecommendationTopic, LearningRecommendationTopic]
+    | [LearningRecommendationTopic, LearningRecommendationTopic, LearningRecommendationTopic];
+  warnings: string[];
+  mastery_summary: LearningMasterySummary;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningRecommendationTopic".
+ */
+export interface LearningRecommendationTopic {
+  topic_id: string;
+  lane: "now" | "system" | "weak_spot";
+  project: LearningProjectRef;
+  title: string;
+  why_now: string;
+  score: number;
+  score_reasons: {
+    [k: string]: number;
+  };
+  concepts: string[];
+  /**
+   * @maxItems 5
+   */
+  evidence:
+    | []
+    | [LearningEvidence]
+    | [LearningEvidence, LearningEvidence]
+    | [LearningEvidence, LearningEvidence, LearningEvidence]
+    | [LearningEvidence, LearningEvidence, LearningEvidence, LearningEvidence]
+    | [LearningEvidence, LearningEvidence, LearningEvidence, LearningEvidence, LearningEvidence];
+  exercise: string;
+  completion_check: string;
+  default_mode: string;
+  prompt: string;
+  questions: LearningQuestion[];
+  mastery_status: "mastered" | "developing" | "needs_practice" | "unassessed";
+  start_command: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningProjectRef".
+ */
+export interface LearningProjectRef {
+  project_id: string;
+  name: string;
+  root: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningEvidence".
+ */
+export interface LearningEvidence {
+  kind: string;
+  task_id: string;
+  task: string;
+  path: string;
+  summary: string;
+  observed_at: string;
+  status: string;
+  stale: boolean;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningQuestion".
+ */
+export interface LearningQuestion {
+  mode: string;
+  question: string;
+  expected_points: string[];
+  evidence_files: string[];
+  difficulty: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningMasterySummary".
+ */
+export interface LearningMasterySummary {
+  mastered: number;
+  developing: number;
+  needs_practice: number;
+  unassessed: number;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
  * via the `definition` "impactResponse".
  */
 export interface ImpactResponse {

@@ -5,11 +5,13 @@ import {
   BarChart3,
   Brain,
   Building2,
+  Check,
   CheckCircle2,
   ChevronRight,
   CircleDot,
   ClipboardList,
   Code2,
+  Copy,
   Database,
   FileText,
   FolderKanban,
@@ -43,8 +45,8 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
-import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, PresentationMode, SemanticGraphSummary } from "./data/schema";
+import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, loadLearningRecommendations, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, LearningRecommendationSet, LearningScope, MapBuilding, MapRoad, PresentationMode, SemanticGraphSummary } from "./data/schema";
 import { AgentWorkbench } from "./components/dashboard/agent-workbench";
 import { ConfirmCommandDialog, ErrorState, LoadingState, Metric, Panel, StateSurface, StatusPill, TechnicalDetail, type CommandInspection, type PendingCommand } from "./components/dashboard/shared";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
@@ -1948,9 +1950,102 @@ function MemoryView({
   onSelect: (id: string) => void;
 }) {
   const memoryNodes = graph.nodes.filter((node) => node.type === "episode" || node.type === "procedure");
+  const [scope, setScope] = useState<LearningScope>("local");
+  const [recommendations, setRecommendations] = useState<LearningRecommendationSet | null>(null);
+  const [learningError, setLearningError] = useState("");
+  const [copyError, setCopyError] = useState("");
+  const [learningLoading, setLearningLoading] = useState(true);
+  const [copiedTopic, setCopiedTopic] = useState("");
+  const learningRequestId = useRef(0);
+
+  const refreshLearning = (nextScope: LearningScope) => {
+    const requestId = ++learningRequestId.current;
+    setLearningLoading(true);
+    setLearningError("");
+    setRecommendations(null);
+    loadLearningRecommendations(nextScope)
+      .then((value) => { if (requestId === learningRequestId.current) setRecommendations(value); })
+      .catch((error: unknown) => {
+        if (requestId === learningRequestId.current) {
+          setLearningError(error instanceof Error ? error.message : "Failed to load learning recommendations");
+        }
+      })
+      .finally(() => { if (requestId === learningRequestId.current) setLearningLoading(false); });
+  };
+
+  useEffect(() => {
+    refreshLearning(scope);
+    return () => { learningRequestId.current += 1; };
+  }, [scope]);
+
+  const copyCommand = async (topicId: string, command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopyError("");
+      setCopiedTopic(topicId);
+      window.setTimeout(() => setCopiedTopic((current) => current === topicId ? "" : current), 1500);
+    } catch {
+      setCopyError("Clipboard access failed. Select the command text manually.");
+    }
+  };
+
   return (
     <div className="view-stack">
-      <SectionTitle title="Memory Influence" subtitle="Episodic and procedural memory connected to this context decision." />
+      <SectionTitle title="Learning & Memory" subtitle="Next technical topics, assessed mastery, and memory connected to this project." />
+      <div className="learning-scope" role="group" aria-label="Learning recommendation scope">
+        <button type="button" className={scope === "local" ? "active" : ""} onClick={() => setScope("local")}>This project</button>
+        <button type="button" className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>All projects</button>
+      </div>
+      {recommendations ? (
+        <div className="metric-grid learning-metrics">
+          <Metric label="Mastered" value={recommendations.mastery_summary.mastered} tone="good" />
+          <Metric label="Developing" value={recommendations.mastery_summary.developing} tone="memory" />
+          <Metric label="Needs practice" value={recommendations.mastery_summary.needs_practice} tone="warn" />
+          <Metric label="Unassessed" value={recommendations.mastery_summary.unassessed} tone="neutral" />
+        </div>
+      ) : null}
+      <Panel title="Next Technical Topics" icon={Brain}>
+        {learningLoading ? <p className="empty">Loading project learning history...</p> : null}
+        {learningError ? (
+          <div className="learning-error">
+            <p>{learningError}</p>
+            <button type="button" className="toolbar-button" onClick={() => refreshLearning(scope)}>Retry</button>
+          </div>
+        ) : null}
+        {!learningLoading && !learningError && recommendations ? (
+          <div className="learning-topic-list">
+            {recommendations.topics.map((topic) => (
+              <div key={topic.topic_id} className="learning-topic-row">
+                <div className="learning-topic-copy">
+                  <div className="learning-topic-meta">
+                    <span className={`badge ${topic.lane === "weak_spot" ? "warn" : topic.lane === "system" ? "memory" : "good"}`}>{topic.lane.replace("_", " ")}</span>
+                    <span className="badge neutral">{topic.project.name}</span>
+                    <span className="badge neutral">{topic.score}</span>
+                  </div>
+                  <strong>{topic.title}</strong>
+                  <p>{topic.why_now}</p>
+                  <small>{topic.evidence[0]?.path || topic.evidence[0]?.summary || topic.exercise}</small>
+                  <div className="learning-command">
+                    <code>{topic.start_command}</code>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Copy command for ${topic.title}`}
+                      title="Copy start command"
+                      onClick={() => copyCommand(topic.topic_id, topic.start_command)}
+                    >
+                      {copiedTopic === topic.topic_id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!recommendations.topics.length ? <p className="empty">No evidence-backed topics yet. Complete more AgentPack work to build learning history.</p> : null}
+            {copyError ? <p className="learning-warning">{copyError}</p> : null}
+            {recommendations.warnings.map((warning) => <p key={warning} className="learning-warning">{warning}</p>)}
+          </div>
+        ) : null}
+      </Panel>
       <div className="content-grid">
         <Panel title="Map Memory" icon={Brain}>
           <ItemList

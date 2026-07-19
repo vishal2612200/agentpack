@@ -4068,3 +4068,133 @@ h3,
   background: var(--control-bg);
   transition: border-color 180ms ease, background-color 180ms ease, box-shadow 180ms ease;
 }
+
+.learning-scope {
+  display: inline-grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  width: min(100%, 280px);
+  padding: 3px;
+  border: 1px solid var(--control-border);
+  border-radius: 7px;
+  background: var(--control-bg);
+}
+
+.learning-scope button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
+  color: var(--text-muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.learning-scope button.active {
+  background: var(--surface-strong);
+  color: var(--text);
+}
+
+.learning-metrics {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.learning-topic-list {
+  display: grid;
+}
+
+.learning-topic-row {
+  min-width: 0;
+  padding: 14px 0;
+  border-top: 1px solid var(--border);
+}
+
+.learning-topic-row:first-child {
+  padding-top: 0;
+  border-top: 0;
+}
+
+.learning-topic-copy,
+.learning-topic-copy strong,
+.learning-topic-copy p,
+.learning-topic-copy small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.learning-topic-copy p {
+  margin: 6px 0;
+  color: var(--text-muted);
+}
+
+.learning-topic-copy small {
+  color: var(--text-subtle);
+}
+
+.learning-topic-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+
+.learning-command {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+}
+
+.learning-command code {
+  min-width: 0;
+  padding: 8px 10px;
+  overflow: auto;
+  border: 1px solid var(--control-border);
+  border-radius: 6px;
+  background: var(--control-bg);
+  white-space: nowrap;
+}
+
+.learning-command .icon-button {
+  width: 34px;
+  height: 34px;
+}
+
+.learning-error,
+.learning-warning {
+  color: var(--warn);
+}
+
+.learning-error {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+  justify-content: space-between;
+}
+
+@media (max-width: 720px) {
+  .learning-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .learning-scope {
+    width: 100%;
+  }
+
+  .nav-list > .nav-group-label,
+  .nav-list > .advanced-nav {
+    grid-column: 1 / -1;
+  }
+
+  .nav-list-nested {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .nav-item span {
+    overflow-wrap: normal;
+  }
+}
