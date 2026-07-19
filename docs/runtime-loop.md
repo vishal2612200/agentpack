@@ -8,7 +8,7 @@ features around that router without becoming a provider proxy.
 | Inspect risk, tests, impact, retrieve refs, and memory influence for latest pack | MCP `get_task_map` and `agentpack dashboard` |
 | Retrieve selected, symbol, or omitted context after a pack | `agentpack retrieve` and MCP `retrieve_context` |
 | Record cheap task memory while work starts or finishes | `agentpack work` and `agentpack finish` |
-| Generate on-demand lessons, quiz, interview prep, or failure drills | `agentpack learn "<request>"` and `@agentpack-learn <request>` |
+| Recommend three project-grounded topics and coach one | `agentpack learn [<request>]`, `agentpack learn --global`, and `@agentpack-learn` |
 | Record learning feedback | `agentpack learn feedback helpful|not-helpful` |
 | Inspect advisory observer relationships | `.agentpack/observer-brief.md` and `agentpack dashboard` |
 | Track local token and retrieval activity | `agentpack perf --history N` and `agentpack stats` |
@@ -121,8 +121,9 @@ tasks changed, call out selected-file misses, or highlight repeated learning
 concepts. They do not replace `rg`, `git diff`, direct file reads, tests, or PR
 review evidence.
 
-On-demand `agentpack learn "quiz me on last task"` style requests append queued
-coach questions to `.agentpack/learning-sessions.jsonl`. The dashboard cockpit
-rolls those local records and observer signals into weak-spot, memory, and
-advisory graph views, so developers see what to revisit without slowing `work`,
-`loop`, or `finish`.
+`agentpack learn` ranks bounded current-work, system, and assessed weak-spot
+topics. Starting a topic appends a queued session to
+`.agentpack/learning-sessions.jsonl`; queued sessions remain unassessed until
+the agent host records a score and developer confirmation with `--complete`.
+The dashboard reads the same recommendation and mastery contract without
+recording an impression, so viewing it does not affect cooldown ranking.

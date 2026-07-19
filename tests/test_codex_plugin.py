@@ -160,7 +160,8 @@ def test_codex_plugin_skills_delegate_to_existing_cli() -> None:
     assert "agentpack handoff resume" in combined
     assert "agentpack resolve" in combined
     assert "agentpack skill-review" in combined
-    assert "current local AgentPack session context" in combined
+    assert "next evidence-backed technical topic" in combined
+    assert "agentpack learn --complete" in combined
     assert "agentpack status" in combined
     assert ".agentpack/learning.md" in combined
     assert ".agentpack/review.prompt.md" in combined

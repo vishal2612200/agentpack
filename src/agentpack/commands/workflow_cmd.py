@@ -22,6 +22,7 @@ from agentpack.core.loop_protocol import (
     resolve_runner_adapter,
     run_loop,
 )
+from agentpack.core.project_index import register_project
 from agentpack.core.thread_context import resolve_session_thread_option
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.learning.task_memory import record_task_memory
@@ -51,6 +52,10 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Initialize if needed, write a task, refresh context, and show next steps."""
         root = _root()
+        try:
+            register_project(root)
+        except OSError:
+            pass
         thread_id = resolve_session_thread_option(thread)
         stages: list[dict[str, Any]] = []
         if not no_init and not (root / ".agentpack" / "config.toml").exists():

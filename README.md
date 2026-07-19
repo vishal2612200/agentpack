@@ -83,6 +83,21 @@ and when another session needs to continue it. These are not separate products
 or isolated command families. They share the same local repository, task,
 session, context, evidence, and memory state.
 
+Normal development uses one four-command loop:
+
+```bash
+agentpack work "<task>"
+agentpack learn --json
+agentpack finish
+agentpack doctor
+```
+
+`learn` turns the same local work, project, and assessment memory into up to
+three evidence-backed topics: what matters now, how the system fits together,
+and a scored weak spot when one exists. `--global` explicitly ranks topics
+across registered AgentPack projects; the coding-agent host teaches the chosen
+topic and records the developer's result locally.
+
 ### Prepare with project evidence
 
 AgentPack starts from a concrete task and the repository as it exists now. It

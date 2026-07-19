@@ -150,13 +150,15 @@ partial review does not silently become the next run's input.
 For learning from the current local context:
 
 ```text
+$agentpack-learn
 $agentpack-learn explain the router scoring changes from this session
 ```
 
 The learning command keeps a stable prompt prefix for caching and appends the user learning statement at the end.
-It also asks the local CLI for `agentpack learn "<statement>" --json` first, so
-plugin lessons can use recent task memory, changed-file evidence, and Task
-Coach questions without adding another command.
+It asks the local CLI for `agentpack learn ["<statement>"] --json`, presents up
+to three evidence-backed topics, coaches the selected topic one question at a
+time, and records score plus developer confirmation through `--complete`.
+Cross-project recommendations require an explicit `--global` request.
 
 ## Rules For Codex
 

@@ -9,7 +9,13 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ## [Unreleased]
 
 ### Added
-- No changes yet.
+- Added evidence-backed local and cross-project learning recommendations, interactive topic sessions, scored mastery, and a read-only dashboard learning view.
+
+### Changed
+- Reframed the primary CLI surface around `work`, `learn`, `finish`, and `doctor` while retaining every existing command.
+
+### Fixed
+- Stopped treating queued or unscored learning sessions as weak spots.
 
 ## [0.4.0] — 2026-07-15
 
