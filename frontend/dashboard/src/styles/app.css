@@ -4467,6 +4467,35 @@ h3,
   gap: 2px;
 }
 
+.project-outcome-milestones {
+  display: grid;
+  gap: 3px;
+  margin: 5px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.project-outcome-milestones li {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.project-outcome-milestones li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-outcome-milestones li small {
+  flex: 0 0 auto;
+  text-transform: capitalize;
+}
+
 .project-progress {
   height: 5px;
   overflow: hidden;

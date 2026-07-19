@@ -1,6 +1,6 @@
 import { ClipboardCheck, Copy, Download, FilePenLine, Flag, Plus, ShieldAlert, X } from "lucide-react";
 import { useEffect, useMemo, useState, type FormEvent } from "react";
-import { loadProjectBrief, recordProjectEvent, updateProjectProfile } from "../../../data/loadDashboard";
+import { DashboardRequestError, loadProjectBrief, loadProjectOverview, recordProjectEvent, updateProjectProfile } from "../../../data/loadDashboard";
 import type { PresentationMode, ProjectOverview } from "../../../data/schema";
 import { EvidenceList, HealthMark, WorkspaceFilter, formatProjectDate, percentage, projectMutationId } from "./project-shared";
 
@@ -104,7 +104,17 @@ export function ProjectOverviewView({
             <div className="project-outcome-list">
               {overview.outcomes.slice(0, 6).map((outcome) => (
                 <article key={outcome.outcome_id} className="project-outcome-row">
-                  <div><strong>{outcome.title}</strong><small>{outcome.owner || "No owner"} · {outcome.target_date || "No target date"}</small></div>
+                  <div>
+                    <strong>{outcome.title}</strong>
+                    <small>{outcome.owner || "No owner"} · {outcome.target_date || "No target date"}</small>
+                    {outcome.milestones.length ? (
+                      <ul className="project-outcome-milestones" aria-label={`${outcome.title} milestones`}>
+                        {outcome.milestones.slice(0, 2).map((milestone) => (
+                          <li key={milestone.milestone_id}><span>{milestone.title}</span><small>{milestone.status.replace("_", " ")}</small></li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
                   <span className={`badge ${tone(outcome.status)}`}>{outcome.status.replace("_", " ")}</span>
                   <div className="project-progress" aria-label={`${outcome.title} progress`}><i style={{ width: `${outcome.progress_pct || 0}%` }} /></div>
                   <span>{percentage(outcome.progress_pct)}</span>
@@ -163,7 +173,7 @@ export function ProjectOverviewView({
         </section>
       </div>
 
-      {profileOpen ? <ProfileDialog overview={overview} onClose={() => setProfileOpen(false)} onSaved={(next) => { onOverviewChange(next); setProfileOpen(false); }} /> : null}
+      {profileOpen ? <ProfileDialog overview={overview} workspace={workspace} onClose={() => setProfileOpen(false)} onSaved={(next) => { onOverviewChange(next); setProfileOpen(false); }} /> : null}
       {recordOpen ? <RecordDialog kind={recordOpen} overview={overview} onClose={() => setRecordOpen("")} onSaved={(next) => { onOverviewChange(next); setRecordOpen(""); }} /> : null}
     </div>
   );
@@ -177,7 +187,7 @@ function EmptyProjectState({ title, detail }: { title: string; detail: string })
   return <div className="project-empty"><strong>{title}</strong><p>{detail}</p></div>;
 }
 
-function ProfileDialog({ overview, onClose, onSaved }: { overview: ProjectOverview; onClose: () => void; onSaved: (overview: ProjectOverview) => void }) {
+function ProfileDialog({ overview, workspace, onClose, onSaved }: { overview: ProjectOverview; workspace: string; onClose: () => void; onSaved: (overview: ProjectOverview) => void }) {
   const profile = overview.profile;
   const [displayName, setDisplayName] = useState(profile.display_name);
   const [purpose, setPurpose] = useState(profile.purpose);
@@ -186,11 +196,13 @@ function ProfileDialog({ overview, onClose, onSaved }: { overview: ProjectOvervi
   const [stage, setStage] = useState(profile.stage);
   const [staleDays, setStaleDays] = useState(profile.status_stale_days);
   const [error, setError] = useState("");
+  const [conflict, setConflict] = useState(false);
   const [saving, setSaving] = useState(false);
   const save = async (event: FormEvent) => {
     event.preventDefault();
     setSaving(true);
     setError("");
+    setConflict(false);
     try {
       const next = await updateProjectProfile({
         mutation_id: projectMutationId("profile"),
@@ -206,7 +218,23 @@ function ProfileDialog({ overview, onClose, onSaved }: { overview: ProjectOvervi
       });
       onSaved(next);
     } catch (caught) {
-      setError(caught instanceof Error ? caught.message : "Profile update failed.");
+      if (caught instanceof DashboardRequestError && caught.status === 409) {
+        setConflict(true);
+        setError("Shared configuration changed after this form opened. Reload the latest project before editing again.");
+      } else {
+        setError(caught instanceof Error ? caught.message : "Profile update failed.");
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+  const reload = async () => {
+    setSaving(true);
+    setError("");
+    try {
+      onSaved(await loadProjectOverview(workspace));
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Could not reload the project.");
     } finally {
       setSaving(false);
     }
@@ -225,7 +253,10 @@ function ProfileDialog({ overview, onClose, onSaved }: { overview: ProjectOvervi
           <label><span>Status stale after</span><input type="number" min={1} max={3650} value={staleDays} onChange={(event) => setStaleDays(Number(event.target.value))} /></label>
         </div>
         {error ? <p className="error-text" role="alert">{error}</p> : null}
-        <div className="project-modal-actions"><button type="button" className="secondary-action" onClick={onClose}>Cancel</button><button type="submit" className="primary-action" disabled={saving || !displayName.trim()}>{saving ? "Saving" : "Save shared profile"}</button></div>
+        <div className="project-modal-actions">
+          <button type="button" className="secondary-action" onClick={onClose}>Cancel</button>
+          {conflict ? <button type="button" className="primary-action" onClick={() => void reload()} disabled={saving}>{saving ? "Reloading" : "Reload latest"}</button> : <button type="submit" className="primary-action" disabled={saving || !displayName.trim()}>{saving ? "Saving" : "Save shared profile"}</button>}
+        </div>
       </form>
     </div>
   );

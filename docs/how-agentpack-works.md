@@ -66,7 +66,7 @@ what proof still needs to be checked.
 
 9. **Visualize**
 
-   `agentpack dashboard` turns the same local artifacts into a served context cockpit at `127.0.0.1:8765`. The loopback-only Python server provides the normalized snapshot, task-scoped graph, and PTY-backed AgentPack command runner. The view uses packaged assets and keeps graph nodes tied to source paths, retrieve refs, risks, tests, memory evidence, integrations, and suggested next actions.
+   `agentpack dashboard` turns the same local artifacts into a served project workspace at `127.0.0.1:8765`. Overview, Roadmap, Health, Activity, Work, and Knowledge connect user-owned outcomes to initiatives, tasks, and evidence across repository worktrees. The loopback-only Python server also retains the task-scoped graph and PTY-backed AgentPack command runner under Explore.
 
 10. **Measure**
 

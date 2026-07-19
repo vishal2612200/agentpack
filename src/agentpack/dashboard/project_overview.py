@@ -44,7 +44,7 @@ from agentpack.dashboard.models import (
 from agentpack.dashboard.project_state import load_dashboard_state
 from agentpack.learning.sessions import derive_mastery_status, read_learning_sessions_with_errors
 from agentpack.learning.task_memory import recent_task_memories
-from agentpack.session.events import read_events, record_event
+from agentpack.session.events import DEFAULT_EVENTS_PATH, configured_events_output, read_events, record_event
 from agentpack.session.identity import project_id, workspace_id
 
 
@@ -299,6 +299,9 @@ def read_project_events(
         except OSError:
             warnings.append(f"malformed_or_inaccessible_events: {workspace.path}")
             continue
+        malformed = _malformed_event_rows(root, limit=min(MAX_PROJECT_EVENTS, max(1, limit_per_workspace)))
+        if malformed:
+            warnings.append(f"malformed_events: {workspace.workspace_id} ({malformed} row(s))")
         for event in events:
             event_type = str(event.get("event_type") or "")
             if event_type not in PROJECT_EVENT_TYPES:
@@ -1079,7 +1082,15 @@ def _check_health(workspaces: list[ProjectWorkspace], *, check_kind: str) -> Pro
     if not events:
         return _health_dimension(label, "unknown", f"No {label} check has been recorded.")
     latest = max(events, key=lambda event: (_event_updated_at(event), str(event.get("event_id") or "")))
+    current_sha = _event_matches_current_sha(latest, workspaces)
     status = str(_event_value(latest, "status") or "").lower()
+    if check_kind == "release" and not current_sha:
+        return _health_dimension(
+            label,
+            "stale",
+            "The latest release check covers older code.",
+            event=latest,
+        )
     if status in {"failed", "failure", "blocked", "error"} or _safe_int(_event_value(latest, "returncode", 0)) != 0:
         return _health_dimension(
             label,
@@ -1087,7 +1098,7 @@ def _check_health(workspaces: list[ProjectWorkspace], *, check_kind: str) -> Pro
             f"The latest {label} check failed.",
             event=latest,
         )
-    if _event_matches_current_sha(latest, workspaces):
+    if current_sha:
         return _health_dimension(
             label,
             "healthy",
@@ -1517,6 +1528,30 @@ def _event_matches_current_sha(event: dict[str, Any], workspaces: list[ProjectWo
     event_workspace = str(event.get("workspace_id") or "")
     candidates = [workspace for workspace in workspaces if not event_workspace or workspace.workspace_id == event_workspace]
     return bool(sha) and any(workspace.git_sha and workspace.git_sha.startswith(sha[:12]) for workspace in candidates)
+
+
+def _malformed_event_rows(root: Path, *, limit: int) -> int:
+    outputs = [configured_events_output(root), DEFAULT_EVENTS_PATH]
+    malformed = 0
+    for output in dict.fromkeys(outputs):
+        path = root / output
+        if not path.exists():
+            continue
+        try:
+            lines = path.read_text(encoding="utf-8").splitlines()[-limit:]
+        except OSError:
+            continue
+        for line in lines:
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                malformed += 1
+                continue
+            if not isinstance(row, dict):
+                malformed += 1
+    return malformed
 
 
 def _path_subject(path: str) -> str:

@@ -1547,7 +1547,7 @@ Newer metrics include token-weighted precision. File precision answers "how many
 
 ### `agentpack dashboard`
 
-Serve a local context-decision cockpit from existing `.agentpack/` artifacts.
+Serve a local project workspace from existing `.agentpack/` artifacts.
 
 ```bash
 agentpack dashboard
@@ -1561,20 +1561,20 @@ or supports static dashboard HTML; run `agentpack dashboard` and keep the local
 server process alive while using the cockpit. If port `8765` is occupied, use
 `--port`.
 
-The cockpit is local-only and does not load remote scripts or assets. It uses a
+The dashboard is local-only and does not load remote scripts or assets. It uses a
 loopback-only Python server for the dashboard data API and PTY-backed terminal
-sessions. Missing artifacts render empty states with suggested commands such as
-`agentpack pack --task auto`, `agentpack learn`, and
-`agentpack benchmark --init`. It shows selected and omitted context, task-map
-risk, tests, memory influence, observer signals from
-`.agentpack/observer-events.jsonl`, MCP health, and loop/action state.
+sessions. Its primary views are Overview, Roadmap, Health, Activity, Work, and
+Knowledge. Impact map, AI context, files, checks, work sessions, settings, agent
+connection, diagnostics, and decision details remain available under Explore.
+Missing or partial artifacts produce explicit empty, stale, inaccessible, and
+retry states.
 
 The current workspace is backed by `/api/dashboard/v2`. It provides a typed
-workspace envelope, Tree-sitter impact inspection, agent-session continuity,
-and action inspection before execution. The Explain/Build preference is stored
-in the browser as `agentpack.dashboard.presentation_mode`; v1 routes remain
-available for existing integrations. See [`docs/dashboard-v2.md`](dashboard-v2.md)
-for request and response examples.
+workspace envelope, project overview, Tree-sitter impact inspection,
+agent-session continuity, and action inspection before execution. Visible
+Summary/Engineering lenses retain `explain`/`build` as their stored values. v1
+routes remain available for existing integrations. See
+[`docs/dashboard-v2.md`](dashboard-v2.md) for request and response examples.
 
 Command rows in the cockpit run through the local PTY runner instead of asking
 you to copy/paste. The server only allows AgentPack-related commands, runs them

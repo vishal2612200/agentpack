@@ -62,6 +62,18 @@ export interface ProjectEventMutation {
   evidence?: Array<{ kind: string; ref?: string; summary?: string; path?: string }>;
 }
 
+export class DashboardRequestError extends Error {
+  readonly status: number;
+  readonly payload: Record<string, unknown>;
+
+  constructor(message: string, status: number, payload: Record<string, unknown> = {}) {
+    super(message);
+    this.name = "DashboardRequestError";
+    this.status = status;
+    this.payload = payload;
+  }
+}
+
 export async function loadDashboardPayload(detail: "home" | "full" = "home"): Promise<DashboardPayload> {
   if (window.location.protocol === "file:") {
     throw new Error("Static dashboard files are no longer supported. Run `agentpack dashboard` and open the served URL.");
@@ -118,8 +130,10 @@ export async function updateProjectProfile(request: ProjectProfileMutation): Pro
     headers: { "Content-Type": "application/json", ...authHeaders() },
     body: JSON.stringify(request)
   });
-  const payload = await response.json() as { project_overview?: ProjectOverview; error?: string };
-  if (!response.ok || !payload.project_overview) throw new Error(payload.error || `Project profile update failed: ${response.status}`);
+  const payload = await response.json() as { project_overview?: ProjectOverview; error?: string } & Record<string, unknown>;
+  if (!response.ok || !payload.project_overview) {
+    throw new DashboardRequestError(payload.error || `Project profile update failed: ${response.status}`, response.status, payload);
+  }
   return payload.project_overview;
 }
 

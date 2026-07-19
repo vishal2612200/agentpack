@@ -52,10 +52,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/dashboard/workspace-desktop.png" alt="AgentPack workspace showing repository context, active work, proof, and project state" width="1100">
+  <img src="docs/assets/dashboard/workspace-desktop.png" alt="AgentPack project overview showing outcomes, milestone progress, independent health, risks, decisions, and evidence coverage" width="1100">
 </p>
 
-<p align="center"><sub>One local workspace for repository context, active work, review evidence, and continuity.</sub></p>
+<p align="center"><sub>One local project workspace connecting outcomes, initiatives, tasks, health, knowledge, and engineering evidence.</sub></p>
 
 ## The Missing Project Layer
 
@@ -113,9 +113,16 @@ inspectable starting point, not a guarantee that every selected file is right.
 ### Coordinate active work
 
 Task and session state, context freshness, token guidance, and same-worktree
-overlap warnings stay connected. The local dashboard makes the repository,
-active work, queued work, proof, and handoff state visible without requiring a
-hosted project index.
+overlap warnings stay connected. The local dashboard makes the project the
+primary object: user-owned outcomes lead to confirmed initiatives, tasks, and
+bounded evidence. Independent Delivery, Validation, Architecture, Release,
+Context, and Knowledge signals keep missing evidence visible as unknown rather
+than hiding it inside a composite score.
+
+Summary and Engineering lenses present the same local project state for
+different audiences. Deterministic status briefs can be copied or downloaded
+without writing repository files, and project reads can aggregate accessible
+worktrees while mutations stay scoped to the current one.
 
 Structured handoffs carry acceptance criteria, completed and remaining work,
 decisions, blockers, changed files, and validation evidence into another

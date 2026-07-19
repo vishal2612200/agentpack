@@ -5,6 +5,7 @@ import json
 import threading
 import urllib.error
 import urllib.request
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -190,6 +191,10 @@ def test_project_endpoints_are_authenticated_bounded_and_read_only_on_get(tmp_pa
         assert brief["mode"] == "summary"
         assert brief["markdown"].startswith("# Project API Status")
         assert dashboard["snapshot"]["project_overview"]["project_id"] == overview["project_id"]
+        schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+        _assert_schema(schema, "ProjectOverview", overview)
+        _assert_schema(schema, "ProjectTimelineResponse", timeline)
+        _assert_schema(schema, "ProjectStatusBrief", brief)
         with pytest.raises(urllib.error.HTTPError) as invalid:
             _request(f"{base}/api/project/overview?workspace=workspace-missing", server.state.token)
         assert invalid.value.code == 400
@@ -243,6 +248,41 @@ def test_project_profile_api_is_revisioned_and_idempotent(tmp_path: Path) -> Non
                 },
             )
         assert malformed.value.code == 400
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_project_profile_api_serializes_concurrent_revision_writes(tmp_path: Path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    config = agentpack / "config.toml"
+    config.write_text("[project]\ndisplay_name = \"Before\"\n", encoding="utf-8")
+    revision = hashlib.sha256(config.read_bytes()).hexdigest()
+    server = create_dashboard_server(tmp_path, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+
+    def update_profile(mutation_id: str) -> int:
+        try:
+            _post_request(
+                f"http://127.0.0.1:{server.server_address[1]}/api/project/profile",
+                server.state.token,
+                {
+                    "mutation_id": mutation_id,
+                    "expected_revision": revision,
+                    "profile": {"display_name": mutation_id},
+                },
+            )
+        except urllib.error.HTTPError as exc:
+            return exc.code
+        return 200
+
+    try:
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            statuses = list(executor.map(update_profile, ["profile-a", "profile-b"]))
+        assert sorted(statuses) == [200, 409]
     finally:
         server.shutdown()
         server.server_close()

@@ -406,13 +406,17 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if request is None:
                 return
             assert isinstance(request, ProjectProfileUpdateRequest)
+            root = self.server.state.root
             try:
-                profile, duplicate = apply_project_profile_update(
-                    self.server.state.root,
-                    mutation_id=request.mutation_id,
-                    expected_revision=request.expected_revision,
-                    updates=request.profile.model_dump(mode="json", exclude_none=True),
-                )
+                with self.server.state.lock:
+                    root = self.server.state.root
+                    profile, duplicate = apply_project_profile_update(
+                        root,
+                        mutation_id=request.mutation_id,
+                        expected_revision=request.expected_revision,
+                        updates=request.profile.model_dump(mode="json", exclude_none=True),
+                    )
+                    overview = build_project_overview(root).model_dump(mode="json")
             except ProjectReadOnlyError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
                 return
@@ -420,8 +424,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_json(
                     {
                         "error": str(exc),
-                        "config_revision": project_config_revision(self.server.state.root),
-                        "profile": build_project_overview(self.server.state.root).profile.model_dump(mode="json"),
+                        "config_revision": project_config_revision(root),
+                        "profile": build_project_overview(root).profile.model_dump(mode="json"),
                     },
                     status=HTTPStatus.CONFLICT,
                 )
@@ -433,7 +437,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 {
                     "profile": profile.model_dump(mode="json"),
                     "duplicate": duplicate,
-                    "project_overview": build_project_overview(self.server.state.root).model_dump(mode="json"),
+                    "project_overview": overview,
                 }
             )
             return
@@ -443,10 +447,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             assert isinstance(request, ProjectEventRequest)
             try:
-                event, duplicate = record_project_status_event(
-                    self.server.state.root,
-                    request.model_dump(mode="json"),
-                )
+                with self.server.state.lock:
+                    root = self.server.state.root
+                    event, duplicate = record_project_status_event(
+                        root,
+                        request.model_dump(mode="json"),
+                    )
+                    overview = build_project_overview(root).model_dump(mode="json")
             except ProjectReadOnlyError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
                 return
@@ -457,7 +464,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 {
                     "event": event,
                     "duplicate": duplicate,
-                    "project_overview": build_project_overview(self.server.state.root).model_dump(mode="json"),
+                    "project_overview": overview,
                 }
             )
             return

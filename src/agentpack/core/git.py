@@ -25,6 +25,17 @@ def is_git_repo(root: Path) -> bool:
     return out is not None and out.strip() == "true"
 
 
+def git_path(root: Path, name: str) -> Path | None:
+    """Resolve a repository metadata path for ordinary and linked worktrees."""
+    out = _run(["git", "rev-parse", "--git-path", name], root)
+    if not out or not out.strip():
+        return None
+    path = Path(out.strip())
+    if not path.is_absolute():
+        path = root / path
+    return path.resolve()
+
+
 def changed_files(root: Path) -> set[str]:
     """Unstaged + staged modified/added files."""
     result: set[str] = set()

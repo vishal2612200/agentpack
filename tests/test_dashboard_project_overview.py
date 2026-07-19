@@ -167,7 +167,8 @@ def test_project_events_are_append_only_idempotent_and_fold_latest(tmp_path: Pat
     assert duplicate is False
     assert was_duplicate is True
     assert repeated["event_id"] == first["event_id"]
-    assert warnings == []
+    assert len(warnings) == 1
+    assert warnings[0].startswith("malformed_events:")
     assert len(events) == 2
     assert folded["outcome-1"]["status"] == "at_risk"
     stored = [json.loads(line) for line in (tmp_path / ".agentpack" / "session-events.jsonl").read_text(encoding="utf-8").splitlines() if line.startswith("{") and not line.startswith("{malformed")]
@@ -297,6 +298,7 @@ def test_initiative_suggestions_require_two_tasks_and_respect_dismissal(tmp_path
         ("development", "passed", "old", "stale"),
         ("release", "passed", "current", "healthy"),
         ("release", "failed", "current", "blocked"),
+        ("release", "failed", "old", "stale"),
     ],
 )
 def test_health_check_transitions(

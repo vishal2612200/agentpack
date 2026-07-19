@@ -83,6 +83,7 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             overview.wait_for()
             assert "AgentPack Browser Fixture" in overview.inner_text()
             assert "Ship project dashboard" in overview.inner_text()
+            assert "Project contracts" in overview.inner_text()
             page.get_by_role("button", name="Engineering", exact=True).click()
             assert workspace.get_attribute("data-presentation-mode") == "build"
             page.reload(wait_until="networkidle")
