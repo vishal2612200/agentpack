@@ -165,6 +165,82 @@ class DashboardV2HandoffOperationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=48)
 
 
+class ProjectMilestoneInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default="", max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    owner: str = Field(default="", max_length=120)
+    due_date: str = Field(default="", max_length=10)
+
+
+class ProjectOutcomeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default="", max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    owner: str = Field(default="", max_length=120)
+    target_date: str = Field(default="", max_length=10)
+    milestones: list[ProjectMilestoneInput] = Field(default_factory=list, max_length=100)
+
+
+class ProjectProfilePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=160)
+    purpose: str | None = Field(default=None, max_length=2000)
+    audiences: list[str] | None = Field(default=None, max_length=20)
+    owners: list[str] | None = Field(default=None, max_length=20)
+    stage: str | None = Field(default=None, max_length=32)
+    links: dict[str, str] | None = Field(default=None, max_length=20)
+    environments: list[str] | None = Field(default=None, max_length=20)
+    status_stale_days: int | None = Field(default=None, ge=1, le=3650)
+    outcomes: list[ProjectOutcomeInput] | None = Field(default=None, max_length=50)
+
+
+class ProjectProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    expected_revision: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    profile: ProjectProfilePatch
+
+
+class ProjectEventEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(min_length=1, max_length=64)
+    ref: str = Field(default="", max_length=240)
+    summary: str = Field(default="", max_length=500)
+    path: str = Field(default="", max_length=500)
+
+
+class ProjectEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: Literal[
+        "project_outcome_status",
+        "project_milestone_status",
+        "project_risk_upsert",
+        "project_decision_recorded",
+        "project_initiative_confirmed",
+        "project_initiative_dismissed",
+    ]
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    entity_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    status: str = Field(default="", max_length=32)
+    title: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=2000)
+    owner: str = Field(default="", max_length=120)
+    severity: str = Field(default="", max_length=16)
+    mitigation: str = Field(default="", max_length=2000)
+    context: str = Field(default="", max_length=2000)
+    decision: str = Field(default="", max_length=2000)
+    outcome_id: str = Field(default="", max_length=64)
+    evidence: list[ProjectEventEvidenceInput] = Field(default_factory=list, max_length=20)
+
+
 class DashboardV2AgentOperationResponse(BaseModel):
     schema_version: Literal[2] = 2
     handoff: DashboardV2Handoff

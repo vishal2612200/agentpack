@@ -519,6 +519,121 @@ def build_project_status_brief(
     )
 
 
+def apply_project_profile_update(
+    root: Path,
+    *,
+    mutation_id: str,
+    expected_revision: str,
+    updates: dict[str, Any],
+) -> tuple[ProjectProfile, bool]:
+    root = root.resolve()
+    _validate_identifier(mutation_id, "mutation_id")
+    duplicate = find_project_mutation(root, mutation_id)
+    if duplicate is not None:
+        result = _event_value(duplicate, "result")
+        if isinstance(result, dict):
+            try:
+                return ProjectProfile.model_validate(result), True
+            except ValueError:
+                pass
+        return load_project_profile(root), True
+    profile = update_project_profile(root, updates, expected_revision=expected_revision)
+    record_event(
+        root,
+        "project_profile_updated",
+        {
+            "mutation_id": mutation_id,
+            "entity_id": profile.project_id,
+            "config_revision": profile.config_revision,
+            "result": profile.model_dump(mode="json"),
+            "evidence": [
+                {
+                    "kind": "config",
+                    "ref": profile.config_revision,
+                    "path": ".agentpack/config.toml",
+                    "summary": "Shared project definitions updated.",
+                }
+            ],
+        },
+        source="dashboard",
+    )
+    return profile, False
+
+
+def record_project_status_event(
+    root: Path,
+    request: dict[str, Any],
+) -> tuple[dict[str, Any], bool]:
+    root = root.resolve()
+    event_type = str(request.get("event_type") or "")
+    mutation_id = str(request.get("mutation_id") or "")
+    entity_id = str(request.get("entity_id") or "")
+    duplicate = find_project_mutation(root, mutation_id)
+    if duplicate is not None:
+        return duplicate, True
+    overview = build_project_overview(root)
+    values = {
+        key: value
+        for key, value in request.items()
+        if key not in {"event_type", "mutation_id", "entity_id", "evidence"} and value not in {"", None}
+    }
+    evidence = request.get("evidence") if isinstance(request.get("evidence"), list) else []
+
+    if event_type == "project_outcome_status":
+        if entity_id not in {item.outcome_id for item in overview.outcomes}:
+            raise ProjectValidationError("outcome does not belong to the selected project")
+        if values.get("status") not in {"planned", "on_track", "at_risk", "achieved", "paused"}:
+            raise ProjectValidationError("invalid outcome status")
+    elif event_type == "project_milestone_status":
+        if entity_id not in {milestone.milestone_id for item in overview.outcomes for milestone in item.milestones}:
+            raise ProjectValidationError("milestone does not belong to the selected project")
+        if values.get("status") not in {"planned", "in_progress", "blocked", "done"}:
+            raise ProjectValidationError("invalid milestone status")
+    elif event_type == "project_risk_upsert":
+        if not values.get("title"):
+            raise ProjectValidationError("risk title is required")
+        values["severity"] = values.get("severity") or "medium"
+        values["status"] = values.get("status") or "open"
+        if values["severity"] not in {"low", "medium", "high", "critical"}:
+            raise ProjectValidationError("invalid risk severity")
+        if values["status"] not in {"open", "mitigating", "accepted", "resolved"}:
+            raise ProjectValidationError("invalid risk status")
+    elif event_type == "project_decision_recorded":
+        if not values.get("title"):
+            raise ProjectValidationError("decision title is required")
+        values["status"] = values.get("status") or "proposed"
+        if values["status"] not in {"proposed", "accepted", "rejected", "superseded"}:
+            raise ProjectValidationError("invalid decision status")
+    elif event_type in {"project_initiative_confirmed", "project_initiative_dismissed"}:
+        suggestion = next(
+            (item for item in overview.initiative_suggestions if item.suggestion_id == entity_id),
+            None,
+        )
+        if suggestion is None:
+            raise ProjectValidationError("initiative suggestion is not available")
+        values.update(
+            {
+                "suggestion_id": suggestion.suggestion_id,
+                "title": values.get("title") or suggestion.title,
+                "description": values.get("description") or suggestion.rationale,
+                "evidence_task_ids": suggestion.task_ids,
+            }
+        )
+        if not evidence:
+            evidence = [item.model_dump(mode="json") for item in suggestion.evidence]
+    else:
+        raise ProjectValidationError(f"unsupported project event type: {event_type}")
+
+    return append_project_event(
+        root,
+        event_type,
+        mutation_id=mutation_id,
+        entity_id=entity_id,
+        values=values,
+        evidence=evidence,
+    )
+
+
 def _outcome_states(root: Path, events: list[dict[str, Any]]) -> list[ProjectOutcomeState]:
     status_events = fold_project_events(events, "project_outcome_status")
     milestone_events = fold_project_events(events, "project_milestone_status")

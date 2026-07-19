@@ -184,6 +184,16 @@ def test_finish_runs_diagnosis_capture_checks_done_and_archive(tmp_path: Path, m
         "threads-archive",
     ]
     assert any(call[:3] == [call[0], "-m", "agentpack.cli"] for call in calls)
+    events = [
+        json.loads(line)
+        for line in (tmp_path / ".agentpack" / "session-events.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    check = next(event for event in events if event["event_type"] == "check_completed")
+    assert check["check_kind"] == "development"
+    assert check["returncode"] == 0
+    assert "git_sha" in check
+    assert "workspace_id" in check
+    assert check["evidence"][0]["kind"] == "command"
 
 
 def test_finish_blocks_when_loop_is_not_ready(tmp_path: Path, monkeypatch) -> None:

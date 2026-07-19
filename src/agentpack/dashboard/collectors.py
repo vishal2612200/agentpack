@@ -61,6 +61,7 @@ from agentpack.dashboard.models import (
     SemanticGraphSummary,
 )
 from agentpack.dashboard.project_state import sync_dashboard_state
+from agentpack.dashboard.project_overview import build_project_overview
 from agentpack.learning.sessions import summarize_weak_spots
 from agentpack.learning.task_memory import recent_task_memories, recent_task_start_snapshots
 from agentpack.mcp_server import MCP_TOOL_NAMES
@@ -323,6 +324,7 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     snapshot.dashboard_feedback = state["feedback"]
     snapshot.analytics = state["analytics"]
     snapshot.unassigned_history_count = int(state["unassigned_history_count"])
+    snapshot.project_overview = build_project_overview(root)
     return snapshot
 
 

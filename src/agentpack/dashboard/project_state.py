@@ -73,6 +73,9 @@ def build_project_home_snapshot(root: Path) -> DashboardSnapshot:
     snapshot.dashboard_feedback = state["feedback"]
     snapshot.analytics = state["analytics"]
     snapshot.unassigned_history_count = int(state["unassigned_history_count"])
+    from agentpack.dashboard.project_overview import build_project_overview
+
+    snapshot.project_overview = build_project_overview(root)
     return snapshot
 
 

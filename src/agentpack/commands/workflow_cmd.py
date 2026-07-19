@@ -9,6 +9,7 @@ from typing import Any
 import typer
 
 from agentpack.commands._shared import console, _root, run_refresh
+from agentpack.core import git
 from agentpack.commands.guard import _context_is_fresh
 from agentpack.core.command_surface import refresh_commands
 from agentpack.core.config import load_config
@@ -173,10 +174,20 @@ def register(app: typer.Typer) -> None:
                 {
                     "task": finish_task,
                     "thread_id": thread_id or "",
+                    "check_kind": "development",
                     "command": stages[-1]["command"],
                     "status": "passed" if stages[-1]["returncode"] == 0 else "failed",
                     "returncode": stages[-1]["returncode"],
+                    "git_sha": git.current_sha(root) or "",
+                    "branch": git.current_branch(root) or "",
                     "summary": stages[-1].get("detail", ""),
+                    "evidence": [
+                        {
+                            "kind": "command",
+                            "ref": "development",
+                            "summary": str(stages[-1].get("detail", ""))[:500],
+                        }
+                    ],
                 },
                 source="workflow",
             )
