@@ -4358,6 +4358,124 @@ h3,
   color: var(--primary);
 }
 
+.project-data-notice {
+  display: grid;
+  gap: 12px;
+  border: 1px solid color-mix(in srgb, var(--warn) 36%, var(--border));
+  border-left: 3px solid var(--warn);
+  border-radius: var(--radius-md);
+  background: color-mix(in srgb, var(--surface-soft) 92%, var(--warn-soft));
+  padding: 14px 16px;
+}
+
+.project-data-notice-heading {
+  display: grid;
+  grid-template-columns: 22px minmax(0, 1fr);
+  align-items: start;
+  gap: 10px;
+}
+
+.project-data-notice-heading > svg {
+  margin-top: 2px;
+  color: var(--warn);
+}
+
+.project-data-notice h2,
+.project-data-notice p {
+  margin: 0;
+}
+
+.project-data-notice h2 {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.project-data-notice-heading p {
+  margin-top: 3px;
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+.project-data-notice > details {
+  margin-left: 32px;
+}
+
+.project-data-notice summary {
+  width: fit-content;
+  color: var(--warn);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.project-data-groups {
+  display: grid;
+  gap: 0;
+  margin-top: 10px;
+  border-top: 1px solid var(--border);
+}
+
+.project-data-group {
+  display: grid;
+  gap: 4px;
+  border-bottom: 1px solid var(--border);
+  padding: 10px 0;
+}
+
+.project-data-group:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.project-data-group > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.project-data-group strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.project-data-group > div:first-child > span {
+  min-width: 22px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  padding: 1px 6px;
+  font-size: 10px;
+  text-align: center;
+}
+
+.project-data-group > p,
+.project-data-technical p {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.project-data-technical {
+  display: flex;
+  min-width: 0;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 6px 10px;
+}
+
+.project-data-technical code {
+  color: var(--text-subtle);
+  font-size: 10px;
+}
+
+.project-data-technical p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .project-metric-strip {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
@@ -5134,6 +5252,14 @@ h3,
 }
 
 @media (max-width: 520px) {
+  .project-data-notice {
+    padding: 12px;
+  }
+
+  .project-data-notice > details {
+    margin-left: 0;
+  }
+
   .project-product-view h1,
   .project-knowledge-summary h1 {
     font-size: 23px;

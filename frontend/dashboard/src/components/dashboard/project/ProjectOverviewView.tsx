@@ -2,6 +2,7 @@ import { ArrowRight, ClipboardCheck, Copy, Download, FilePenLine, Flag, Plus, Sh
 import { useEffect, useState, type FormEvent } from "react";
 import { DashboardRequestError, loadProjectBrief, loadProjectOverview, recordProjectEvent, updateProjectProfile } from "../../../data/loadDashboard";
 import type { PresentationMode, ProjectOverview } from "../../../data/schema";
+import { ProjectDataNotice } from "./ProjectDataNotice";
 import { EvidenceList, HealthMark, WorkspaceFilter, formatProjectDate, percentage, projectMutationId } from "./project-shared";
 
 export function ProjectOverviewView({
@@ -84,7 +85,7 @@ export function ProjectOverviewView({
       </section>
 
       {message ? <p className="project-inline-message" role="status">{message}</p> : null}
-      {overview.partial ? <p className="project-warning"><ShieldAlert size={15} /> Partial project data: {overview.warnings.join("; ")}</p> : null}
+      {overview.partial ? <ProjectDataNotice warnings={overview.warnings} accessibleWorktrees={overview.workspaces.length} mode={mode} /> : null}
       {overview.read_only ? <p className="project-warning"><ShieldAlert size={15} /> This project is read-only. Shared definitions and local project status cannot be changed.</p> : null}
 
       <section className="project-now" aria-labelledby="project-now-title">

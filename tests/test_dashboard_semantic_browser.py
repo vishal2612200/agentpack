@@ -77,7 +77,24 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
                 accept_downloads=True,
             )
             page = context.new_page()
+            partial_warnings = [
+                "inaccessible_worktree: /private/tmp/agentpack-stale-a",
+                "inaccessible_worktree: /private/tmp/agentpack-stale-b",
+                "inaccessible_worktree: /private/tmp/agentpack-stale-c",
+                "inaccessible_worktree: /private/tmp/agentpack-stale-d",
+                "partial_result: limited worktree discovery to 20",
+                "empty_roadmap: no declared project outcomes",
+            ]
+
+            def serve_partial_home(route) -> None:
+                response = route.fetch()
+                body = response.json()
+                body["snapshot"]["project_overview"].update({"partial": True, "warnings": partial_warnings})
+                route.fulfill(status=response.status, content_type="application/json", body=json.dumps(body))
+
+            page.route("**/api/dashboard/v2?detail=home", serve_partial_home)
             page.goto(f"http://127.0.0.1:{server.server_address[1]}/", wait_until="networkidle")
+            page.unroute("**/api/dashboard/v2?detail=home", serve_partial_home)
             workspace = page.get_by_test_id("dashboard-workspace")
             overview = page.get_by_test_id("project-overview-view")
             overview.wait_for()
@@ -92,8 +109,22 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
                 "Knowledge",
             ]
             assert "Runtime nominal" not in page.locator("body").inner_text()
+            data_notice = page.get_by_test_id("project-data-notice")
+            assert "Some project information is unavailable" in data_notice.inner_text()
+            assert "4 registered worktrees are unavailable" in data_notice.inner_text()
+            assert "/private/tmp" not in data_notice.inner_text()
+            data_notice.locator("summary").click()
+            assert "Review 3 data gaps" in data_notice.inner_text()
+            assert "4 registered worktrees were excluded" in data_notice.inner_text()
+            assert "agentpack-stale-a" not in data_notice.inner_text()
             page.get_by_role("button", name="Engineering", exact=True).click()
             assert workspace.get_attribute("data-presentation-mode") == "build"
+            assert "inaccessible_worktree" in data_notice.inner_text()
+            assert "agentpack-stale-a" in data_notice.inner_text()
+            assert "/private/tmp" not in data_notice.inner_text()
+            page.set_viewport_size({"width": 390, "height": 844})
+            assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
+            page.set_viewport_size({"width": 1440, "height": 900})
             page.reload(wait_until="networkidle")
             assert workspace.get_attribute("data-presentation-mode") == "build"
             page.get_by_role("button", name="Summary", exact=True).click()
