@@ -3187,7 +3187,7 @@ body {
 .topbar {
   min-height: 72px;
   padding: 12px 24px;
-  grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) max-content;
+  grid-template-columns: minmax(240px, 0.8fr) minmax(220px, 1fr) max-content max-content;
   border-bottom-color: var(--border);
   background: #09161b;
   backdrop-filter: none;
@@ -3801,7 +3801,8 @@ body {
 }
 
 @media (max-width: 1500px) {
-  .topbar-status {
+  .topbar-status > .topbar-meta,
+  .topbar-status > .status-pill {
     display: none;
   }
 }

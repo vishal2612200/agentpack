@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 
 import typer.main
+from click.utils import strip_ansi
 from typer.testing import CliRunner
 
 from agentpack.cli import app
@@ -64,7 +65,7 @@ def test_root_help_groups_advanced_commands_without_hiding_them() -> None:
     assert "release-check" in result.output
     release_command = typer.main.get_command(app).commands["release-check"]
     assert release_command.name == "release-check"
-    release_help = CliRunner().invoke(app, ["release-check", "--help"]).output
+    release_help = strip_ansi(CliRunner().invoke(app, ["release-check", "--help"]).output)
     assert "release-check" in release_help
     assert "--skip-benchmark" in release_help
 
