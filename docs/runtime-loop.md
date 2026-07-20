@@ -50,7 +50,7 @@ The runtime loop keeps the first context pack small and reversible:
 - **Compress** repo files into budget-aware pack views and compress noisy command output into failure-focused summaries.
 - **Cache** snapshots, summaries, pack metadata, registry records, session events, and learning feedback locally under `.agentpack/`.
 - **Map** selected and omitted files into Task Map v1 rows: why selected, advisory risk, related tests, likely impact, and retrieve refs.
-- **Visualize** the same local evidence through project Overview, Roadmap, Health, Activity, Work, and Knowledge views, with task-scoped graph and context tools under Explore.
+- **Visualize** the same local evidence through project Overview, Roadmap, Work, Health, and Knowledge views, with Activity available from Overview and task-scoped graph and context tools under Explore.
 - **Retrieve** precise file, symbol, or omitted context from the latest pack registry through `agentpack retrieve` or MCP `retrieve_context`.
 
 Rendered packs are prompt-cache friendly by default. Every markdown and compact

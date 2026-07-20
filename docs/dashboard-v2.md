@@ -5,6 +5,11 @@ dashboard. The primary hierarchy is `Project -> Outcomes -> Initiatives ->
 Tasks -> Evidence`. Existing snapshot, graph, map, terminal, and action routes
 remain available for compatibility.
 
+The stable primary views are **Overview**, **Roadmap**, **Work**, **Health**,
+and **Knowledge**. Activity remains available from Overview and the command
+palette. Repository, operations, connection, and diagnostic tools are grouped
+under Explore so the project decision remains the first surface.
+
 The canonical response schema is
 [`docs/schemas/dashboard-v2.schema.json`](schemas/dashboard-v2.schema.json).
 The server validates its payloads through the Python models in
@@ -155,6 +160,22 @@ navigation and `/actions/inspect` before `/actions/run`. The dashboard stores
 the global Summary/Engineering preference locally as
 `agentpack.dashboard.presentation_mode`. Stored values remain `explain` or
 `build` for compatibility.
+
+The top-bar search control opens a keyboard command palette with `Cmd+K` or
+`Ctrl+K`. It indexes loaded project evidence immediately and requests bounded
+repository evidence lazily. Palette actions are fixed, parameterless AgentPack
+actions and always pass through the existing inspection and confirmation flow.
+Queries, task text, command strings, and result content are never persisted;
+only eight result IDs per project may be stored as recents.
+
+The home payload includes independent API, snapshot, Context, and MCP evidence
+instead of a composite runtime claim. It may also include
+`cached_project_status`, a server-produced, secret-redacted project summary
+that excludes absolute paths, task and memory content, commands, graphs,
+terminal history, and action history. The browser retains one compatible
+snapshot for up to seven days. Last-known mode is read-only: navigation and
+cached project-evidence search remain available, while mutations, checks,
+actions, brief generation, and project switching are disabled.
 
 When Tree-sitter, MCP, WebGL, or an optional artifact is unavailable, v2 keeps
 the already-loaded envelope and reports an unavailable or stale state. Clients

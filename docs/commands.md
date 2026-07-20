@@ -1558,16 +1558,23 @@ agentpack dashboard --json
 
 The dashboard serves at `http://127.0.0.1:8765/` by default. It no longer writes
 or supports static dashboard HTML; run `agentpack dashboard` and keep the local
-server process alive while using the cockpit. If port `8765` is occupied, use
+server process alive while using the dashboard. If port `8765` is occupied, use
 `--port`.
 
 The dashboard is local-only and does not load remote scripts or assets. It uses a
 loopback-only Python server for the dashboard data API and PTY-backed terminal
-sessions. Its primary views are Overview, Roadmap, Health, Activity, Work, and
-Knowledge. Impact map, AI context, files, checks, work sessions, settings, agent
-connection, diagnostics, and decision details remain available under Explore.
+sessions. Its primary views are Overview, Roadmap, Work, Health, and Knowledge.
+Activity opens from Overview or the `Cmd+K` / `Ctrl+K` command palette. Impact
+map, AI context, files, checks, work sessions, settings, agent connection,
+diagnostics, and decision details remain available under Explore.
 Missing or partial artifacts produce explicit empty, stale, inaccessible, and
 retry states.
+
+The lightweight home response includes independent API, snapshot, Context, and
+MCP evidence plus a privacy-bounded project-status snapshot. The browser may
+retain that redacted snapshot for seven days and render it as read-only
+`Last known` data while reconnecting. It excludes absolute paths, task and
+memory content, commands, graphs, terminal history, and action history.
 
 The current workspace is backed by `/api/dashboard/v2`. It provides a typed
 workspace envelope, project overview, Tree-sitter impact inspection,

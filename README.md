@@ -124,6 +124,12 @@ different audiences. Deterministic status briefs can be copied or downloaded
 without writing repository files, and project reads can aggregate accessible
 worktrees while mutations stay scoped to the current one.
 
+Overview leads with an evidence-ranked Now section. The five stable project
+views are Overview, Roadmap, Work, Health, and Knowledge; Activity and advanced
+repository tools remain available from Overview, Explore, and the `Cmd+K` /
+`Ctrl+K` command palette. A redacted seven-day browser snapshot provides a
+read-only last-known project status when the local server is unavailable.
+
 Structured handoffs carry acceptance criteria, completed and remaining work,
 decisions, blockers, changed files, and validation evidence into another
 supported session. A handoff transfers bounded project state; it does not

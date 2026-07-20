@@ -66,7 +66,7 @@ what proof still needs to be checked.
 
 9. **Visualize**
 
-   `agentpack dashboard` turns the same local artifacts into a served project workspace at `127.0.0.1:8765`. Overview, Roadmap, Health, Activity, Work, and Knowledge connect user-owned outcomes to initiatives, tasks, and evidence across repository worktrees. The loopback-only Python server also retains the task-scoped graph and PTY-backed AgentPack command runner under Explore.
+   `agentpack dashboard` turns the same local artifacts into a served project workspace at `127.0.0.1:8765`. Overview, Roadmap, Work, Health, and Knowledge connect user-owned outcomes to initiatives, tasks, and evidence across repository worktrees. Activity opens from Overview or the command palette. The loopback-only Python server also retains the task-scoped graph and PTY-backed AgentPack command runner under Explore.
 
 10. **Measure**
 
