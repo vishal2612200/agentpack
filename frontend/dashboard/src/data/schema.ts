@@ -504,6 +504,32 @@ export interface ProjectTimelineEvent extends ProjectDerivedRecord {
   tags: string[];
 }
 
+export interface ProjectFocusItem extends ProjectDerivedRecord {
+  item_id: string;
+  kind: "health" | "risk" | "decision" | "milestone" | "initiative";
+  entity_id: string;
+  title: string;
+  summary: string;
+  status: string;
+  severity: string;
+  target_view: string;
+}
+
+export interface ProjectNextAction extends ProjectDerivedRecord {
+  action_id: string;
+  entity_id: string;
+  title: string;
+  rationale: string;
+  target_view: string;
+}
+
+export interface ProjectFocusSnapshot extends ProjectDerivedRecord {
+  outcome_id: string;
+  milestone_id: string;
+  attention: ProjectFocusItem[];
+  next_actions: ProjectNextAction[];
+}
+
 export interface ProjectStatusBrief extends ProjectDerivedRecord {
   mode: "summary" | "engineering";
   markdown: string;
@@ -524,9 +550,40 @@ export interface ProjectOverview extends ProjectDerivedRecord {
   risks: ProjectRisk[];
   decisions: ProjectDecision[];
   health: ProjectHealthSnapshot;
+  focus?: ProjectFocusSnapshot | null;
   recent_changes: ProjectTimelineEvent[];
   partial: boolean;
   read_only: boolean;
+}
+
+export interface CachedProjectProfile {
+  display_name: string;
+  purpose: string;
+  audiences: string[];
+  owners: string[];
+  stage: string;
+  environments: string[];
+  status_stale_days: number;
+}
+
+export interface CachedProjectStatus {
+  schema_version: 1;
+  project_id: string;
+  generated_at: string;
+  branch: string;
+  git_sha: string;
+  profile: CachedProjectProfile;
+  metrics: ProjectMetrics;
+  outcomes: ProjectOutcomeState[];
+  initiatives: ProjectInitiative[];
+  risks: ProjectRisk[];
+  decisions: ProjectDecision[];
+  health: ProjectHealthSnapshot;
+  focus?: ProjectFocusSnapshot | null;
+  recent_changes: ProjectTimelineEvent[];
+  partial: boolean;
+  read_only: boolean;
+  warnings: string[];
 }
 
 export interface DashboardSnapshot {
@@ -615,6 +672,8 @@ export interface DashboardSnapshot {
   };
   mcp_health?: {
     status?: "healthy" | "warning" | "missing" | "unknown";
+    checked_at?: string;
+    source?: string;
     runtime_status?: string;
     runtime_ok?: boolean;
     runtime_detail?: string;

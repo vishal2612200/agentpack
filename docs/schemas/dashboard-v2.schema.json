@@ -116,7 +116,7 @@
           }
         },
         "mcp_health": {
-          "type": "object"
+          "$ref": "#/$defs/McpHealth"
         }
       }
     },
@@ -157,6 +157,17 @@
           }
         }
       }
+    },
+    "cached_project_status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CachedProjectStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "$defs": {
@@ -731,7 +742,7 @@
           }
         },
         "mcp_health": {
-          "type": "object"
+          "$ref": "#/$defs/McpHealth"
         }
       }
     },
@@ -1373,6 +1384,119 @@
       ],
       "title": "ProjectHealthDimension",
       "type": "object"
+    },
+    "McpHealth": {
+      "type": "object",
+      "title": "McpHealth",
+      "additionalProperties": true,
+      "properties": {
+        "status": {"type": "string", "default": "unknown"},
+        "checked_at": {"type": "string", "default": ""},
+        "source": {"type": "string", "default": ""},
+        "runtime_status": {"type": "string", "default": "unknown"},
+        "runtime_ok": {"type": "boolean", "default": false},
+        "runtime_detail": {"type": "string", "default": ""},
+        "registered": {"type": "boolean", "default": false},
+        "registrations": {"type": "array", "items": {"type": "object"}},
+        "live_exposure": {"type": "string", "default": "unknown"},
+        "expected_tools": {"type": "array", "items": {"type": "string"}},
+        "remediation": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectFocusItem": {
+      "type": "object",
+      "title": "ProjectFocusItem",
+      "required": ["item_id", "kind", "entity_id", "title", "target_view"],
+      "properties": {
+        "item_id": {"type": "string"},
+        "kind": {"enum": ["health", "risk", "decision", "milestone", "initiative"]},
+        "entity_id": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string", "default": ""},
+        "status": {"type": "string", "default": ""},
+        "severity": {"type": "string", "default": ""},
+        "target_view": {"type": "string"},
+        "source": {"enum": ["declared", "observed", "inferred"], "default": "observed"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "updated_at": {"type": "string", "default": ""},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/ProjectEvidence"}},
+        "workspace_id": {"type": "string", "default": ""},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectNextAction": {
+      "type": "object",
+      "title": "ProjectNextAction",
+      "required": ["action_id", "entity_id", "title", "target_view"],
+      "properties": {
+        "action_id": {"type": "string"},
+        "entity_id": {"type": "string"},
+        "title": {"type": "string"},
+        "rationale": {"type": "string", "default": ""},
+        "target_view": {"type": "string"},
+        "source": {"enum": ["declared", "observed", "inferred"], "default": "observed"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "updated_at": {"type": "string", "default": ""},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/ProjectEvidence"}},
+        "workspace_id": {"type": "string", "default": ""},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectFocusSnapshot": {
+      "type": "object",
+      "title": "ProjectFocusSnapshot",
+      "properties": {
+        "outcome_id": {"type": "string", "default": ""},
+        "milestone_id": {"type": "string", "default": ""},
+        "attention": {"type": "array", "items": {"$ref": "#/$defs/ProjectFocusItem"}},
+        "next_actions": {"type": "array", "items": {"$ref": "#/$defs/ProjectNextAction"}},
+        "source": {"enum": ["declared", "observed", "inferred"], "default": "observed"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "updated_at": {"type": "string", "default": ""},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/ProjectEvidence"}},
+        "workspace_id": {"type": "string", "default": ""},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "CachedProjectProfile": {
+      "type": "object",
+      "title": "CachedProjectProfile",
+      "properties": {
+        "display_name": {"type": "string", "default": ""},
+        "purpose": {"type": "string", "default": ""},
+        "audiences": {"type": "array", "items": {"type": "string"}},
+        "owners": {"type": "array", "items": {"type": "string"}},
+        "stage": {"type": "string", "default": ""},
+        "environments": {"type": "array", "items": {"type": "string"}},
+        "status_stale_days": {"type": "integer", "default": 14}
+      }
+    },
+    "CachedProjectStatus": {
+      "type": "object",
+      "title": "CachedProjectStatus",
+      "required": ["project_id", "generated_at", "profile", "metrics", "health"],
+      "properties": {
+        "schema_version": {"const": 1, "default": 1},
+        "project_id": {"type": "string"},
+        "generated_at": {"type": "string"},
+        "branch": {"type": "string", "default": ""},
+        "git_sha": {"type": "string", "default": ""},
+        "profile": {"$ref": "#/$defs/CachedProjectProfile"},
+        "metrics": {"$ref": "#/$defs/ProjectMetrics"},
+        "outcomes": {"type": "array", "items": {"$ref": "#/$defs/ProjectOutcomeState"}},
+        "initiatives": {"type": "array", "items": {"$ref": "#/$defs/ProjectInitiative"}},
+        "risks": {"type": "array", "items": {"$ref": "#/$defs/ProjectRisk"}},
+        "decisions": {"type": "array", "items": {"$ref": "#/$defs/ProjectDecision"}},
+        "health": {"$ref": "#/$defs/ProjectHealthSnapshot"},
+        "focus": {
+          "anyOf": [{"$ref": "#/$defs/ProjectFocusSnapshot"}, {"type": "null"}],
+          "default": null
+        },
+        "recent_changes": {"type": "array", "items": {"$ref": "#/$defs/ProjectTimelineEvent"}},
+        "partial": {"type": "boolean", "default": false},
+        "read_only": {"type": "boolean", "default": true},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
     },
     "ProjectHealthSnapshot": {
       "properties": {
@@ -2380,6 +2504,17 @@
         },
         "health": {
           "$ref": "#/$defs/ProjectHealthSnapshot"
+        },
+        "focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectFocusSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "recent_changes": {
           "items": {

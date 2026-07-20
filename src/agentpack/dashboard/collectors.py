@@ -328,6 +328,15 @@ def build_project_dashboard_snapshot(root: Path) -> DashboardSnapshot:
     return snapshot
 
 
+def collect_runtime_evidence(root: Path) -> tuple[ContextHealth, McpHealth]:
+    """Collect the bounded shell status signals without building the full dashboard."""
+    root = root.resolve()
+    agentpack_dir = root / ".agentpack"
+    meta = load_pack_metadata(root) if agentpack_dir.exists() else None
+    freshness = task_freshness(root, meta) if meta else None
+    return _context_health(meta, freshness), _mcp_health(root)
+
+
 def semantic_graph_summary(
     root: Path,
     *,
@@ -1522,6 +1531,8 @@ def _mcp_health(root: Path) -> McpHealth:
         remediation.append("agentpack repair --agent all")
     return McpHealth(
         status=status,
+        checked_at=datetime.now(timezone.utc).isoformat(),
+        source="local MCP process probe and integration registrations",
         runtime_status=runtime.status,
         runtime_ok=runtime.ok,
         runtime_detail=runtime.detail,

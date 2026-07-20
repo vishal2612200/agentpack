@@ -37,6 +37,7 @@ ProjectRiskSeverity = Literal["low", "medium", "high", "critical"]
 ProjectRiskStatus = Literal["open", "mitigating", "accepted", "resolved"]
 ProjectDecisionStatus = Literal["proposed", "accepted", "rejected", "superseded"]
 ProjectHealthStatus = Literal["healthy", "attention", "blocked", "stale", "unknown"]
+ProjectFocusKind = Literal["health", "risk", "decision", "milestone", "initiative"]
 
 
 class ProjectEvidence(BaseModel):
@@ -172,6 +173,32 @@ class ProjectTimelineEvent(ProjectDerivedRecord):
     tags: list[str] = Field(default_factory=list)
 
 
+class ProjectFocusItem(ProjectDerivedRecord):
+    item_id: str
+    kind: ProjectFocusKind
+    entity_id: str
+    title: str
+    summary: str = ""
+    status: str = ""
+    severity: str = ""
+    target_view: str
+
+
+class ProjectNextAction(ProjectDerivedRecord):
+    action_id: str
+    entity_id: str
+    title: str
+    rationale: str = ""
+    target_view: str
+
+
+class ProjectFocusSnapshot(ProjectDerivedRecord):
+    outcome_id: str = ""
+    milestone_id: str = ""
+    attention: list[ProjectFocusItem] = Field(default_factory=list)
+    next_actions: list[ProjectNextAction] = Field(default_factory=list)
+
+
 class ProjectStatusBrief(ProjectDerivedRecord):
     mode: Literal["summary", "engineering"]
     markdown: str
@@ -192,6 +219,7 @@ class ProjectOverview(ProjectDerivedRecord):
     risks: list[ProjectRisk] = Field(default_factory=list)
     decisions: list[ProjectDecision] = Field(default_factory=list)
     health: ProjectHealthSnapshot = Field(default_factory=ProjectHealthSnapshot)
+    focus: ProjectFocusSnapshot | None = None
     recent_changes: list[ProjectTimelineEvent] = Field(default_factory=list)
     partial: bool = False
     read_only: bool = False
@@ -473,6 +501,8 @@ class McpRegistration(BaseModel):
 
 class McpHealth(BaseModel):
     status: McpHealthStatus = "unknown"
+    checked_at: str = ""
+    source: str = ""
     runtime_status: str = ""
     runtime_ok: bool = False
     runtime_detail: str = ""

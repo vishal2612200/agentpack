@@ -2,13 +2,17 @@
 
 from __future__ import annotations
 
+import json
+import re
 from pathlib import Path
 from typing import Any
 
 from agentpack.core.handoff import HandoffError, HandoffStore
+from agentpack.core.redactor import redact_secrets
 from agentpack.dashboard.actions import build_dashboard_action_command
 from agentpack.dashboard.collectors import (
     build_project_dashboard_snapshot,
+    collect_runtime_evidence,
     semantic_graph_summary,
 )
 from agentpack.dashboard.graph import build_dashboard_graph
@@ -30,10 +34,13 @@ from agentpack.dashboard.contracts import (
     DashboardV2ImpactResponse,
     DashboardV2ImpactScene,
     DashboardV2Payload,
+    CachedProjectProfile,
+    CachedProjectStatus,
 )
 
 
 DASHBOARD_V2_SCHEMA_VERSION = 2
+MAX_CACHED_PROJECT_BYTES = 256 * 1024
 
 
 def build_dashboard_v2_payload(root: Path, *, detail: str = "home") -> dict[str, Any]:
@@ -43,6 +50,8 @@ def build_dashboard_v2_payload(root: Path, *, detail: str = "home") -> dict[str,
         if detail == "home"
         else build_project_dashboard_snapshot(root)
     )
+    if detail == "home":
+        snapshot.context, snapshot.mcp_health = collect_runtime_evidence(root)
     graph = build_dashboard_graph(snapshot, root) if detail != "home" else None
     dashboard_map = build_dashboard_map(snapshot, graph) if graph is not None else None
     payload = DashboardV2Payload(
@@ -60,8 +69,117 @@ def build_dashboard_v2_payload(root: Path, *, detail: str = "home") -> dict[str,
             unresolved_count=snapshot.semantic_graph.unresolved_count,
             capabilities=snapshot.semantic_graph.capabilities,
         ),
+        cached_project_status=_cached_project_status(snapshot, root),
     )
     return payload.model_dump(mode="json")
+
+
+def _cached_project_status(snapshot, root: Path) -> CachedProjectStatus | None:
+    overview = snapshot.project_overview
+    if overview is None:
+        return None
+    absolute_paths = {
+        str(root.resolve()),
+        str(snapshot.project.path or ""),
+        *[workspace.path for workspace in overview.workspaces],
+    }
+    bounds = ((20, 20, 3, 20), (10, 10, 1, 10), (5, 5, 0, 5))
+    last_payload: dict[str, Any] | None = None
+    redaction_warnings: list[str] = []
+    for outcome_limit, milestone_limit, evidence_limit, recent_limit in bounds:
+        payload = {
+            "schema_version": 1,
+            "project_id": overview.project_id,
+            "generated_at": overview.generated_at,
+            "branch": snapshot.project.branch,
+            "git_sha": snapshot.project.git_sha,
+            "profile": CachedProjectProfile(
+                display_name=overview.profile.display_name,
+                purpose=overview.profile.purpose,
+                audiences=overview.profile.audiences,
+                owners=overview.profile.owners,
+                stage=overview.profile.stage,
+                environments=overview.profile.environments,
+                status_stale_days=overview.profile.status_stale_days,
+            ).model_dump(mode="json"),
+            "metrics": overview.metrics.model_dump(mode="json"),
+            "outcomes": [
+                outcome.model_copy(update={"milestones": outcome.milestones[:milestone_limit]}).model_dump(mode="json")
+                for outcome in overview.outcomes[:outcome_limit]
+            ],
+            "initiatives": [item.model_dump(mode="json") for item in overview.initiatives[:20]],
+            "risks": [item.model_dump(mode="json") for item in overview.risks[:20]],
+            "decisions": [item.model_dump(mode="json") for item in overview.decisions[:20]],
+            "health": overview.health.model_dump(mode="json"),
+            "focus": overview.focus.model_dump(mode="json") if overview.focus else None,
+            "recent_changes": [
+                item.model_dump(mode="json")
+                for item in overview.recent_changes
+                if item.kind != "dashboard"
+            ][:recent_limit],
+            "partial": overview.partial,
+            "read_only": True,
+            "warnings": overview.warnings[:10],
+        }
+        payload = _sanitize_cache_value(
+            payload,
+            absolute_paths=absolute_paths,
+            evidence_limit=evidence_limit,
+        )
+        raw = json.dumps(payload, ensure_ascii=True, separators=(",", ":"), sort_keys=True)
+        redacted, warnings = redact_secrets(raw, "dashboard-cache.json")
+        redaction_warnings = warnings
+        last_payload = json.loads(redacted)
+        if len(redacted.encode("utf-8")) <= MAX_CACHED_PROJECT_BYTES:
+            if warnings:
+                last_payload["warnings"] = list(dict.fromkeys([*last_payload.get("warnings", []), *warnings]))[:10]
+            return CachedProjectStatus.model_validate(last_payload)
+    if last_payload is None:
+        return None
+    minimal = {
+        **last_payload,
+        "outcomes": [],
+        "initiatives": [],
+        "risks": [],
+        "decisions": [],
+        "recent_changes": [],
+        "focus": None,
+        "warnings": list(dict.fromkeys([*last_payload.get("warnings", []), *redaction_warnings, "cache_truncated: project status exceeded 256 KB"]))[:10],
+    }
+    encoded = json.dumps(minimal, ensure_ascii=True, separators=(",", ":"), sort_keys=True).encode("utf-8")
+    return CachedProjectStatus.model_validate(minimal) if len(encoded) <= MAX_CACHED_PROJECT_BYTES else None
+
+
+def _sanitize_cache_value(value: Any, *, absolute_paths: set[str], evidence_limit: int) -> Any:
+    if isinstance(value, dict):
+        clean: dict[str, Any] = {}
+        evidence_kind = str(value.get("kind") or "").lower()
+        for key, item in value.items():
+            if key in {"command", "cwd", "config_revision"}:
+                continue
+            if key == "evidence":
+                entries = item[:evidence_limit] if isinstance(item, list) else []
+                clean[key] = [_sanitize_cache_value(entry, absolute_paths=absolute_paths, evidence_limit=evidence_limit) for entry in entries]
+                continue
+            if key == "warnings" and isinstance(item, list):
+                item = item[:5]
+            if key == "path" and isinstance(item, str):
+                path = Path(item)
+                item = "" if path.is_absolute() or ".." in path.parts else item
+            if evidence_kind in {"task", "learning", "action"} and key in {"summary", "ref", "entity_id"}:
+                item = ""
+            clean[key] = _sanitize_cache_value(item, absolute_paths=absolute_paths, evidence_limit=evidence_limit)
+        return clean
+    if isinstance(value, list):
+        return [_sanitize_cache_value(item, absolute_paths=absolute_paths, evidence_limit=evidence_limit) for item in value]
+    if isinstance(value, str):
+        clean = value
+        for path in sorted((item for item in absolute_paths if item), key=len, reverse=True):
+            clean = clean.replace(path, "[workspace]")
+        clean = re.sub(r"(?<![A-Za-z0-9:])/(?:[^/\s]+/)*[^/\s,;:)\]}]+", "[absolute-path]", clean)
+        clean = re.sub(r"\b[A-Za-z]:\\(?:[^\\\s]+\\)*[^\\\s,;:)\]}]+", "[absolute-path]", clean)
+        return clean
+    return value
 
 
 def build_dashboard_v2_impact(

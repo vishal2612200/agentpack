@@ -15,6 +15,14 @@ from agentpack.dashboard.models import (
     DashboardGraph,
     DashboardMap,
     DashboardSnapshot,
+    ProjectDecision,
+    ProjectFocusSnapshot,
+    ProjectHealthSnapshot,
+    ProjectInitiative,
+    ProjectMetrics,
+    ProjectOutcomeState,
+    ProjectRisk,
+    ProjectTimelineEvent,
 )
 
 
@@ -321,6 +329,36 @@ class DashboardV2Error(BaseModel):
     detail: str = ""
 
 
+class CachedProjectProfile(BaseModel):
+    display_name: str = ""
+    purpose: str = ""
+    audiences: list[str] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    stage: str = ""
+    environments: list[str] = Field(default_factory=list)
+    status_stale_days: int = 14
+
+
+class CachedProjectStatus(BaseModel):
+    schema_version: Literal[1] = 1
+    project_id: str
+    generated_at: str
+    branch: str = ""
+    git_sha: str = ""
+    profile: CachedProjectProfile
+    metrics: ProjectMetrics
+    outcomes: list[ProjectOutcomeState] = Field(default_factory=list)
+    initiatives: list[ProjectInitiative] = Field(default_factory=list)
+    risks: list[ProjectRisk] = Field(default_factory=list)
+    decisions: list[ProjectDecision] = Field(default_factory=list)
+    health: ProjectHealthSnapshot
+    focus: ProjectFocusSnapshot | None = None
+    recent_changes: list[ProjectTimelineEvent] = Field(default_factory=list)
+    partial: bool = False
+    read_only: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DashboardV2Payload(BaseModel):
     schema_version: Literal[2] = 2
     detail: Literal["home", "full"]
@@ -331,3 +369,4 @@ class DashboardV2Payload(BaseModel):
     workspace: DashboardV2Workspace
     agents: DashboardV2Agents
     impact: DashboardV2Impact
+    cached_project_status: CachedProjectStatus | None = None

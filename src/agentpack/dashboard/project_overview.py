@@ -27,12 +27,15 @@ from agentpack.dashboard.action_history import read_action_history
 from agentpack.dashboard.models import (
     ProjectDecision,
     ProjectEvidence,
+    ProjectFocusItem,
+    ProjectFocusSnapshot,
     ProjectHealthDimension,
     ProjectHealthSnapshot,
     ProjectInitiative,
     ProjectInitiativeSuggestion,
     ProjectMetrics,
     ProjectMilestoneState,
+    ProjectNextAction,
     ProjectOutcomeState,
     ProjectOverview,
     ProjectProfile,
@@ -434,6 +437,15 @@ def build_project_overview(
         stale_days=profile.status_stale_days,
         now=generated,
     )
+    focus = _project_focus(
+        profile.project_id,
+        outcomes=outcomes,
+        health=health,
+        risks=risks,
+        decisions=decisions,
+        suggestions=suggestions,
+        now=generated,
+    )
     if not outcomes:
         warnings.append("empty_roadmap: no declared project outcomes")
     if not timeline:
@@ -466,6 +478,7 @@ def build_project_overview(
         risks=risks,
         decisions=decisions,
         health=health,
+        focus=focus,
         recent_changes=recent_changes,
         partial=partial,
         read_only=not project_storage_writable(root),
@@ -999,6 +1012,234 @@ def _timeline_for_workspaces(
             )
     ordered = sorted(rows.values(), key=lambda item: (item.updated_at, item.event_id), reverse=True)
     return ordered[: min(MAX_TIMELINE_ROWS, max(1, limit))]
+
+
+def _project_focus(
+    project: str,
+    *,
+    outcomes: list[ProjectOutcomeState],
+    health: ProjectHealthSnapshot,
+    risks: list[ProjectRisk],
+    decisions: list[ProjectDecision],
+    suggestions: list[ProjectInitiativeSuggestion],
+    now: datetime,
+) -> ProjectFocusSnapshot:
+    active = [outcome for outcome in outcomes if outcome.status not in {"achieved", "paused"}]
+    current_outcome = min(active, key=lambda item: _focus_outcome_rank(item, now.date()), default=None)
+    current_milestone = min(
+        current_outcome.milestones if current_outcome else [],
+        key=lambda item: _focus_milestone_rank(item, now.date()),
+        default=None,
+    )
+
+    ranked: list[tuple[int, str, ProjectFocusItem]] = []
+    for dimension in health.dimensions:
+        priority = {"blocked": 0, "attention": 2, "stale": 4}.get(dimension.status)
+        if priority is None or not dimension.evidence:
+            continue
+        ranked.append(
+            (
+                priority,
+                dimension.dimension,
+                ProjectFocusItem(
+                    item_id=f"health:{dimension.dimension}",
+                    kind="health",
+                    entity_id=dimension.dimension,
+                    title=f"{dimension.dimension.title()} needs attention",
+                    summary=dimension.summary,
+                    status=dimension.status,
+                    target_view="health",
+                    **_derived_values(dimension),
+                ),
+            )
+        )
+
+    for risk in risks:
+        if risk.status not in {"open", "mitigating"} or not risk.evidence:
+            continue
+        priority = 1 if risk.severity in {"critical", "high"} else 6
+        ranked.append(
+            (
+                priority,
+                risk.risk_id,
+                ProjectFocusItem(
+                    item_id=f"risk:{risk.risk_id}",
+                    kind="risk",
+                    entity_id=risk.risk_id,
+                    title=risk.title,
+                    summary=risk.description or risk.mitigation or f"{risk.severity} project risk",
+                    status=risk.status,
+                    severity=risk.severity,
+                    target_view="home",
+                    **_derived_values(risk),
+                ),
+            )
+        )
+
+    overdue = [
+        milestone
+        for outcome in active
+        for milestone in outcome.milestones
+        if milestone.status != "done" and _date_is_overdue(milestone.due_date, now.date()) and milestone.evidence
+    ]
+    for milestone in overdue:
+        ranked.append(
+            (
+                3,
+                milestone.milestone_id,
+                ProjectFocusItem(
+                    item_id=f"milestone:{milestone.milestone_id}",
+                    kind="milestone",
+                    entity_id=milestone.milestone_id,
+                    title=milestone.title,
+                    summary=f"Milestone was due {milestone.due_date}.",
+                    status=milestone.status,
+                    target_view="roadmap",
+                    **_derived_values(milestone),
+                ),
+            )
+        )
+
+    for decision in decisions:
+        if decision.status != "proposed" or not decision.evidence:
+            continue
+        ranked.append(
+            (
+                5,
+                decision.decision_id,
+                ProjectFocusItem(
+                    item_id=f"decision:{decision.decision_id}",
+                    kind="decision",
+                    entity_id=decision.decision_id,
+                    title=decision.title,
+                    summary=decision.context or "A project decision is awaiting resolution.",
+                    status=decision.status,
+                    target_view="home",
+                    **_derived_values(decision),
+                ),
+            )
+        )
+
+    attention = [item for _priority, _identity, item in sorted(ranked, key=lambda row: (row[0], row[1]))[:3]]
+    next_actions = [_focus_action(project, item) for item in attention]
+    for suggestion in suggestions:
+        if len(next_actions) >= 3:
+            break
+        if not suggestion.evidence:
+            continue
+        next_actions.append(
+            ProjectNextAction(
+                action_id=deterministic_entity_id(project, "next-action", suggestion.suggestion_id),
+                entity_id=suggestion.suggestion_id,
+                title=f"Review {suggestion.title}",
+                rationale=suggestion.rationale,
+                target_view="roadmap",
+                **_derived_values(suggestion),
+            )
+        )
+
+    evidence = _unique_evidence(
+        [
+            *(current_outcome.evidence if current_outcome else []),
+            *(current_milestone.evidence if current_milestone else []),
+            *[entry for item in attention for entry in item.evidence],
+            *[entry for action in next_actions for entry in action.evidence],
+        ]
+    )[:MAX_EVIDENCE]
+    updated_at = _latest_timestamp(
+        [
+            current_outcome.updated_at if current_outcome else "",
+            current_milestone.updated_at if current_milestone else "",
+            *[item.updated_at for item in attention],
+            *[action.updated_at for action in next_actions],
+        ]
+    )
+    return ProjectFocusSnapshot(
+        outcome_id=current_outcome.outcome_id if current_outcome else "",
+        milestone_id=current_milestone.milestone_id if current_milestone else "",
+        attention=attention,
+        next_actions=next_actions[:3],
+        source="inferred",
+        confidence=1.0 if current_outcome or attention else 0.0,
+        updated_at=updated_at,
+        evidence=evidence,
+        workspace_id=health.workspace_id or "all",
+        warnings=[] if current_outcome or attention else ["insufficient_history: no evidence-backed project focus is available"],
+    )
+
+
+def _focus_outcome_rank(outcome: ProjectOutcomeState, today: date) -> tuple[int, int, float, str]:
+    has_blocked = any(milestone.status == "blocked" for milestone in outcome.milestones)
+    has_overdue = any(
+        milestone.status != "done" and _date_is_overdue(milestone.due_date, today)
+        for milestone in outcome.milestones
+    )
+    priority = 0 if has_blocked else 1 if outcome.status == "at_risk" else 2 if has_overdue else 3 if outcome.status == "on_track" else 4
+    due = _focus_due_ordinal(
+        [milestone.due_date for milestone in outcome.milestones if milestone.status != "done"] + [outcome.target_date]
+    )
+    timestamps = [
+        outcome.updated_at,
+        *[item.occurred_at for item in outcome.evidence],
+        *[milestone.updated_at for milestone in outcome.milestones],
+        *[item.occurred_at for milestone in outcome.milestones for item in milestone.evidence],
+    ]
+    parsed_timestamps = [parsed for value in timestamps if value and (parsed := _parse_time(value)) is not None]
+    updated = max(parsed_timestamps, default=None)
+    return priority, due, -(updated.timestamp() if updated else 0.0), outcome.outcome_id
+
+
+def _focus_milestone_rank(milestone: ProjectMilestoneState, today: date) -> tuple[int, int, str]:
+    overdue = milestone.status != "done" and _date_is_overdue(milestone.due_date, today)
+    priority = 0 if milestone.status == "blocked" else 1 if overdue else 2 if milestone.status == "in_progress" else 3 if milestone.status == "planned" else 4
+    return priority, _focus_due_ordinal([milestone.due_date]), milestone.milestone_id
+
+
+def _focus_due_ordinal(values: list[str]) -> int:
+    dates: list[date] = []
+    for value in values:
+        try:
+            if value:
+                dates.append(date.fromisoformat(value))
+        except ValueError:
+            continue
+    return min(item.toordinal() for item in dates) if dates else date.max.toordinal()
+
+
+def _focus_action(project: str, item: ProjectFocusItem) -> ProjectNextAction:
+    verbs = {
+        "health": "Address",
+        "risk": "Mitigate",
+        "decision": "Decide",
+        "milestone": "Unblock",
+        "initiative": "Review",
+    }
+    return ProjectNextAction(
+        action_id=deterministic_entity_id(project, "next-action", item.item_id),
+        entity_id=item.entity_id,
+        title=f"{verbs[item.kind]} {item.title}",
+        rationale=item.summary,
+        target_view=item.target_view,
+        **_derived_values(item),
+    )
+
+
+def _derived_values(record: Any) -> dict[str, Any]:
+    return {
+        "source": record.source,
+        "confidence": record.confidence,
+        "updated_at": record.updated_at,
+        "evidence": list(record.evidence)[:MAX_EVIDENCE],
+        "workspace_id": record.workspace_id,
+        "warnings": list(record.warnings),
+    }
+
+
+def _unique_evidence(rows: list[ProjectEvidence]) -> list[ProjectEvidence]:
+    unique: dict[tuple[str, str, str, str], ProjectEvidence] = {}
+    for row in rows:
+        unique[(row.kind, row.ref, row.path, row.workspace_id)] = row
+    return list(unique.values())
 
 
 def _health_snapshot(

@@ -913,9 +913,7 @@ export interface AgentPackDashboardV2 {
     integrations: {
       [k: string]: unknown;
     }[];
-    mcp_health: {
-      [k: string]: unknown;
-    };
+    mcp_health: McpHealth;
   };
   impact: {
     schema_version: number;
@@ -927,6 +925,7 @@ export interface AgentPackDashboardV2 {
       [k: string]: string;
     };
   };
+  cached_project_status?: CachedProjectStatus | null;
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
@@ -952,6 +951,7 @@ export interface ProjectOverview {
   risks?: Risks;
   decisions?: Decisions;
   health?: ProjectHealthSnapshot;
+  focus?: ProjectFocusSnapshot | null;
   recent_changes?: RecentChanges1;
   partial?: Partial;
   read_only?: ReadOnly1;
@@ -1187,6 +1187,62 @@ export interface ProjectHealthDimension {
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "ProjectFocusSnapshot".
+ */
+export interface ProjectFocusSnapshot {
+  outcome_id?: string;
+  milestone_id?: string;
+  attention?: ProjectFocusItem[];
+  next_actions?: ProjectNextAction[];
+  source?: "declared" | "observed" | "inferred";
+  confidence?: number;
+  updated_at?: string;
+  evidence?: ProjectEvidence[];
+  workspace_id?: string;
+  warnings?: string[];
+  [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "ProjectFocusItem".
+ */
+export interface ProjectFocusItem {
+  item_id: string;
+  kind: "health" | "risk" | "decision" | "milestone" | "initiative";
+  entity_id: string;
+  title: string;
+  summary?: string;
+  status?: string;
+  severity?: string;
+  target_view: string;
+  source?: "declared" | "observed" | "inferred";
+  confidence?: number;
+  updated_at?: string;
+  evidence?: ProjectEvidence[];
+  workspace_id?: string;
+  warnings?: string[];
+  [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "ProjectNextAction".
+ */
+export interface ProjectNextAction {
+  action_id: string;
+  entity_id: string;
+  title: string;
+  rationale?: string;
+  target_view: string;
+  source?: "declared" | "observed" | "inferred";
+  confidence?: number;
+  updated_at?: string;
+  evidence?: ProjectEvidence[];
+  workspace_id?: string;
+  warnings?: string[];
+  [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
  * via the `definition` "ProjectTimelineEvent".
  */
 export interface ProjectTimelineEvent {
@@ -1247,6 +1303,64 @@ export interface Session {
   context_status?: string;
   updated_at?: string;
   worktree?: string;
+  [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "McpHealth".
+ */
+export interface McpHealth {
+  status?: string;
+  checked_at?: string;
+  source?: string;
+  runtime_status?: string;
+  runtime_ok?: boolean;
+  runtime_detail?: string;
+  registered?: boolean;
+  registrations?: {
+    [k: string]: unknown;
+  }[];
+  live_exposure?: string;
+  expected_tools?: string[];
+  remediation?: string[];
+  [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "CachedProjectStatus".
+ */
+export interface CachedProjectStatus {
+  schema_version?: 1;
+  project_id: string;
+  generated_at: string;
+  branch?: string;
+  git_sha?: string;
+  profile: CachedProjectProfile;
+  metrics: ProjectMetrics;
+  outcomes?: ProjectOutcomeState[];
+  initiatives?: ProjectInitiative[];
+  risks?: ProjectRisk[];
+  decisions?: ProjectDecision[];
+  health: ProjectHealthSnapshot;
+  focus?: ProjectFocusSnapshot | null;
+  recent_changes?: ProjectTimelineEvent[];
+  partial?: boolean;
+  read_only?: boolean;
+  warnings?: string[];
+  [k: string]: unknown;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "CachedProjectProfile".
+ */
+export interface CachedProjectProfile {
+  display_name?: string;
+  purpose?: string;
+  audiences?: string[];
+  owners?: string[];
+  stage?: string;
+  environments?: string[];
+  status_stale_days?: number;
   [k: string]: unknown;
 }
 /**
@@ -1468,9 +1582,7 @@ export interface Agents {
   integrations: {
     [k: string]: unknown;
   }[];
-  mcp_health: {
-    [k: string]: unknown;
-  };
+  mcp_health: McpHealth;
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
