@@ -246,6 +246,70 @@ def test_overview_folds_roadmap_state_and_progress_from_milestones(tmp_path: Pat
     assert overview.health.dimensions[0].status == "healthy"
 
 
+def test_project_focus_prioritizes_blocked_work_and_evidence_backed_actions(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    update_project_profile(
+        tmp_path,
+        {
+            "outcomes": [
+                {
+                    "id": "outcome-risk",
+                    "title": "At-risk outcome",
+                    "target_date": "2026-08-01",
+                    "milestones": [{"id": "milestone-risk", "title": "Risk milestone", "due_date": "2026-07-25"}],
+                },
+                {
+                    "id": "outcome-blocked",
+                    "title": "Blocked outcome",
+                    "target_date": "2026-09-01",
+                    "milestones": [{"id": "milestone-blocked", "title": "Blocked milestone", "due_date": "2026-08-15"}],
+                },
+            ]
+        },
+        expected_revision=project_config_revision(tmp_path),
+    )
+    append_project_event(
+        tmp_path,
+        "project_outcome_status",
+        mutation_id="focus-risk",
+        entity_id="outcome-risk",
+        values={"status": "at_risk"},
+        evidence=[{"kind": "task", "ref": "task-risk"}],
+    )
+    append_project_event(
+        tmp_path,
+        "project_milestone_status",
+        mutation_id="focus-blocked",
+        entity_id="milestone-blocked",
+        values={"status": "blocked"},
+        evidence=[{"kind": "check", "ref": "check-blocked", "path": "tests/test_dashboard.py"}],
+    )
+
+    overview = build_project_overview(tmp_path, now=datetime(2026, 7, 20, tzinfo=timezone.utc))
+
+    assert overview.focus is not None
+    assert overview.focus.outcome_id == "outcome-blocked"
+    assert overview.focus.milestone_id == "milestone-blocked"
+    assert overview.focus.attention[0].kind == "health"
+    assert overview.focus.attention[0].status == "blocked"
+    assert 1 <= len(overview.focus.next_actions) <= 3
+    assert all(item.evidence for item in overview.focus.attention)
+    assert all(action.evidence for action in overview.focus.next_actions)
+    assert all(action.target_view in {"home", "health", "roadmap"} for action in overview.focus.next_actions)
+
+
+def test_project_focus_is_empty_without_supported_project_evidence(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+
+    overview = build_project_overview(tmp_path, now=datetime(2026, 7, 20, tzinfo=timezone.utc))
+
+    assert overview.focus is not None
+    assert overview.focus.outcome_id == ""
+    assert overview.focus.attention == []
+    assert overview.focus.next_actions == []
+    assert overview.focus.warnings == ["insufficient_history: no evidence-backed project focus is available"]
+
+
 def test_initiative_suggestions_require_two_tasks_and_respect_dismissal(tmp_path: Path) -> None:
     (tmp_path / ".agentpack").mkdir()
     for index in range(2):

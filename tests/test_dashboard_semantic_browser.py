@@ -84,6 +84,14 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             assert "AgentPack Browser Fixture" in overview.inner_text()
             assert "Ship project dashboard" in overview.inner_text()
             assert "Project contracts" in overview.inner_text()
+            assert page.locator(".sidebar > .nav-list > .nav-item").all_inner_texts() == [
+                "Overview",
+                "Roadmap",
+                "Work",
+                "Health",
+                "Knowledge",
+            ]
+            assert "Runtime nominal" not in page.locator("body").inner_text()
             page.get_by_role("button", name="Engineering", exact=True).click()
             assert workspace.get_attribute("data-presentation-mode") == "build"
             page.reload(wait_until="networkidle")
@@ -99,7 +107,6 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             for name, test_id in (
                 ("Roadmap", "project-roadmap-view"),
                 ("Health", "project-health-view"),
-                ("Activity", "project-activity-view"),
                 ("Work", "project-work-view"),
                 ("Knowledge", "project-knowledge-summary"),
             ):
@@ -110,6 +117,51 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")
             page.get_by_role("button", name="Overview", exact=True).click()
             overview.wait_for()
+            page.get_by_role("button", name="View all activity", exact=False).click()
+            page.get_by_test_id("project-activity-view").wait_for()
+            page.get_by_role("button", name="Overview", exact=True).click()
+            overview.wait_for()
+
+            page.keyboard.press("Control+k")
+            palette = page.get_by_role("dialog", name="AgentPack command palette")
+            palette.wait_for()
+            assert "Navigate" in palette.inner_text()
+            assert "Project evidence" in palette.inner_text()
+            palette.get_by_placeholder("Search project evidence or run an action").fill("Project contracts")
+            palette.get_by_text("Project contracts", exact=True).click()
+            page.get_by_test_id("project-roadmap-view").wait_for()
+            page.get_by_role("button", name="Overview", exact=True).click()
+
+            page.locator(".runtime-status-trigger").click()
+            status_dialog = page.get_by_role("dialog", name="Dashboard evidence status")
+            status_dialog.wait_for()
+            for signal in ("API", "Snapshot", "Context", "MCP"):
+                assert signal in status_dialog.inner_text()
+            assert "Source:" in status_dialog.inner_text()
+            assert "Observed:" in status_dialog.inner_text()
+            status_dialog.get_by_role("button", name="Close dialog").click()
+
+            assert page.evaluate("Boolean(localStorage.getItem('agentpack.dashboard.last-known.v1'))")
+            page.route("**/api/dashboard/v2?detail=home", lambda route: route.abort())
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_text("Last known", exact=False).first.wait_for()
+            assert page.get_by_role("button", name="Edit profile", exact=False).is_disabled()
+            page.unroute("**/api/dashboard/v2?detail=home")
+            page.get_by_role("button", name="Retry", exact=True).first.click()
+            page.locator(".runtime-status-trigger.live").wait_for()
+
+            page.evaluate(
+                "localStorage.setItem('agentpack.dashboard.last-known.v1', "
+                "JSON.stringify({schema_version: 1, cached_at: 'invalid', status: {}}))"
+            )
+            page.route("**/api/dashboard/v2?detail=home", lambda route: route.abort())
+            page.reload(wait_until="domcontentloaded")
+            page.get_by_role("heading", name="Dashboard failed to load", exact=True).wait_for()
+            assert page.evaluate("localStorage.getItem('agentpack.dashboard.last-known.v1')") is None
+            page.unroute("**/api/dashboard/v2?detail=home")
+            page.get_by_role("button", name="Retry", exact=True).click()
+            page.locator(".runtime-status-trigger.live").wait_for()
+
             for viewport in ({"width": 1024, "height": 768}, {"width": 390, "height": 844}):
                 page.set_viewport_size(viewport)
                 assert page.evaluate("document.documentElement.scrollWidth <= window.innerWidth")

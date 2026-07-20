@@ -14,7 +14,13 @@ from jsonschema import Draft202012Validator
 
 from agentpack.dashboard.server import _dashboard_check_kind, create_dashboard_server
 from agentpack.dashboard.models import ThreadRow
-from agentpack.dashboard.v2 import _agent_summary, build_dashboard_v2_impact, build_dashboard_v2_payload
+from agentpack.dashboard.v2 import (
+    MAX_CACHED_PROJECT_BYTES,
+    _agent_summary,
+    _sanitize_cache_value,
+    build_dashboard_v2_impact,
+    build_dashboard_v2_payload,
+)
 
 SCHEMA_PATH = Path(__file__).resolve().parents[1] / "docs" / "schemas" / "dashboard-v2.schema.json"
 
@@ -104,6 +110,63 @@ def test_dashboard_v2_envelope_is_versioned_and_hides_handoff_uuid(tmp_path: Pat
         server.shutdown()
         server.server_close()
         thread.join(timeout=5)
+
+
+def test_dashboard_home_includes_runtime_evidence_and_bounded_redacted_cache(tmp_path: Path) -> None:
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    secret = "sk-" + "a" * 40
+    (agentpack / "config.toml").write_text(
+        "[project]\n"
+        'display_name = "Cached project"\n'
+        f'purpose = "Do not persist {secret}"\n\n'
+        "[[project.outcomes]]\n"
+        'id = "outcome-cache"\n'
+        'title = "Cache project status"\n',
+        encoding="utf-8",
+    )
+    (agentpack / "task.md").write_text("private task text\n", encoding="utf-8")
+
+    payload = build_dashboard_v2_payload(tmp_path, detail="home")
+    cached = payload["cached_project_status"]
+    serialized = json.dumps(cached)
+
+    assert payload["snapshot"]["mcp_health"]["checked_at"]
+    assert payload["snapshot"]["mcp_health"]["source"] == "local MCP process probe and integration registrations"
+    assert cached["project_id"] == payload["snapshot"]["project_overview"]["project_id"]
+    assert cached["read_only"] is True
+    assert "[REDACTED:openai-key]" in cached["profile"]["purpose"]
+    assert secret not in serialized
+    assert str(tmp_path) not in serialized
+    assert "private task text" not in serialized
+    assert "command_catalog" not in serialized
+    assert len(serialized.encode("utf-8")) <= MAX_CACHED_PROJECT_BYTES
+    schema = json.loads(SCHEMA_PATH.read_text(encoding="utf-8"))
+    _assert_schema(schema, "CachedProjectStatus", cached)
+    errors = list(Draft202012Validator(schema).iter_errors(payload))
+    assert not errors, [f"{list(error.path)}: {error.message}" for error in errors]
+
+
+def test_dashboard_cache_sanitizer_removes_private_task_and_path_fields() -> None:
+    sanitized = _sanitize_cache_value(
+        {
+            "kind": "task",
+            "summary": "private task text",
+            "entity_id": "task-private",
+            "path": "/outside/workspace/private.py",
+            "command": "agentpack finish --summary private",
+            "note": "See C:\\Users\\person\\secret.txt and /srv/private/data.json",
+        },
+        absolute_paths=set(),
+        evidence_limit=3,
+    )
+
+    assert sanitized["summary"] == ""
+    assert sanitized["entity_id"] == ""
+    assert sanitized["path"] == ""
+    assert "command" not in sanitized
+    assert "Users" not in sanitized["note"]
+    assert "/srv/" not in sanitized["note"]
 
 
 def test_learning_recommendations_endpoint_is_typed_and_read_only(tmp_path: Path, monkeypatch) -> None:
