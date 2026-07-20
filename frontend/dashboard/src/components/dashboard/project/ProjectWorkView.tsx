@@ -7,11 +7,13 @@ import { formatProjectDate } from "./project-shared";
 export function ProjectWorkView({
   snapshot,
   overview,
+  selectedTaskId,
   onRunAction,
   onRefresh
 }: {
   snapshot: DashboardSnapshot;
   overview: ProjectOverview | null;
+  selectedTaskId?: string;
   onRunAction: (action: string, body?: Record<string, unknown>) => void;
   onRefresh: () => Promise<unknown> | void;
 }) {
@@ -43,6 +45,10 @@ export function ProjectWorkView({
   useEffect(() => {
     if (!selectedId && defaultTask) setSelectedId(defaultTask.task_id);
   }, [defaultTask?.task_id, selectedId]);
+
+  useEffect(() => {
+    if (selectedTaskId && tasks.some((task) => task.task_id === selectedTaskId)) setSelectedId(selectedTaskId);
+  }, [selectedTaskId, tasks]);
 
   const createTask = async (event: FormEvent) => {
     event.preventDefault();

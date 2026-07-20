@@ -1,5 +1,5 @@
-import { ClipboardCheck, Copy, Download, FilePenLine, Flag, Plus, ShieldAlert, X } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { ArrowRight, ClipboardCheck, Copy, Download, FilePenLine, Flag, Plus, ShieldAlert, X } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
 import { DashboardRequestError, loadProjectBrief, loadProjectOverview, recordProjectEvent, updateProjectProfile } from "../../../data/loadDashboard";
 import type { PresentationMode, ProjectOverview } from "../../../data/schema";
 import { EvidenceList, HealthMark, WorkspaceFilter, formatProjectDate, percentage, projectMutationId } from "./project-shared";
@@ -8,31 +8,28 @@ export function ProjectOverviewView({
   overview,
   workspace,
   loading,
+  offline,
   mode,
   onWorkspaceChange,
-  onOverviewChange
+  onOverviewChange,
+  onNavigate
 }: {
   overview: ProjectOverview;
   workspace: string;
   loading: boolean;
+  offline: boolean;
   mode: PresentationMode;
   onWorkspaceChange: (value: string) => void;
   onOverviewChange: (overview: ProjectOverview) => void;
+  onNavigate: (view: "home" | "roadmap" | "health" | "activity", entityId?: string) => void;
 }) {
   const [profileOpen, setProfileOpen] = useState(false);
   const [recordOpen, setRecordOpen] = useState<"risk" | "decision" | "">("");
   const [message, setMessage] = useState("");
   const [busy, setBusy] = useState(false);
-  const health = Object.fromEntries(overview.health.dimensions.map((item) => [item.dimension, item]));
   const activeOutcomes = overview.outcomes.filter((item) => item.status !== "achieved" && item.status !== "paused");
-  const nextActions = useMemo(() => {
-    const actions = overview.health.dimensions
-      .filter((item) => ["blocked", "attention", "stale"].includes(item.status))
-      .map((item) => `${item.dimension}: ${item.summary}`);
-    actions.push(...overview.risks.filter((item) => item.status !== "resolved").map((item) => `Risk: ${item.title}`));
-    actions.push(...overview.decisions.filter((item) => item.status === "proposed").map((item) => `Decision: ${item.title}`));
-    return actions.slice(0, 6);
-  }, [overview]);
+  const currentOutcome = overview.outcomes.find((item) => item.outcome_id === overview.focus?.outcome_id) || null;
+  const currentMilestone = currentOutcome?.milestones.find((item) => item.milestone_id === overview.focus?.milestone_id) || null;
 
   const exportBrief = async (action: "copy" | "download") => {
     setBusy(true);
@@ -77,10 +74,10 @@ export function ProjectOverviewView({
           <button type="button" className="secondary-action" onClick={() => setProfileOpen(true)} disabled={overview.read_only}>
             <FilePenLine size={15} aria-hidden="true" /> Edit profile
           </button>
-          <button type="button" className="icon-button" onClick={() => void exportBrief("copy")} disabled={busy} title={`Copy ${mode === "explain" ? "Summary" : "Engineering"} brief`}>
+          <button type="button" className="icon-button" onClick={() => void exportBrief("copy")} disabled={busy || offline} title={`Copy ${mode === "explain" ? "Summary" : "Engineering"} brief`}>
             <Copy size={16} aria-hidden="true" />
           </button>
-          <button type="button" className="icon-button" onClick={() => void exportBrief("download")} disabled={busy} title={`Download ${mode === "explain" ? "Summary" : "Engineering"} brief`}>
+          <button type="button" className="icon-button" onClick={() => void exportBrief("download")} disabled={busy || offline} title={`Download ${mode === "explain" ? "Summary" : "Engineering"} brief`}>
             <Download size={16} aria-hidden="true" />
           </button>
         </div>
@@ -90,15 +87,59 @@ export function ProjectOverviewView({
       {overview.partial ? <p className="project-warning"><ShieldAlert size={15} /> Partial project data: {overview.warnings.join("; ")}</p> : null}
       {overview.read_only ? <p className="project-warning"><ShieldAlert size={15} /> This project is read-only. Shared definitions and local project status cannot be changed.</p> : null}
 
+      <section className="project-now" aria-labelledby="project-now-title">
+        <div className="project-now-heading">
+          <div><h2 id="project-now-title">Now</h2><p>The current project decision, ranked from declared status and observed evidence.</p></div>
+          {overview.focus?.updated_at ? <small>Updated {formatProjectDate(overview.focus.updated_at)}</small> : null}
+        </div>
+        <div className="project-now-grid">
+          <div className="project-now-current">
+            <span>Current outcome</span>
+            {currentOutcome ? (
+              <>
+                <strong>{currentOutcome.title}</strong>
+                <small>{currentOutcome.owner || "No owner"} · {currentOutcome.target_date || "No target date"}</small>
+                <span className={`badge ${tone(currentOutcome.status)}`}>{currentOutcome.status.replace("_", " ")}</span>
+                {currentMilestone ? <p><b>{currentMilestone.title}</b><small>{currentMilestone.status.replace("_", " ")} · {currentMilestone.due_date || "No due date"}</small></p> : <p className="empty">No current milestone is declared.</p>}
+              </>
+            ) : <p className="empty">No evidence-backed current outcome is available.</p>}
+          </div>
+          <div className="project-now-attention">
+            <span>Attention</span>
+            {overview.focus?.attention.length ? overview.focus.attention.map((item) => (
+              <button key={item.item_id} type="button" onClick={() => onNavigate(item.target_view as "home" | "roadmap" | "health", item.entity_id)}>
+                <span className={`badge ${tone(item.status || item.severity)}`}>{item.status || item.severity}</span>
+                <span><strong>{item.title}</strong><small>{item.summary}</small></span>
+              </button>
+            )) : <p className="empty">No evidence-backed attention signal is available.</p>}
+          </div>
+          <div className="project-now-actions">
+            <span>Next actions</span>
+            {overview.focus?.next_actions.length ? overview.focus.next_actions.map((action) => (
+              <button key={action.action_id} type="button" onClick={() => onNavigate(action.target_view as "home" | "roadmap" | "health", action.entity_id)}>
+                <span><strong>{action.title}</strong><small>{action.rationale}</small></span><ArrowRight size={15} aria-hidden="true" />
+              </button>
+            )) : <p className="empty">No evidence-backed next action is available.</p>}
+          </div>
+        </div>
+        {mode === "build" && overview.focus ? (
+          <details className="project-now-evidence">
+            <summary>Engineering evidence</summary>
+            <p>Source: {overview.focus.source} · Confidence: {Math.round(overview.focus.confidence * 100)}% · Workspace: {overview.focus.workspace_id || "all"}</p>
+            <EvidenceList evidence={overview.focus.evidence} />
+          </details>
+        ) : null}
+      </section>
+
       <section className="project-metric-strip" aria-label="Project metrics">
-        <ProjectMetric label="Milestones" value={percentage(overview.metrics.milestone_completion_pct)} detail={`${overview.metrics.completed_milestones}/${overview.metrics.milestone_count} done`} />
-        <ProjectMetric label="Open risks" value={overview.metrics.open_risks} detail={overview.metrics.open_risks ? "Needs ownership" : "None recorded"} />
-        <ProjectMetric label="Pending decisions" value={overview.metrics.pending_decisions} detail={overview.metrics.pending_decisions ? "Awaiting resolution" : "No pending decisions"} />
+        {overview.metrics.milestone_count ? <ProjectMetric label="Milestones" value={percentage(overview.metrics.milestone_completion_pct)} detail={`${overview.metrics.completed_milestones}/${overview.metrics.milestone_count} done`} /> : null}
+        {overview.metrics.open_risks ? <ProjectMetric label="Open risks" value={overview.metrics.open_risks} detail="Needs ownership" /> : null}
+        {overview.metrics.pending_decisions ? <ProjectMetric label="Pending decisions" value={overview.metrics.pending_decisions} detail="Awaiting resolution" /> : null}
         <ProjectMetric label="Evidence coverage" value={percentage(overview.metrics.evidence_coverage)} detail="Owner, recent status, evidence" />
       </section>
 
       <div className="project-overview-grid">
-        <section className="project-section project-section-wide">
+        <section className="project-section project-section-wide project-roadmap-section">
           <div className="project-section-heading"><div><span className="eyebrow">Roadmap</span><h2>Outcomes and milestones</h2></div><span>{activeOutcomes.length} active</span></div>
           {overview.outcomes.length ? (
             <div className="project-outcome-list">
@@ -124,7 +165,7 @@ export function ProjectOverviewView({
           ) : <EmptyProjectState title="No outcomes declared" detail="Add the first user-owned outcome from Roadmap." />}
         </section>
 
-        <section className="project-section">
+        <section className="project-section project-health-section">
           <div className="project-section-heading"><div><span className="eyebrow">Health</span><h2>Independent signals</h2></div></div>
           <div className="project-health-list">
             {overview.health.dimensions.map((dimension) => (
@@ -137,7 +178,7 @@ export function ProjectOverviewView({
           </div>
         </section>
 
-        <section className="project-section">
+        <section className="project-section project-record-section">
           <div className="project-section-heading">
             <div><span className="eyebrow">Project record</span><h2>Risks and decisions</h2></div>
             <div className="inline-actions">
@@ -156,8 +197,8 @@ export function ProjectOverviewView({
           </div>
         </section>
 
-        <section className="project-section">
-          <div className="project-section-heading"><div><span className="eyebrow">Activity</span><h2>Recent changes</h2></div></div>
+        <section className="project-section project-activity-section">
+          <div className="project-section-heading"><div><span className="eyebrow">Activity</span><h2>Recent changes</h2></div><button type="button" className="text-action" onClick={() => onNavigate("activity")}>View all activity <ArrowRight size={14} /></button></div>
           <ol className="project-compact-timeline">
             {overview.recent_changes.slice(0, 6).map((item) => (
               <li key={item.event_id}><i /><span><strong>{item.title}</strong><small>{formatProjectDate(item.updated_at)} · {item.kind}</small></span></li>
@@ -166,11 +207,6 @@ export function ProjectOverviewView({
           {!overview.recent_changes.length ? <p className="empty">No project activity is available yet.</p> : null}
         </section>
 
-        <section className="project-section">
-          <div className="project-section-heading"><div><span className="eyebrow">Focus</span><h2>Next actions</h2></div></div>
-          {nextActions.length ? <ul className="project-next-actions">{nextActions.map((item) => <li key={item}>{item}</li>)}</ul> : <p className="empty">No evidence-backed next action is available.</p>}
-          {mode === "build" && health.validation ? <EvidenceList evidence={health.validation.evidence} /> : null}
-        </section>
       </div>
 
       {profileOpen ? <ProfileDialog overview={overview} workspace={workspace} onClose={() => setProfileOpen(false)} onSaved={(next) => { onOverviewChange(next); setProfileOpen(false); }} /> : null}

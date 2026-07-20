@@ -50,6 +50,8 @@ import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
 import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, loadLearningRecommendations, loadProjectOverview, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, LearningRecommendationSet, LearningScope, MapBuilding, MapRoad, PresentationMode, ProjectOverview, SemanticGraphSummary } from "./data/schema";
 import { ProjectActivityView } from "./components/dashboard/project/ProjectActivityView";
+import { DashboardCommandPalette, type PaletteTarget } from "./components/dashboard/CommandPalette";
+import { RuntimeStatusDialog, type DashboardConnectionState } from "./components/dashboard/RuntimeStatusDialog";
 import { ProjectHealthView } from "./components/dashboard/project/ProjectHealthView";
 import { ProjectKnowledgeSummary } from "./components/dashboard/project/ProjectKnowledgeSummary";
 import { ProjectOverviewView } from "./components/dashboard/project/ProjectOverviewView";
@@ -57,6 +59,7 @@ import { ProjectRoadmapView } from "./components/dashboard/project/ProjectRoadma
 import { ProjectWorkView } from "./components/dashboard/project/ProjectWorkView";
 import { ProjectViewState } from "./components/dashboard/project/project-shared";
 import { ConfirmCommandDialog, ErrorState, LoadingState, Metric, Panel, StateSurface, StatusPill, TechnicalDetail, type CommandInspection, type PendingCommand } from "./components/dashboard/shared";
+import { cachedStatusToOverview, cachedStatusToPayload, clearDashboardCache, readDashboardCache, writeDashboardCache } from "./data/dashboardCache";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 import { useDashboardState, type DashboardView as View, type MapMode } from "./state/dashboard-state";
 
@@ -74,25 +77,36 @@ interface TerminalSessionState {
 const primaryViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "home", label: "Overview", icon: Building2 },
   { id: "roadmap", label: "Roadmap", icon: Flag },
-  { id: "health", label: "Health", icon: ShieldCheck },
-  { id: "activity", label: "Activity", icon: Activity },
   { id: "tasks", label: "Work", icon: ClipboardList },
+  { id: "health", label: "Health", icon: ShieldCheck },
   { id: "learning", label: "Knowledge", icon: Brain }
 ];
 
-const advancedViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "graph", label: "Impact map", icon: MapIcon },
-  { id: "context", label: "AI context", icon: Database },
-  { id: "files", label: "Files", icon: FileText },
-  { id: "workflow", label: "Run checks", icon: Workflow },
-  { id: "threads", label: "Work sessions", icon: GitBranch },
-  { id: "settings", label: "Settings", icon: Settings },
-  { id: "integrations", label: "Agent connection", icon: TerminalSquare },
-  { id: "raw", label: "Diagnostics", icon: Code2 },
-  { id: "cockpit", label: "Decision details", icon: Activity }
+const advancedViewGroups: Array<{ label: string; views: Array<{ id: View; label: string; icon: typeof Activity }> }> = [
+  { label: "Repository", views: [
+    { id: "graph", label: "Impact map", icon: MapIcon },
+    { id: "context", label: "AI context", icon: Database },
+    { id: "files", label: "Files", icon: FileText }
+  ] },
+  { label: "Operations", views: [
+    { id: "workflow", label: "Run checks", icon: Workflow },
+    { id: "threads", label: "Work sessions", icon: GitBranch }
+  ] },
+  { label: "Connections", views: [
+    { id: "integrations", label: "Agent connection", icon: TerminalSquare }
+  ] },
+  { label: "Diagnostics", views: [
+    { id: "settings", label: "Settings", icon: Settings },
+    { id: "raw", label: "Diagnostics", icon: Code2 },
+    { id: "cockpit", label: "Decision details", icon: Activity }
+  ] }
 ];
 
+const advancedViews = advancedViewGroups.flatMap((group) => group.views);
+const inspectorViews = new Set<View>(["graph", "context", "files", "cockpit"]);
+
 export function DashboardWorkspace() {
+  const initialCacheRef = useRef(readDashboardCache());
   const { state: dashboardState, dispatch } = useDashboardState();
   const view = dashboardState.view;
   const selectedId = dashboardState.selectedEntityId;
@@ -100,13 +114,20 @@ export function DashboardWorkspace() {
   const setView = (value: View) => dispatch({ type: "view", value });
   const setSelectedId = (value: string | ((current: string) => string)) => dispatch({ type: "select", value: typeof value === "function" ? value(dashboardState.selectedEntityId) : value });
   const setPresentationMode = (value: PresentationMode) => dispatch({ type: "presentation", value });
-  const [payload, setPayload] = useState<DashboardPayload | null>(null);
+  const [payload, setPayload] = useState<DashboardPayload | null>(() => initialCacheRef.current ? cachedStatusToPayload(initialCacheRef.current.status) : null);
   const [payloadDetail, setPayloadDetail] = useState<"home" | "full">("home");
-  const [projectOverview, setProjectOverview] = useState<ProjectOverview | null>(null);
+  const [projectOverview, setProjectOverview] = useState<ProjectOverview | null>(() => initialCacheRef.current ? cachedStatusToOverview(initialCacheRef.current.status) : null);
   const [projectWorkspace, setProjectWorkspace] = useState("all");
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectError, setProjectError] = useState("");
   const [error, setError] = useState<string>("");
+  const [connection, setConnection] = useState<DashboardConnectionState>(initialCacheRef.current ? "stale" : "connecting");
+  const [observedAt, setObservedAt] = useState("");
+  const [cachedAt, setCachedAt] = useState(initialCacheRef.current?.cached_at || "");
+  const [loadingPhase, setLoadingPhase] = useState("Connecting to the local AgentPack dashboard.");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteLoading, setPaletteLoading] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [sessions, setSessions] = useState<TerminalSessionState[]>([]);
@@ -118,6 +139,7 @@ export function DashboardWorkspace() {
   const refreshGenerationRef = useRef(0);
   const latestActionGenerationRef = useRef(0);
   const projectWorkspaceRef = useRef("all");
+  const cachedOnly = connection !== "live";
 
   useEffect(() => { selectedEntityRef.current = selectedId; }, [selectedId]);
 
@@ -129,7 +151,14 @@ export function DashboardWorkspace() {
       ? loaded.snapshot.project_overview || null
       : await loadProjectOverview(projectWorkspaceRef.current);
     setProjectOverview(overview);
-    setSelectedId((current) => current || loaded.graph.root_id || "task:active");
+    setConnection("live");
+    const observed = new Date().toISOString();
+    setObservedAt(observed);
+    setError("");
+    if (loaded.cached_project_status) {
+      writeDashboardCache(loaded.cached_project_status);
+      setCachedAt(observed);
+    }
     return loaded;
   };
 
@@ -159,14 +188,50 @@ export function DashboardWorkspace() {
       .finally(() => setProjectLoading(false));
   };
 
-  const loadFullDashboard = () => {
-    refreshDashboard("full").catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard details"));
+  const loadFullDashboard = async () => {
+    if (cachedOnly || payloadDetail === "full" || paletteLoading) return;
+    setPaletteLoading(true);
+    try {
+      await refreshDashboard("full");
+    } catch (err) {
+      dispatch({ type: "resource", key: "workspace", value: { status: "error", message: err instanceof Error ? err.message : "Failed to load dashboard details", retryable: true } });
+    } finally {
+      setPaletteLoading(false);
+    }
   };
 
   useEffect(() => {
+    const readingTimer = window.setTimeout(() => setLoadingPhase("Reading project and workspace evidence."), 2_000);
+    const waitingTimer = window.setTimeout(() => setLoadingPhase("Still waiting for the local dashboard server."), 6_000);
     refreshDashboard("home")
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
+      .catch((err: unknown) => {
+        setConnection(initialCacheRef.current ? "stale" : "unavailable");
+        setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+      })
+      .finally(() => {
+        window.clearTimeout(readingTimer);
+        window.clearTimeout(waitingTimer);
+      });
+    return () => {
+      window.clearTimeout(readingTimer);
+      window.clearTimeout(waitingTimer);
+    };
   }, []);
+
+  useEffect(() => {
+    const openPalette = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", openPalette);
+    return () => window.removeEventListener("keydown", openPalette);
+  }, []);
+
+  useEffect(() => {
+    if (paletteOpen) void loadFullDashboard();
+  }, [paletteOpen]);
 
 
   useEffect(() => {
@@ -176,19 +241,26 @@ export function DashboardWorkspace() {
     };
   }, []);
 
-  if (error) {
+  const retryDashboard = () => {
+    setError("");
+    setConnection("connecting");
+    setLoadingPhase("Connecting to the local AgentPack dashboard.");
+    refreshDashboard("home").catch((err: unknown) => {
+      setConnection(payload ? "stale" : "unavailable");
+      setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+    });
+  };
+
+  if (error && !payload) {
     return (
       <ErrorState
         message={error}
-        onRetry={() => {
-          setError("");
-          refreshDashboard("home").catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
-        }}
+        onRetry={retryDashboard}
       />
     );
   }
   if (!payload) {
-    return <LoadingState />;
+    return <LoadingState phase={loadingPhase} />;
   }
 
   const selected = findSelected(payload.graph, selectedId);
@@ -201,7 +273,8 @@ export function DashboardWorkspace() {
         className={view === item.id ? "nav-item active" : "nav-item"}
         onClick={() => {
           setView(item.id);
-          if (["graph", "context", "files", "workflow", "threads", "learning", "settings", "integrations", "raw", "cockpit"].includes(item.id)) loadFullDashboard();
+          if (inspectorViews.has(item.id) && !selectedId && payload.graph.root_id) setSelectedId(payload.graph.root_id);
+          if (["graph", "context", "files", "workflow", "threads", "learning", "settings", "integrations", "raw", "cockpit"].includes(item.id)) void loadFullDashboard();
         }}
         aria-label={item.label}
         title={item.label}
@@ -212,7 +285,19 @@ export function DashboardWorkspace() {
     );
   };
 
+  const handlePaletteNavigate = (target: PaletteTarget) => {
+    setView(target.view);
+    if (target.entityId) setSelectedId(target.entityId);
+    else if (inspectorViews.has(target.view) && payload.graph.root_id) setSelectedId(payload.graph.root_id);
+    if (target.anchor) window.setTimeout(() => document.getElementById(target.anchor!)?.scrollIntoView({ block: "start" }), 0);
+    if (advancedViews.some((item) => item.id === target.view) || target.view === "learning") void loadFullDashboard();
+  };
+
   const handleRunCommand = async (command: string) => {
+    if (cachedOnly) {
+      setStatusOpen(true);
+      return;
+    }
     const inspection = await inspectCommand(command);
     if (!inspection.allowed) {
       openLocalError(command, inspection.reason);
@@ -226,6 +311,10 @@ export function DashboardWorkspace() {
   };
 
   const handleRunAction = async (action: string, body: Record<string, unknown> = {}) => {
+    if (cachedOnly) {
+      setStatusOpen(true);
+      return;
+    }
     const inspectionResponse = await fetch(apiUrl("/api/dashboard/v2/actions/inspect"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -298,6 +387,10 @@ export function DashboardWorkspace() {
   };
 
   const handleSwitchProject = async (path: string) => {
+    if (cachedOnly) {
+      setStatusOpen(true);
+      return;
+    }
     const response = await fetch(apiUrl("/api/projects/switch"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -314,7 +407,7 @@ export function DashboardWorkspace() {
     setProjectWorkspace("all");
     setProjectOverview((result as DashboardPayload).snapshot.project_overview || null);
     setProjectError("");
-    setSelectedId((result as DashboardPayload).graph.root_id || "task:active");
+    setSelectedId(inspectorViews.has(view) ? (result as DashboardPayload).graph.root_id || "" : "");
     setSessions([]);
     setActiveSessionId("");
     setTerminalOpen(false);
@@ -419,10 +512,18 @@ export function DashboardWorkspace() {
       ]);
       if (generation !== refreshGenerationRef.current) return;
       setPayload(loaded);
+      setProjectOverview(loaded.snapshot.project_overview || null);
+      setConnection("live");
+      const observed = new Date().toISOString();
+      setObservedAt(observed);
+      if (loaded.cached_project_status) {
+        writeDashboardCache(loaded.cached_project_status);
+        setCachedAt(observed);
+      }
       const exists = Boolean(findSelected(loaded.graph, current) || impact.entities.some((entity) => entity.id === current) || impact.relationships.some((relationship) => relationship.id === current));
       if (!exists) {
         const parentExists = previousParent && impact.entities.some((entity) => entity.id === previousParent);
-        setSelectedId(parentExists ? previousParent : loaded.graph.root_id || "task:active");
+        setSelectedId(parentExists ? previousParent : inspectorViews.has(view) ? loaded.graph.root_id || "" : "");
       }
       impactParentRef.current = new Map(impact.entities.flatMap((entity) => entity.parent_id ? [[entity.id, entity.parent_id]] : []));
       dispatch({ type: "resource", key: "workspace", value: { status: "ready" } });
@@ -452,7 +553,7 @@ export function DashboardWorkspace() {
   };
 
   return (
-    <div className="app-shell" data-presentation-mode={presentationMode} data-testid="dashboard-workspace">
+    <div className="app-shell" data-presentation-mode={presentationMode} data-inspector-open={Boolean(inspectorViews.has(view) && selected)} data-testid="dashboard-workspace">
       <aside className="sidebar" aria-label="Dashboard navigation">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
@@ -464,15 +565,22 @@ export function DashboardWorkspace() {
           </div>
         </div>
         <nav className="nav-list">
-          <span className="nav-group-label">Control</span>
+          <span className="nav-group-label">Project</span>
           {primaryViews.map(renderNavItem)}
           <details className="advanced-nav" open={!primaryViews.some((item) => item.id === view)}>
             <summary>Explore</summary>
-            <div className="nav-list nav-list-nested">{advancedViews.map(renderNavItem)}</div>
+            <div className="nav-list nav-list-nested">
+              {advancedViewGroups.map((group) => (
+                <section key={group.label} className="advanced-nav-group">
+                  <span>{group.label}</span>
+                  {group.views.map(renderNavItem)}
+                </section>
+              ))}
+            </div>
           </details>
         </nav>
         <div className="sidebar-footer">
-          <span><CircleDot size={12} aria-hidden="true" /> Runtime nominal</span>
+          <button type="button" onClick={() => setStatusOpen(true)}><CircleDot size={12} aria-hidden="true" /> {connection === "live" ? "Live data" : connection === "stale" ? "Last known" : connection}</button>
           <code>{payload.snapshot.workspace?.branch || payload.snapshot.project.branch || "local workspace"}</code>
         </div>
       </aside>
@@ -481,24 +589,28 @@ export function DashboardWorkspace() {
         <TopBar
           snapshot={payload.snapshot}
           mode={presentationMode}
+          overview={projectOverview}
+          connection={connection}
+          cachedAt={cachedAt}
           onModeChange={setPresentationMode}
           onSwitchProject={handleSwitchProject}
-          onOpenSearch={() => { setView("graph"); loadFullDashboard(); }}
+          onOpenSearch={() => setPaletteOpen(true)}
+          onOpenStatus={() => setStatusOpen(true)}
         />
         <section className="main-panel" aria-label={`${view} view`}>
-          <StateSurface state={dashboardState.resources.workspace || { status: "ready" }} onRetry={() => void refreshAfterSuccessfulAction()} />
+          {cachedOnly ? <StateSurface state={{ status: "stale", message: error || `Showing stored project status from ${cachedAt || payload.snapshot.generated_at || "an earlier session"}.`, retryable: true }} onRetry={retryDashboard} /> : <StateSurface state={dashboardState.resources.workspace || { status: "ready" }} onRetry={() => void refreshAfterSuccessfulAction()} />}
           {projectLoading && ["home", "roadmap", "health", "activity"].includes(view) ? <ProjectViewState status="loading" message="Loading the selected project workspace..." /> : null}
           {projectError && ["home", "roadmap", "health", "activity"].includes(view) ? <ProjectViewState status="error" message={projectError} onRetry={() => void handleProjectWorkspaceChange(projectWorkspace)} /> : null}
-          {view === "home" && projectOverview ? <ProjectOverviewView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} mode={presentationMode} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} /> : null}
+          {view === "home" && projectOverview ? <ProjectOverviewView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} offline={cachedOnly} mode={presentationMode} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} onNavigate={(nextView, entityId) => handlePaletteNavigate({ view: nextView, entityId })} /> : null}
           {view === "home" && !projectOverview ? <ProjectViewState status="empty" message="Project overview is not available yet." /> : null}
           {view === "roadmap" && projectOverview ? <ProjectRoadmapView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} /> : null}
-          {view === "health" && projectOverview ? <><ProjectHealthView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onRunAction={handleRunAction} onRunCommand={handleRunCommand} /><AnalyticsView snapshot={payload.snapshot} /></> : null}
+          {view === "health" && projectOverview ? <><ProjectHealthView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} actionsDisabled={cachedOnly} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onRunAction={handleRunAction} onRunCommand={handleRunCommand} /><AnalyticsView snapshot={payload.snapshot} /></> : null}
           {view === "activity" && projectOverview ? <ProjectActivityView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} /> : null}
           {view === "analytics" && <AnalyticsView snapshot={payload.snapshot} />}
           {view === "cockpit" && (
             <CockpitView payload={payload} onSelect={setSelectedId} onOpenGraph={() => setView("graph")} onRunCommand={handleRunCommand} onRunAction={handleRunAction} />
           )}
-          {view === "tasks" && <ProjectWorkView snapshot={payload.snapshot} overview={projectOverview} onRunAction={handleRunAction} onRefresh={refreshDashboard} />}
+          {view === "tasks" && <ProjectWorkView snapshot={payload.snapshot} overview={projectOverview} selectedTaskId={selectedId} onRunAction={handleRunAction} onRefresh={refreshDashboard} />}
           {view === "threads" && <ThreadsView snapshot={payload.snapshot} onRunAction={handleRunAction} />}
           {view === "context" && <ContextView snapshot={payload.snapshot} onSelect={setSelectedId} onRunAction={handleRunAction} onRunCommand={handleRunCommand} />}
           {view === "graph" && (
@@ -527,7 +639,9 @@ export function DashboardWorkspace() {
         </section>
       </main>
 
-      <Inspector selected={selected} onRunCommand={handleRunCommand} />
+      {inspectorViews.has(view) && selected ? <Inspector selected={selected} onRunCommand={handleRunCommand} /> : null}
+      <DashboardCommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} payload={payload} overview={projectOverview} loadingFull={paletteLoading} cachedOnly={cachedOnly} onNavigate={handlePaletteNavigate} onRunAction={(action) => void handleRunAction(action)} />
+      <RuntimeStatusDialog open={statusOpen} onOpenChange={setStatusOpen} connection={connection} observedAt={observedAt} cachedAt={cachedAt} snapshot={payload.snapshot} onRetry={retryDashboard} onClearCache={() => { clearDashboardCache(); setCachedAt(""); if (cachedOnly) { setPayload(null); setProjectOverview(null); setConnection("unavailable"); setError("Stored project status was cleared. Reconnect to the local dashboard server."); } }} />
       <TerminalPanel
         open={terminalOpen}
         sessions={sessions}
@@ -567,26 +681,33 @@ async function inspectCommand(command: string): Promise<CommandInspection> {
 
 function TopBar({
   snapshot,
+  overview,
+  connection,
+  cachedAt,
   mode,
   onModeChange,
   onSwitchProject,
-  onOpenSearch
+  onOpenSearch,
+  onOpenStatus
 }: {
   snapshot: DashboardSnapshot;
+  overview: ProjectOverview | null;
+  connection: DashboardConnectionState;
+  cachedAt: string;
   mode: PresentationMode;
   onModeChange: (mode: PresentationMode) => void;
   onSwitchProject: (path: string) => void;
   onOpenSearch: () => void;
+  onOpenStatus: () => void;
 }) {
   return (
     <header className="topbar">
       <div className="topbar-leading">
-        <span className="system-kicker"><CircleDot size={12} aria-hidden="true" /> Local control plane</span>
-        <ProjectDropdown snapshot={snapshot} onSwitchProject={onSwitchProject} />
+        <ProjectDropdown snapshot={snapshot} displayName={overview?.profile.display_name || ""} disabled={connection !== "live"} onSwitchProject={onSwitchProject} />
       </div>
-      <button type="button" className="command-trigger" onClick={onOpenSearch} aria-label="Search AgentPack context">
+      <button type="button" className="command-trigger" onClick={onOpenSearch} aria-label="Open project command palette">
         <Search size={16} aria-hidden="true" />
-        <span>Search paths, memory, tests</span>
+        <span>Find project evidence or action</span>
         <kbd>⌘ K</kbd>
       </button>
       <div className="mode-switch" role="group" aria-label="Workspace detail mode">
@@ -597,6 +718,9 @@ function TopBar({
         <span className="topbar-meta">{snapshot.workspace?.branch || snapshot.project.branch || "local"}</span>
         <StatusPill label="Context" status={snapshot.context.status} />
         <StatusPill label="MCP" status={snapshot.mcp_health?.status || "unknown"} />
+        <button type="button" className={`runtime-status-trigger ${connection}`} onClick={onOpenStatus}>
+          <CircleDot size={12} aria-hidden="true" /> {connection === "live" ? "Live" : connection === "stale" ? `Last known${cachedAt ? ` · ${new Date(cachedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}` : connection}
+        </button>
       </div>
     </header>
   );
@@ -604,9 +728,13 @@ function TopBar({
 
 function ProjectDropdown({
   snapshot,
+  displayName,
+  disabled,
   onSwitchProject
 }: {
   snapshot: DashboardSnapshot;
+  displayName: string;
+  disabled: boolean;
   onSwitchProject: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -625,9 +753,9 @@ function ProjectDropdown({
   };
   return (
     <div className="project-dropdown">
-      <button type="button" className="project-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <button type="button" className="project-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} disabled={disabled}>
         <span>
-          <strong>{current.name}</strong>
+          <strong>{displayName || current.name}</strong>
           <small>{snapshot.workspace?.branch || current.branch || "local workspace"}{current.git_sha ? ` · ${current.git_sha}` : ""}</small>
         </span>
         <span className="badge neutral">Workspace</span>

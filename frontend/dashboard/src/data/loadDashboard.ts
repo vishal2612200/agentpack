@@ -1,4 +1,4 @@
-import type { ActionHistoryRow, DashboardGraph, DashboardMap, DashboardSnapshot, DashboardV2AgentSession, DashboardV2Handoff, DashboardV2ImpactResponse, DashboardV2ActionInspection, LearningRecommendationSet, LearningScope, ProjectOverview, ProjectStatusBrief, ProjectTimelineEvent } from "./schema";
+import type { ActionHistoryRow, CachedProjectStatus, DashboardGraph, DashboardMap, DashboardSnapshot, DashboardV2AgentSession, DashboardV2Handoff, DashboardV2ImpactResponse, DashboardV2ActionInspection, LearningRecommendationSet, LearningScope, ProjectOverview, ProjectStatusBrief, ProjectTimelineEvent } from "./schema";
 
 declare global {
   interface Window {
@@ -35,6 +35,7 @@ export interface DashboardPayload {
     unresolved_count: number;
     capabilities: Record<string, string>;
   };
+  cached_project_status?: CachedProjectStatus | null;
 }
 
 export type DashboardImpactPayload = DashboardV2ImpactResponse;
@@ -74,6 +75,16 @@ export class DashboardRequestError extends Error {
   }
 }
 
+export class DashboardTimeoutError extends Error {
+  readonly timeoutMs: number;
+
+  constructor(timeoutMs: number) {
+    super(`Dashboard request timed out after ${Math.round(timeoutMs / 1000)} seconds.`);
+    this.name = "DashboardTimeoutError";
+    this.timeoutMs = timeoutMs;
+  }
+}
+
 export async function loadDashboardPayload(detail: "home" | "full" = "home"): Promise<DashboardPayload> {
   if (window.location.protocol === "file:") {
     throw new Error("Static dashboard files are no longer supported. Run `agentpack dashboard` and open the served URL.");
@@ -82,9 +93,9 @@ export async function loadDashboardPayload(detail: "home" | "full" = "home"): Pr
   if (apiBase === null) {
     throw new Error("Dashboard server API is unavailable. Run `agentpack dashboard` and open the served URL.");
   }
-  const response = await fetch(`${apiBase}/api/dashboard/v2?detail=${detail}`, {
+  const response = await fetchWithDeadline(`${apiBase}/api/dashboard/v2?detail=${detail}`, {
     headers: authHeaders()
-  });
+  }, detail === "home" ? 8_000 : 15_000);
   if (!response.ok) {
     throw new Error(`Dashboard API failed: ${response.status}`);
   }
@@ -92,19 +103,19 @@ export async function loadDashboardPayload(detail: "home" | "full" = "home"): Pr
 }
 
 export async function loadDashboardImpact(params: URLSearchParams = new URLSearchParams()): Promise<DashboardImpactPayload> {
-  const response = await fetch(apiUrl(`/api/dashboard/v2/impact?${params.toString()}`), { headers: authHeaders() });
+  const response = await fetchWithDeadline(apiUrl(`/api/dashboard/v2/impact?${params.toString()}`), { headers: authHeaders() }, 15_000);
   if (!response.ok) throw new Error(`Impact API failed: ${response.status}`);
   return await response.json() as DashboardImpactPayload;
 }
 
 export async function loadLearningRecommendations(scope: LearningScope = "local"): Promise<LearningRecommendationSet> {
-  const response = await fetch(apiUrl(`/api/learning/recommendations?scope=${scope}`), { headers: authHeaders() });
+  const response = await fetchWithDeadline(apiUrl(`/api/learning/recommendations?scope=${scope}`), { headers: authHeaders() }, 15_000);
   if (!response.ok) throw new Error(`Learning recommendations API failed: ${response.status}`);
   return await response.json() as LearningRecommendationSet;
 }
 
 export async function loadProjectOverview(workspace = "all"): Promise<ProjectOverview> {
-  const response = await fetch(apiUrl(`/api/project/overview?workspace=${encodeURIComponent(workspace)}`), { headers: authHeaders() });
+  const response = await fetchWithDeadline(apiUrl(`/api/project/overview?workspace=${encodeURIComponent(workspace)}`), { headers: authHeaders() }, 8_000);
   if (!response.ok) throw new Error(`Project overview API failed: ${response.status}`);
   return await response.json() as ProjectOverview;
 }
@@ -112,14 +123,14 @@ export async function loadProjectOverview(workspace = "all"): Promise<ProjectOve
 export async function loadProjectTimeline(workspace = "all", kind = "", limit = 50): Promise<ProjectTimelineEvent[]> {
   const params = new URLSearchParams({ workspace, limit: String(limit) });
   if (kind) params.set("kind", kind);
-  const response = await fetch(apiUrl(`/api/project/timeline?${params.toString()}`), { headers: authHeaders() });
+  const response = await fetchWithDeadline(apiUrl(`/api/project/timeline?${params.toString()}`), { headers: authHeaders() }, 15_000);
   if (!response.ok) throw new Error(`Project timeline API failed: ${response.status}`);
   const payload = await response.json() as { timeline: ProjectTimelineEvent[] };
   return payload.timeline;
 }
 
 export async function loadProjectBrief(mode: "summary" | "engineering"): Promise<ProjectStatusBrief> {
-  const response = await fetch(apiUrl(`/api/project/brief?mode=${mode}`), { headers: authHeaders() });
+  const response = await fetchWithDeadline(apiUrl(`/api/project/brief?mode=${mode}`), { headers: authHeaders() }, 8_000);
   if (!response.ok) throw new Error(`Project brief API failed: ${response.status}`);
   return await response.json() as ProjectStatusBrief;
 }
@@ -172,4 +183,17 @@ function normalizedApiBase(): string | null {
     return "";
   }
   return null;
+}
+
+async function fetchWithDeadline(input: RequestInfo | URL, init: RequestInit, timeoutMs: number): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(input, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (error instanceof DOMException && error.name === "AbortError") throw new DashboardTimeoutError(timeoutMs);
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
 }

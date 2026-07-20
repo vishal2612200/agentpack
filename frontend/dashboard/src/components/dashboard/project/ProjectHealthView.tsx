@@ -6,6 +6,7 @@ export function ProjectHealthView({
   overview,
   workspace,
   loading,
+  actionsDisabled = false,
   onWorkspaceChange,
   onRunAction,
   onRunCommand
@@ -13,6 +14,7 @@ export function ProjectHealthView({
   overview: ProjectOverview;
   workspace: string;
   loading: boolean;
+  actionsDisabled?: boolean;
   onWorkspaceChange: (value: string) => void;
   onRunAction: (action: string, body?: Record<string, unknown>) => void;
   onRunCommand: (command: string) => void;
@@ -50,10 +52,10 @@ export function ProjectHealthView({
         <section className="project-section">
           <div className="project-section-heading"><div><span className="eyebrow">Validation</span><h2>Run project checks</h2></div></div>
           <div className="project-check-actions">
-            <button type="button" disabled={overview.read_only} onClick={() => onRunAction("dev_check")}><PlayCircle size={15} /><span><strong>Development</strong><small>Current code checks</small></span></button>
-            <button type="button" disabled={overview.read_only} onClick={() => onRunAction("review")}><PlayCircle size={15} /><span><strong>Review</strong><small>Review evidence</small></span></button>
-            <button type="button" disabled={overview.read_only} onClick={() => onRunCommand("agentpack architecture check")}><PlayCircle size={15} /><span><strong>Architecture</strong><small>Invariant checks</small></span></button>
-            <button type="button" disabled={overview.read_only} onClick={() => onRunAction("release_check")}><PlayCircle size={15} /><span><strong>Release</strong><small>Release readiness</small></span></button>
+            <button type="button" disabled={overview.read_only || actionsDisabled} onClick={() => onRunAction("dev_check")}><PlayCircle size={15} /><span><strong>Development</strong><small>Current code checks</small></span></button>
+            <button type="button" disabled={overview.read_only || actionsDisabled} onClick={() => onRunAction("review")}><PlayCircle size={15} /><span><strong>Review</strong><small>Review evidence</small></span></button>
+            <button type="button" disabled={overview.read_only || actionsDisabled} onClick={() => onRunCommand("agentpack architecture check")}><PlayCircle size={15} /><span><strong>Architecture</strong><small>Invariant checks</small></span></button>
+            <button type="button" disabled={overview.read_only || actionsDisabled} onClick={() => onRunAction("release_check")}><PlayCircle size={15} /><span><strong>Release</strong><small>Release readiness</small></span></button>
           </div>
         </section>
         <section className="project-section">

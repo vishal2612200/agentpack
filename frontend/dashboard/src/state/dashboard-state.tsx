@@ -36,7 +36,7 @@ type DashboardAction =
 const initialState: DashboardState = {
   view: "home",
   presentationMode: typeof window !== "undefined" && window.localStorage.getItem("agentpack.dashboard.presentation_mode") === "build" ? "build" : "explain",
-  selectedEntityId: "task:active",
+  selectedEntityId: "",
   mapMode: "city",
   cameraRequest: 0,
   resources: {},

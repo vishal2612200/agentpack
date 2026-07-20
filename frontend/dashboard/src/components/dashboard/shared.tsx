@@ -1,4 +1,4 @@
-import { Activity, AlertTriangle, PlayCircle, RefreshCcw, type LucideIcon } from "lucide-react";
+import { Activity, AlertTriangle, Copy, PlayCircle, RefreshCcw, type LucideIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import type { DashboardResourceState } from "../../state/dashboard-state";
 import { useDashboardState } from "../../state/dashboard-state";
@@ -42,26 +42,32 @@ export function StatusPill({ status, label }: { status: string; label?: string }
   return <span role="status" className={`status-pill ${status}`}>{label ? `${label}: ${status || "unknown"}` : status || "unknown"}</span>;
 }
 
-export function ErrorState({ message, onRetry }: { message: string; onRetry: () => void }) {
+export function ErrorState({ message, onRetry, recoveryCommand = "agentpack dashboard --port 8765" }: { message: string; onRetry: () => void; recoveryCommand?: string }) {
   return (
     <div className="center-state">
       <AlertTriangle size={28} aria-hidden="true" />
       <h1>Dashboard failed to load</h1>
       <p>{message}</p>
-      <button type="button" className="primary-action" onClick={onRetry}>
-        <RefreshCcw size={16} aria-hidden="true" />
-        Retry
-      </button>
+      <div className="inline-actions">
+        <button type="button" className="primary-action" onClick={onRetry}>
+          <RefreshCcw size={16} aria-hidden="true" />
+          Retry
+        </button>
+        <button type="button" className="secondary-action" onClick={() => navigator.clipboard.writeText(recoveryCommand)}>
+          <Copy size={16} aria-hidden="true" /> Copy server command
+        </button>
+      </div>
+      <code>{recoveryCommand}</code>
     </div>
   );
 }
 
-export function LoadingState() {
+export function LoadingState({ phase = "Connecting to the local AgentPack dashboard." }: { phase?: string }) {
   return (
     <div className="center-state">
       <Activity size={28} aria-hidden="true" />
-      <h1>Loading AgentPack cockpit</h1>
-      <p>Reading local dashboard data.</p>
+      <h1>Loading AgentPack dashboard</h1>
+      <p>{phase}</p>
     </div>
   );
 }
