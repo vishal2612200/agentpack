@@ -236,6 +236,7 @@ class ProjectEventRequest(BaseModel):
         "project_initiative_dismissed",
     ]
     mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    workspace: str = Field(default="all", max_length=128)
     entity_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     status: str = Field(default="", max_length=32)
     title: str = Field(default="", max_length=160)

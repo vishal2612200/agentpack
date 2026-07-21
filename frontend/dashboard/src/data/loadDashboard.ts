@@ -4,6 +4,7 @@ declare global {
   interface Window {
     __AGENTPACK_DASHBOARD_API__?: string;
     __AGENTPACK_DASHBOARD_TOKEN__?: string;
+    __AGENTPACK_PROJECT_ID__?: string;
   }
 }
 
@@ -50,6 +51,7 @@ export interface ProjectProfileMutation {
 export interface ProjectEventMutation {
   event_type: "project_outcome_status" | "project_milestone_status" | "project_risk_upsert" | "project_decision_recorded" | "project_initiative_confirmed" | "project_initiative_dismissed";
   mutation_id: string;
+  workspace?: string;
   entity_id: string;
   status?: string;
   title?: string;
