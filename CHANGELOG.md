@@ -8,6 +8,8 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ## [Unreleased]
 
+## [0.4.1] — 2026-07-21
+
 ### Added
 - Added evidence-backed local and cross-project learning recommendations, interactive topic sessions, scored mastery, and a read-only dashboard learning view.
 - Added a project-level dashboard with outcomes, milestones, confirmed initiatives, independent health dimensions, risks, decisions, unified activity, worktree filtering, and deterministic Summary/Engineering status briefs.

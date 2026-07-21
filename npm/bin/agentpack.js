@@ -6,7 +6,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 
-const PACKAGE_VERSION = "0.4.0";
+const PACKAGE_VERSION = "0.4.1";
 const PYPI_PACKAGE = `agentpack-cli==${PACKAGE_VERSION}`;
 
 function compareVersions(left, right) {

@@ -28,7 +28,7 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ![AgentPack route demo](https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-route-demo.svg)
 
-> **Status: alpha (v0.4.0).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
+> **Status: alpha (v0.4.1).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
 >
 > **Platform note:** macOS, Linux, and Windows are supported. Windows support targets PowerShell plus Git for Windows.
 >
@@ -36,9 +36,8 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ## Latest Update
 
-`0.4.0` adds architecture-aware PR context with deterministic snapshots and CI checks,
-an optional tree-sitter backend for Java, Ruby, and PHP extraction, and a staged review
-pipeline where Anchor, Judge, and Critic artifacts must validate before Actor publishing.
+`0.4.1` adds the unified work/learn loop, project-level dashboard views, worktree-aware
+project status, and last-known dashboard recovery scoped to the served project.
 
 ```bash
 npx @vishal2612200/agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
