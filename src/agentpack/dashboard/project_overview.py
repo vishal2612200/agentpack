@@ -591,7 +591,7 @@ def record_project_status_event(
     values = {
         key: value
         for key, value in request.items()
-        if key not in {"event_type", "mutation_id", "entity_id", "evidence"} and value not in {"", None}
+        if key not in {"event_type", "mutation_id", "workspace", "entity_id", "evidence"} and value not in {"", None}
     }
     evidence = request.get("evidence") if isinstance(request.get("evidence"), list) else []
 

@@ -1,7 +1,7 @@
 import type { DashboardPayload } from "./loadDashboard";
 import type { CachedProjectStatus, DashboardSnapshot, ProjectOverview } from "./schema";
 
-const CACHE_KEY = "agentpack.dashboard.last-known.v1";
+const CACHE_KEY_PREFIX = "agentpack.dashboard.last-known.v1";
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 const CACHE_MAX_STATUS_BYTES = 256 * 1024;
@@ -14,9 +14,9 @@ export interface DashboardCacheEnvelope {
   status: CachedProjectStatus;
 }
 
-export function readDashboardCache(now = Date.now()): DashboardCacheEnvelope | null {
+export function readDashboardCache(expectedProjectId = "", now = Date.now()): DashboardCacheEnvelope | null {
   try {
-    const raw = window.localStorage.getItem(CACHE_KEY);
+    const raw = window.localStorage.getItem(cacheKey(expectedProjectId));
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<DashboardCacheEnvelope>;
     const statusRaw = JSON.stringify(parsed.status || null);
@@ -25,6 +25,7 @@ export function readDashboardCache(now = Date.now()): DashboardCacheEnvelope | n
     const valid = parsed.schema_version === CACHE_VERSION
       && typeof parsed.project_id === "string"
       && parsed.project_id === parsed.status?.project_id
+      && (!expectedProjectId || parsed.project_id === expectedProjectId)
       && isCachedProjectStatus(parsed.status)
       && Number.isFinite(cached)
       && Number.isFinite(expires)
@@ -33,12 +34,12 @@ export function readDashboardCache(now = Date.now()): DashboardCacheEnvelope | n
       && expires > now
       && new TextEncoder().encode(statusRaw).byteLength <= CACHE_MAX_STATUS_BYTES;
     if (!valid) {
-      clearDashboardCache();
+      clearDashboardCache(expectedProjectId);
       return null;
     }
     return parsed as DashboardCacheEnvelope;
   } catch {
-    clearDashboardCache();
+    clearDashboardCache(expectedProjectId);
     return null;
   }
 }
@@ -87,18 +88,22 @@ export function writeDashboardCache(status: CachedProjectStatus | null | undefin
     status
   };
   try {
-    window.localStorage.setItem(CACHE_KEY, JSON.stringify(envelope));
+    window.localStorage.setItem(cacheKey(status.project_id), JSON.stringify(envelope));
   } catch {
-    clearDashboardCache();
+    clearDashboardCache(status.project_id);
   }
 }
 
-export function clearDashboardCache(): void {
+export function clearDashboardCache(projectId = ""): void {
   try {
-    window.localStorage.removeItem(CACHE_KEY);
+    window.localStorage.removeItem(cacheKey(projectId));
   } catch {
     // Storage can be disabled by browser policy; clearing remains best effort.
   }
+}
+
+function cacheKey(projectId: string): string {
+  return projectId ? `${CACHE_KEY_PREFIX}.${projectId}` : CACHE_KEY_PREFIX;
 }
 
 export function cachedStatusToOverview(status: CachedProjectStatus): ProjectOverview {

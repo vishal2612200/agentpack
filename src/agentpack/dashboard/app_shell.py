@@ -7,7 +7,7 @@ from pathlib import Path
 DASHBOARD_APP_DIR = Path(__file__).resolve().parents[1] / "data" / "dashboard_app"
 
 
-def render_dashboard_shell(*, api_base: str = "", token: str = "") -> str:
+def render_dashboard_shell(*, api_base: str = "", token: str = "", project_id: str = "") -> str:
     """Render the bundled cockpit shell for the local dashboard server."""
     index = DASHBOARD_APP_DIR / "index.html"
     if not index.exists():
@@ -16,4 +16,5 @@ def render_dashboard_shell(*, api_base: str = "", token: str = "") -> str:
     html = index.read_text(encoding="utf-8")
     html = html.replace('"__AGENTPACK_DASHBOARD_API__"', json.dumps(api_base))
     html = html.replace('"__AGENTPACK_DASHBOARD_TOKEN__"', json.dumps(token))
+    html = html.replace('"__AGENTPACK_PROJECT_ID__"', json.dumps(project_id))
     return html

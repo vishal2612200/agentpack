@@ -28,6 +28,7 @@ export function ProjectRoadmapView({
       onOverviewChange(await recordProjectEvent({
         event_type: eventType,
         mutation_id: projectMutationId("roadmap"),
+        workspace,
         entity_id: entityId,
         status
       }));
@@ -45,6 +46,7 @@ export function ProjectRoadmapView({
       onOverviewChange(await recordProjectEvent({
         event_type: action === "confirm" ? "project_initiative_confirmed" : "project_initiative_dismissed",
         mutation_id: projectMutationId(`initiative-${action}`),
+        workspace,
         entity_id: suggestionId
       }));
     } catch (error) {

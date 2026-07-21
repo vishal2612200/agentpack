@@ -106,7 +106,8 @@ const advancedViews = advancedViewGroups.flatMap((group) => group.views);
 const inspectorViews = new Set<View>(["graph", "context", "files", "cockpit"]);
 
 export function DashboardWorkspace() {
-  const initialCacheRef = useRef(readDashboardCache());
+  const expectedProjectId = window.__AGENTPACK_PROJECT_ID__ && !window.__AGENTPACK_PROJECT_ID__.startsWith("__AGENTPACK_") ? window.__AGENTPACK_PROJECT_ID__ : "";
+  const initialCacheRef = useRef(readDashboardCache(expectedProjectId));
   const { state: dashboardState, dispatch } = useDashboardState();
   const view = dashboardState.view;
   const selectedId = dashboardState.selectedEntityId;
@@ -641,7 +642,7 @@ export function DashboardWorkspace() {
 
       {inspectorViews.has(view) && selected ? <Inspector selected={selected} onRunCommand={handleRunCommand} /> : null}
       <DashboardCommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} payload={payload} overview={projectOverview} loadingFull={paletteLoading} cachedOnly={cachedOnly} onNavigate={handlePaletteNavigate} onRunAction={(action) => void handleRunAction(action)} />
-      <RuntimeStatusDialog open={statusOpen} onOpenChange={setStatusOpen} connection={connection} observedAt={observedAt} cachedAt={cachedAt} snapshot={payload.snapshot} onRetry={retryDashboard} onClearCache={() => { clearDashboardCache(); setCachedAt(""); if (cachedOnly) { setPayload(null); setProjectOverview(null); setConnection("unavailable"); setError("Stored project status was cleared. Reconnect to the local dashboard server."); } }} />
+      <RuntimeStatusDialog open={statusOpen} onOpenChange={setStatusOpen} connection={connection} observedAt={observedAt} cachedAt={cachedAt} snapshot={payload.snapshot} onRetry={retryDashboard} onClearCache={() => { clearDashboardCache(expectedProjectId); setCachedAt(""); if (cachedOnly) { setPayload(null); setProjectOverview(null); setConnection("unavailable"); setError("Stored project status was cleared. Reconnect to the local dashboard server."); } }} />
       <TerminalPanel
         open={terminalOpen}
         sessions={sessions}

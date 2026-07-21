@@ -316,6 +316,7 @@ function RecordDialog({ kind, overview, onClose, onSaved }: { kind: "risk" | "de
       const next = await recordProjectEvent(kind === "risk" ? {
         event_type: "project_risk_upsert",
         mutation_id: projectMutationId("risk"),
+        workspace: overview.selected_workspace,
         entity_id: id,
         title,
         owner,
@@ -325,6 +326,7 @@ function RecordDialog({ kind, overview, onClose, onSaved }: { kind: "risk" | "de
       } : {
         event_type: "project_decision_recorded",
         mutation_id: projectMutationId("decision"),
+        workspace: overview.selected_workspace,
         entity_id: id,
         title,
         owner,

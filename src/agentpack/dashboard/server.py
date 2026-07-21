@@ -38,8 +38,10 @@ from agentpack.dashboard.project_overview import (
     build_project_overview,
     build_project_status_brief,
     build_project_timeline,
+    discover_project_workspaces,
     project_config_revision,
     record_project_status_event,
+    select_project_workspaces,
 )
 from agentpack.learning.recommender import recommend_learning_topics
 from agentpack.session.events import record_event
@@ -246,7 +248,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in {"", "/"}:
-            self._send_html(render_dashboard_shell(token=self.server.state.token))
+            self._send_html(render_dashboard_shell(token=self.server.state.token, project_id=build_project_overview(self.server.state.root).project_id))
             return
         if parsed.path == "/api/dashboard":
             if not self._authorized(parsed):
@@ -448,7 +450,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             assert isinstance(request, ProjectEventRequest)
             try:
                 with self.server.state.lock:
-                    root = self.server.state.root
+                    root = _selected_project_root(self.server.state.root, request.workspace)
                     event, duplicate = record_project_status_event(
                         root,
                         request.model_dump(mode="json"),
@@ -845,6 +847,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 def create_dashboard_server(root: Path, *, host: str = DEFAULT_DASHBOARD_HOST, port: int = DEFAULT_DASHBOARD_PORT) -> DashboardHTTPServer:
     state = DashboardServerState(root=root)
     return DashboardHTTPServer((host, port), state)
+
+
+def _selected_project_root(root: Path, workspace: str) -> Path:
+    selected = select_project_workspaces(discover_project_workspaces(root)[0], workspace or "all")
+    return Path(selected[0].path) if len(selected) == 1 else root
 
 
 def serve_dashboard(root: Path, *, host: str = DEFAULT_DASHBOARD_HOST, port: int = DEFAULT_DASHBOARD_PORT, open_browser: bool = False) -> str:
