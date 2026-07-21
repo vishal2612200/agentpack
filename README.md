@@ -329,14 +329,17 @@ activate it inside a repository:
 
 ```bash
 pipx install agentpack-cli
-agentpack quickstart
-agentpack start "fix auth token expiry"
-agentpack next
+agentpack work "fix auth token expiry"
+agentpack learn --json
+agentpack finish
+agentpack doctor
 ```
 
-`quickstart` initializes the local project layer, `start` records the active
-task, and `next` asks AgentPack for the current safe action. MCP-capable agents
-can use the same local state directly after integration setup.
+`work` initializes the local project layer and prepares the task context,
+`learn` presents the next evidence-backed topics, `finish` records validation
+and task memory, and `doctor` checks the installation and integration surface.
+MCP-capable agents can use the same local state directly after integration
+setup.
 
 The activation path creates local project state and connects the detected agent
 integration. From there, the agent can pull current context, inspect focused

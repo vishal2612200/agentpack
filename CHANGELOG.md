@@ -11,18 +11,31 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ## [0.4.1] — 2026-07-21
 
 ### Added
+- Added graph, history, and host-neutral handoff surfaces so work can move between supported agent sessions with bounded project state.
+- Added typed Dashboard v2 contracts, impact-aware workspace navigation, action inspection, agent operation states, browser acceptance coverage, and v1-compatible request behavior.
+- Added cited PR comment resolution with validated snapshots, plans, fixes, replies, idempotent retries, and Codex/Claude plugin distribution.
+- Added skill review and evaluation generation for auditing `SKILL.md` trigger behavior with deterministic findings.
 - Added evidence-backed local and cross-project learning recommendations, interactive topic sessions, scored mastery, and a read-only dashboard learning view.
 - Added a project-level dashboard with outcomes, milestones, confirmed initiatives, independent health dimensions, risks, decisions, unified activity, worktree filtering, and deterministic Summary/Engineering status briefs.
 - Added revisioned project profile APIs and idempotent append-only project events while preserving existing dashboard and command contracts.
 - Added an evidence-ranked Now section, a keyboard command palette, independent runtime evidence, and a redacted seven-day last-known project snapshot with read-only recovery behavior.
 
 ### Changed
+- Made the repository the primary dashboard workspace and unified graph, map, table, task, session, and handoff navigation around that project identity.
 - Reframed the primary CLI surface around `work`, `learn`, `finish`, and `doctor` while retaining every existing command.
 - Made Overview, Roadmap, Work, Health, and Knowledge the primary dashboard navigation; Activity opens from Overview or the command palette, while task-scoped context and diagnostic tools remain under Explore.
+- Refreshed the public product narrative, badges, integration guidance, dashboard documentation, and packaged agent instructions to match the reliability-layer positioning.
+- Updated GitHub Actions dependencies and synchronized initialization ignore rules for generated review artifacts.
 
 ### Fixed
 - Stopped treating queued or unscored learning sessions as weak spots.
 - Resolved repository-local Git hooks through the common Git directory so `work` and setup flows run from linked worktrees.
+- Scoped project event mutations to the selected worktree and isolated last-known dashboard cache entries by project id.
+- Rebuilt the bundled dashboard assets so the served package matches the current source.
+
+### Documentation
+- Added the Dashboard v2 API and migration guidance, project examples, responsive dashboard screenshots, and runtime-loop documentation for learning, project state, and handoffs.
+- Updated command, integration, Codex plugin, Claude skill, and README documentation for the current workflow and review-resolution surfaces.
 
 ## [0.4.0] — 2026-07-15
 
