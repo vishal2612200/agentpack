@@ -3,7 +3,9 @@ from __future__ import annotations
 import json
 import hashlib
 import mimetypes
+import re
 import secrets
+import shlex
 import threading
 import urllib.parse
 import webbrowser
@@ -16,6 +18,7 @@ from typing import Any
 
 from pydantic import BaseModel, ValidationError
 
+from agentpack.core import git
 from agentpack.core.project_index import register_project
 from agentpack.core.handoff import HandoffError, accept_handoff, release_handoff
 from agentpack.core.task_freshness import write_task_md
@@ -27,7 +30,20 @@ from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
 from agentpack.dashboard.models import DashboardFeedback
 from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
+from agentpack.dashboard.project_overview import (
+    ProjectConfigConflict,
+    ProjectReadOnlyError,
+    ProjectValidationError,
+    apply_project_profile_update,
+    build_project_overview,
+    build_project_status_brief,
+    build_project_timeline,
+    project_config_revision,
+    record_project_status_event,
+)
+from agentpack.learning.recommender import recommend_learning_topics
 from agentpack.session.events import record_event
+from agentpack.session.identity import repository_path
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 from agentpack.dashboard.v2 import (
     build_dashboard_v2_actions,
@@ -45,6 +61,8 @@ from agentpack.dashboard.contracts import (
     DashboardV2Error,
     DashboardV2Handoff,
     DashboardV2HandoffOperationRequest,
+    ProjectEventRequest,
+    ProjectProfileUpdateRequest,
 )
 
 
@@ -157,7 +175,7 @@ class DashboardServerState:
 
     def _record_terminal_event(self, session: TerminalSession, event: TerminalEvent) -> None:
         status = event.status or session.status
-        root = Path(session.cwd).resolve()
+        root = Path(repository_path(Path(session.cwd))).resolve()
         if event.type == "status" and status == "running":
             record_dashboard_action(
                 root,
@@ -182,6 +200,32 @@ class DashboardServerState:
                 output_summary=session.output_summary,
                 follow_up_actions=_follow_up_actions(session.command, status),
             )
+            check_kind = _dashboard_check_kind(session.command)
+            if check_kind:
+                blocking, advisory = _architecture_counts(session.output_summary) if check_kind == "architecture" else (0, 0)
+                record_event(
+                    root,
+                    "check_completed",
+                    {
+                        "check_kind": check_kind,
+                        "command": session.command,
+                        "status": "passed" if event.returncode == 0 else "failed",
+                        "returncode": event.returncode,
+                        "git_sha": git.current_sha(root) or "",
+                        "branch": git.current_branch(root) or "",
+                        "summary": session.output_summary,
+                        "blocking_violations": blocking,
+                        "advisory_violations": advisory,
+                        "evidence": [
+                            {
+                                "kind": "command",
+                                "ref": check_kind,
+                                "summary": session.output_summary[:500],
+                            }
+                        ],
+                    },
+                    source="dashboard",
+                )
 
 
 class DashboardHTTPServer(ThreadingHTTPServer):
@@ -219,6 +263,67 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             payload = build_dashboard_v2_payload(self.server.state.root, detail=detail)
             payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]
             self._send_json(payload)
+            return
+        if parsed.path == "/api/learning/recommendations":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            scope = urllib.parse.parse_qs(parsed.query).get("scope", ["local"])[0]
+            if scope not in {"local", "global"}:
+                self._send_json({"error": "scope must be local or global"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            recommendations = recommend_learning_topics(
+                self.server.state.root,
+                global_scope=scope == "global",
+            )
+            self._send_json(recommendations.model_dump(mode="json"))
+            return
+        if parsed.path == "/api/project/overview":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            workspace = query.get("workspace", ["all"])[0]
+            try:
+                overview = build_project_overview(self.server.state.root, workspace=workspace)
+            except ProjectValidationError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(overview.model_dump(mode="json"))
+            return
+        if parsed.path == "/api/project/timeline":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            workspace = query.get("workspace", ["all"])[0]
+            kind = query.get("kind", [""])[0].strip()
+            if len(kind) > 64:
+                self._send_json({"error": "kind must be at most 64 characters"}, status=HTTPStatus.BAD_REQUEST)
+                return
+            try:
+                timeline = build_project_timeline(
+                    self.server.state.root,
+                    workspace=workspace,
+                    kind=kind,
+                    limit=_bounded_query_int(query, "limit", 50, 200),
+                )
+            except ProjectValidationError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json({"timeline": [item.model_dump(mode="json") for item in timeline]})
+            return
+        if parsed.path == "/api/project/brief":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            mode = urllib.parse.parse_qs(parsed.query).get("mode", ["summary"])[0]
+            try:
+                brief = build_project_status_brief(self.server.state.root, mode=mode)
+            except ProjectValidationError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(brief.model_dump(mode="json"))
             return
         if parsed.path == "/api/dashboard/v2/impact":
             if not self._authorized(parsed):
@@ -295,6 +400,73 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_v2_auth_error()
             else:
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+            return
+        if parsed.path == "/api/project/profile":
+            request = self._read_v2_model(ProjectProfileUpdateRequest)
+            if request is None:
+                return
+            assert isinstance(request, ProjectProfileUpdateRequest)
+            root = self.server.state.root
+            try:
+                with self.server.state.lock:
+                    root = self.server.state.root
+                    profile, duplicate = apply_project_profile_update(
+                        root,
+                        mutation_id=request.mutation_id,
+                        expected_revision=request.expected_revision,
+                        updates=request.profile.model_dump(mode="json", exclude_none=True),
+                    )
+                    overview = build_project_overview(root).model_dump(mode="json")
+            except ProjectReadOnlyError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except ProjectConfigConflict as exc:
+                self._send_json(
+                    {
+                        "error": str(exc),
+                        "config_revision": project_config_revision(root),
+                        "profile": build_project_overview(root).profile.model_dump(mode="json"),
+                    },
+                    status=HTTPStatus.CONFLICT,
+                )
+                return
+            except ProjectValidationError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                {
+                    "profile": profile.model_dump(mode="json"),
+                    "duplicate": duplicate,
+                    "project_overview": overview,
+                }
+            )
+            return
+        if parsed.path == "/api/project/events":
+            request = self._read_v2_model(ProjectEventRequest)
+            if request is None:
+                return
+            assert isinstance(request, ProjectEventRequest)
+            try:
+                with self.server.state.lock:
+                    root = self.server.state.root
+                    event, duplicate = record_project_status_event(
+                        root,
+                        request.model_dump(mode="json"),
+                    )
+                    overview = build_project_overview(root).model_dump(mode="json")
+            except ProjectReadOnlyError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except ProjectValidationError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                {
+                    "event": event,
+                    "duplicate": duplicate,
+                    "project_overview": overview,
+                }
+            )
             return
         if parsed.path == "/api/commands/inspect":
             payload = self._read_json()
@@ -689,6 +861,36 @@ def serve_dashboard(root: Path, *, host: str = DEFAULT_DASHBOARD_HOST, port: int
 
 def _valid_project_root(path: Path) -> bool:
     return path.is_dir() and ((path / ".git").exists() or (path / ".agentpack" / "config.toml").exists())
+
+
+def _dashboard_check_kind(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return ""
+    command_parts = [part for part in parts if part]
+    if "agentpack" not in command_parts and "agentpack.cli" not in command_parts:
+        return ""
+    joined = " ".join(command_parts)
+    if re.search(r"\bagentpack(?:\.cli)?\s+finish\b", joined):
+        return ""
+    if re.search(r"\brelease-check\b", joined):
+        return "release"
+    if re.search(r"\barchitecture\b", joined):
+        return "architecture"
+    if re.search(r"\breview\b", joined):
+        return "review"
+    if re.search(r"\bdev-check\b", joined):
+        return "development"
+    return ""
+
+
+def _architecture_counts(summary: str) -> tuple[int, int]:
+    def count(label: str) -> int:
+        match = re.search(rf"{label}[^0-9]*(\d+)", summary, re.IGNORECASE)
+        return int(match.group(1)) if match else 0
+
+    return count("blocking"), count("advisory")
 
 
 def _follow_up_actions(command: str, status: str) -> list[str]:

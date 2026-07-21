@@ -128,6 +128,28 @@ def infer_learning_mode(request: str) -> str:
     return "study"
 
 
+def build_learning_topic(
+    *,
+    task: str,
+    title: str,
+    why: str,
+    concepts: list[str],
+    files: list[str],
+    mode: str = "study",
+    request: str = "",
+) -> LearningTopic:
+    evidence = files[:5]
+    return LearningTopic(
+        title=title,
+        why=why,
+        prompt=_prompt_for_mode(task, title, concepts, evidence, mode, request),
+        files=evidence,
+        concepts=concepts,
+        questions=_topic_questions(title, concepts, evidence, mode=mode, task=task),
+        citations=_citations_for_files(evidence, f"learning-topic:{title}"),
+    )
+
+
 def _has_learning_term(text: str, term: str) -> bool:
     return re.search(rf"(?<!\w){re.escape(term)}(?!\w)", text) is not None
 
@@ -413,16 +435,12 @@ def _topic(
     concepts: list[str],
     files: list[str],
 ) -> LearningTopic:
-    evidence = files[:5]
-    prompt = _prompt_for_mode(inputs.task, title, concepts, evidence, "study", "")
-    return LearningTopic(
+    return build_learning_topic(
+        task=inputs.task,
         title=title,
         why=why,
-        prompt=prompt,
-        files=evidence,
         concepts=concepts,
-        questions=_topic_questions(title, concepts, evidence, mode="study", task=inputs.task),
-        citations=_citations_for_files(evidence, f"learning-topic:{title}"),
+        files=files,
     )
 
 

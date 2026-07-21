@@ -9,7 +9,18 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 ## [Unreleased]
 
 ### Added
-- No changes yet.
+- Added evidence-backed local and cross-project learning recommendations, interactive topic sessions, scored mastery, and a read-only dashboard learning view.
+- Added a project-level dashboard with outcomes, milestones, confirmed initiatives, independent health dimensions, risks, decisions, unified activity, worktree filtering, and deterministic Summary/Engineering status briefs.
+- Added revisioned project profile APIs and idempotent append-only project events while preserving existing dashboard and command contracts.
+- Added an evidence-ranked Now section, a keyboard command palette, independent runtime evidence, and a redacted seven-day last-known project snapshot with read-only recovery behavior.
+
+### Changed
+- Reframed the primary CLI surface around `work`, `learn`, `finish`, and `doctor` while retaining every existing command.
+- Made Overview, Roadmap, Work, Health, and Knowledge the primary dashboard navigation; Activity opens from Overview or the command palette, while task-scoped context and diagnostic tools remain under Explore.
+
+### Fixed
+- Stopped treating queued or unscored learning sessions as weak spots.
+- Resolved repository-local Git hooks through the common Git directory so `work` and setup flows run from linked worktrees.
 
 ## [0.4.0] — 2026-07-15
 

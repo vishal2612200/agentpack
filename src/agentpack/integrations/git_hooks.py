@@ -3,6 +3,7 @@ from __future__ import annotations
 import stat
 from pathlib import Path
 
+from agentpack.core import git
 from agentpack.integrations.platform import cli_module_argv, shell_join
 
 # Hooks that indicate the working tree changed and the pack may be stale.
@@ -17,14 +18,22 @@ def _hook_script(agent: str) -> str:
     return f"{_AGENTPACK_MARKER}\n{command}\n"
 
 
+def git_hooks_dir(root: Path) -> Path | None:
+    resolved = git.git_path(root, "hooks")
+    if resolved is not None:
+        return resolved
+    git_entry = root / ".git"
+    return git_entry / "hooks" if git_entry.is_dir() else None
+
+
 def install_git_hooks(root: Path, agent: str) -> dict[str, str]:
     """Install agentpack auto-repack lines into .git/hooks/*.
 
     Returns {hook_name: action} where action is created|updated|unchanged.
     Idempotent — safe to re-run. Appends to existing hooks rather than replacing.
     """
-    hooks_dir = root / ".git" / "hooks"
-    if not (root / ".git").exists():
+    hooks_dir = git_hooks_dir(root)
+    if hooks_dir is None:
         return {}
     hooks_dir.mkdir(parents=True, exist_ok=True)
 
@@ -73,8 +82,8 @@ def install_git_hooks(root: Path, agent: str) -> dict[str, str]:
 
 def remove_git_hooks(root: Path) -> dict[str, str]:
     """Remove agentpack lines from .git/hooks/*. Returns {hook_name: action}."""
-    hooks_dir = root / ".git" / "hooks"
-    if not hooks_dir.exists():
+    hooks_dir = git_hooks_dir(root)
+    if hooks_dir is None or not hooks_dir.exists():
         return {}
 
     results: dict[str, str] = {}

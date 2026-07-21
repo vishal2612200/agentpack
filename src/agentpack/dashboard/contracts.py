@@ -15,6 +15,14 @@ from agentpack.dashboard.models import (
     DashboardGraph,
     DashboardMap,
     DashboardSnapshot,
+    ProjectDecision,
+    ProjectFocusSnapshot,
+    ProjectHealthSnapshot,
+    ProjectInitiative,
+    ProjectMetrics,
+    ProjectOutcomeState,
+    ProjectRisk,
+    ProjectTimelineEvent,
 )
 
 
@@ -165,6 +173,82 @@ class DashboardV2HandoffOperationRequest(BaseModel):
     name: str = Field(min_length=1, max_length=48)
 
 
+class ProjectMilestoneInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default="", max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    owner: str = Field(default="", max_length=120)
+    due_date: str = Field(default="", max_length=10)
+
+
+class ProjectOutcomeInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: str = Field(default="", max_length=64)
+    title: str = Field(min_length=1, max_length=160)
+    description: str = Field(default="", max_length=2000)
+    owner: str = Field(default="", max_length=120)
+    target_date: str = Field(default="", max_length=10)
+    milestones: list[ProjectMilestoneInput] = Field(default_factory=list, max_length=100)
+
+
+class ProjectProfilePatch(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    display_name: str | None = Field(default=None, max_length=160)
+    purpose: str | None = Field(default=None, max_length=2000)
+    audiences: list[str] | None = Field(default=None, max_length=20)
+    owners: list[str] | None = Field(default=None, max_length=20)
+    stage: str | None = Field(default=None, max_length=32)
+    links: dict[str, str] | None = Field(default=None, max_length=20)
+    environments: list[str] | None = Field(default=None, max_length=20)
+    status_stale_days: int | None = Field(default=None, ge=1, le=3650)
+    outcomes: list[ProjectOutcomeInput] | None = Field(default=None, max_length=50)
+
+
+class ProjectProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    expected_revision: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
+    profile: ProjectProfilePatch
+
+
+class ProjectEventEvidenceInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: str = Field(min_length=1, max_length=64)
+    ref: str = Field(default="", max_length=240)
+    summary: str = Field(default="", max_length=500)
+    path: str = Field(default="", max_length=500)
+
+
+class ProjectEventRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_type: Literal[
+        "project_outcome_status",
+        "project_milestone_status",
+        "project_risk_upsert",
+        "project_decision_recorded",
+        "project_initiative_confirmed",
+        "project_initiative_dismissed",
+    ]
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    entity_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    status: str = Field(default="", max_length=32)
+    title: str = Field(default="", max_length=160)
+    description: str = Field(default="", max_length=2000)
+    owner: str = Field(default="", max_length=120)
+    severity: str = Field(default="", max_length=16)
+    mitigation: str = Field(default="", max_length=2000)
+    context: str = Field(default="", max_length=2000)
+    decision: str = Field(default="", max_length=2000)
+    outcome_id: str = Field(default="", max_length=64)
+    evidence: list[ProjectEventEvidenceInput] = Field(default_factory=list, max_length=20)
+
+
 class DashboardV2AgentOperationResponse(BaseModel):
     schema_version: Literal[2] = 2
     handoff: DashboardV2Handoff
@@ -245,6 +329,36 @@ class DashboardV2Error(BaseModel):
     detail: str = ""
 
 
+class CachedProjectProfile(BaseModel):
+    display_name: str = ""
+    purpose: str = ""
+    audiences: list[str] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    stage: str = ""
+    environments: list[str] = Field(default_factory=list)
+    status_stale_days: int = 14
+
+
+class CachedProjectStatus(BaseModel):
+    schema_version: Literal[1] = 1
+    project_id: str
+    generated_at: str
+    branch: str = ""
+    git_sha: str = ""
+    profile: CachedProjectProfile
+    metrics: ProjectMetrics
+    outcomes: list[ProjectOutcomeState] = Field(default_factory=list)
+    initiatives: list[ProjectInitiative] = Field(default_factory=list)
+    risks: list[ProjectRisk] = Field(default_factory=list)
+    decisions: list[ProjectDecision] = Field(default_factory=list)
+    health: ProjectHealthSnapshot
+    focus: ProjectFocusSnapshot | None = None
+    recent_changes: list[ProjectTimelineEvent] = Field(default_factory=list)
+    partial: bool = False
+    read_only: bool = True
+    warnings: list[str] = Field(default_factory=list)
+
+
 class DashboardV2Payload(BaseModel):
     schema_version: Literal[2] = 2
     detail: Literal["home", "full"]
@@ -255,3 +369,4 @@ class DashboardV2Payload(BaseModel):
     workspace: DashboardV2Workspace
     agents: DashboardV2Agents
     impact: DashboardV2Impact
+    cached_project_status: CachedProjectStatus | None = None

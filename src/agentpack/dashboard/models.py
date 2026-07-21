@@ -29,6 +29,200 @@ DashboardEdgeType = Literal[
     "may_break",
     "retrieve_ref",
 ]
+ProjectRecordSource = Literal["declared", "observed", "inferred"]
+ProjectStage = Literal["idea", "planning", "active", "maintenance", "paused", "complete"]
+ProjectOutcomeStatus = Literal["planned", "on_track", "at_risk", "achieved", "paused"]
+ProjectMilestoneStatus = Literal["planned", "in_progress", "blocked", "done"]
+ProjectRiskSeverity = Literal["low", "medium", "high", "critical"]
+ProjectRiskStatus = Literal["open", "mitigating", "accepted", "resolved"]
+ProjectDecisionStatus = Literal["proposed", "accepted", "rejected", "superseded"]
+ProjectHealthStatus = Literal["healthy", "attention", "blocked", "stale", "unknown"]
+ProjectFocusKind = Literal["health", "risk", "decision", "milestone", "initiative"]
+
+
+class ProjectEvidence(BaseModel):
+    kind: str
+    ref: str = ""
+    summary: str = ""
+    path: str = ""
+    occurred_at: str = ""
+    workspace_id: str = ""
+
+
+class ProjectDerivedRecord(BaseModel):
+    source: ProjectRecordSource = "observed"
+    confidence: float = Field(default=1.0, ge=0.0, le=1.0)
+    updated_at: str = ""
+    evidence: list[ProjectEvidence] = Field(default_factory=list)
+    workspace_id: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class ProjectWorkspace(ProjectDerivedRecord):
+    workspace_id: str
+    path: str
+    branch: str = ""
+    git_sha: str = ""
+    is_current: bool = False
+    read_only: bool = False
+
+
+class ProjectProfile(ProjectDerivedRecord):
+    project_id: str
+    config_revision: str
+    display_name: str = ""
+    purpose: str = ""
+    audiences: list[str] = Field(default_factory=list)
+    owners: list[str] = Field(default_factory=list)
+    stage: str = ""
+    links: dict[str, str] = Field(default_factory=dict)
+    environments: list[str] = Field(default_factory=list)
+    status_stale_days: int = 14
+
+
+class ProjectMilestoneState(ProjectDerivedRecord):
+    milestone_id: str
+    outcome_id: str
+    title: str
+    owner: str = ""
+    due_date: str = ""
+    status: ProjectMilestoneStatus = "planned"
+
+
+class ProjectOutcomeState(ProjectDerivedRecord):
+    outcome_id: str
+    title: str
+    description: str = ""
+    owner: str = ""
+    target_date: str = ""
+    status: ProjectOutcomeStatus = "planned"
+    progress_pct: float | None = None
+    milestones: list[ProjectMilestoneState] = Field(default_factory=list)
+
+
+class ProjectInitiative(ProjectDerivedRecord):
+    initiative_id: str
+    suggestion_id: str = ""
+    title: str
+    description: str = ""
+    owner: str = ""
+    outcome_id: str = ""
+    status: str = "confirmed"
+
+
+class ProjectInitiativeSuggestion(ProjectDerivedRecord):
+    suggestion_id: str
+    title: str
+    rationale: str
+    outcome_id: str = ""
+    score: int = Field(default=0, ge=0, le=100)
+    task_ids: list[str] = Field(default_factory=list)
+
+
+class ProjectRisk(ProjectDerivedRecord):
+    risk_id: str
+    title: str
+    description: str = ""
+    owner: str = ""
+    severity: ProjectRiskSeverity = "medium"
+    status: ProjectRiskStatus = "open"
+    mitigation: str = ""
+
+
+class ProjectDecision(ProjectDerivedRecord):
+    decision_id: str
+    title: str
+    context: str = ""
+    decision: str = ""
+    owner: str = ""
+    status: ProjectDecisionStatus = "proposed"
+
+
+class ProjectHealthDimension(ProjectDerivedRecord):
+    dimension: Literal["delivery", "validation", "architecture", "release", "context", "knowledge"]
+    status: ProjectHealthStatus = "unknown"
+    summary: str = ""
+
+
+class ProjectHealthSnapshot(ProjectDerivedRecord):
+    dimensions: list[ProjectHealthDimension] = Field(default_factory=list)
+
+
+class ProjectMetrics(ProjectDerivedRecord):
+    outcome_count: int = 0
+    active_outcomes: int = 0
+    milestone_count: int = 0
+    completed_milestones: int = 0
+    milestone_completion_pct: float | None = None
+    open_risks: int = 0
+    pending_decisions: int = 0
+    confirmed_initiatives: int = 0
+    recent_changes: int = 0
+    evidence_coverage: float | None = None
+
+
+class ProjectTimelineEvent(ProjectDerivedRecord):
+    event_id: str
+    kind: str
+    title: str
+    summary: str = ""
+    entity_id: str = ""
+    actor: str = ""
+    git_sha: str = ""
+    branch: str = ""
+    tags: list[str] = Field(default_factory=list)
+
+
+class ProjectFocusItem(ProjectDerivedRecord):
+    item_id: str
+    kind: ProjectFocusKind
+    entity_id: str
+    title: str
+    summary: str = ""
+    status: str = ""
+    severity: str = ""
+    target_view: str
+
+
+class ProjectNextAction(ProjectDerivedRecord):
+    action_id: str
+    entity_id: str
+    title: str
+    rationale: str = ""
+    target_view: str
+
+
+class ProjectFocusSnapshot(ProjectDerivedRecord):
+    outcome_id: str = ""
+    milestone_id: str = ""
+    attention: list[ProjectFocusItem] = Field(default_factory=list)
+    next_actions: list[ProjectNextAction] = Field(default_factory=list)
+
+
+class ProjectStatusBrief(ProjectDerivedRecord):
+    mode: Literal["summary", "engineering"]
+    markdown: str
+    project_id: str
+
+
+class ProjectOverview(ProjectDerivedRecord):
+    schema_version: int = 1
+    project_id: str
+    generated_at: str
+    selected_workspace: str = "all"
+    profile: ProjectProfile
+    workspaces: list[ProjectWorkspace] = Field(default_factory=list)
+    metrics: ProjectMetrics = Field(default_factory=ProjectMetrics)
+    outcomes: list[ProjectOutcomeState] = Field(default_factory=list)
+    initiatives: list[ProjectInitiative] = Field(default_factory=list)
+    initiative_suggestions: list[ProjectInitiativeSuggestion] = Field(default_factory=list)
+    risks: list[ProjectRisk] = Field(default_factory=list)
+    decisions: list[ProjectDecision] = Field(default_factory=list)
+    health: ProjectHealthSnapshot = Field(default_factory=ProjectHealthSnapshot)
+    focus: ProjectFocusSnapshot | None = None
+    recent_changes: list[ProjectTimelineEvent] = Field(default_factory=list)
+    partial: bool = False
+    read_only: bool = False
 
 
 class ProjectInfo(BaseModel):
@@ -307,6 +501,8 @@ class McpRegistration(BaseModel):
 
 class McpHealth(BaseModel):
     status: McpHealthStatus = "unknown"
+    checked_at: str = ""
+    source: str = ""
     runtime_status: str = ""
     runtime_ok: bool = False
     runtime_detail: str = ""
@@ -652,6 +848,7 @@ class DashboardSnapshot(BaseModel):
     schema_version: int = 1
     generated_at: str = ""
     project: ProjectInfo
+    project_overview: ProjectOverview | None = None
     project_record: DashboardProjectRecord | None = None
     workspace: DashboardWorkspaceRecord | None = None
     project_tasks: list[DashboardTaskRecord] = Field(default_factory=list)

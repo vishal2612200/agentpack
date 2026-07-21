@@ -1,12 +1,17 @@
 import stat
+import subprocess
 from pathlib import Path
 
-from agentpack.integrations.git_hooks import install_git_hooks, remove_git_hooks, _HOOK_EVENTS
+from agentpack.integrations.git_hooks import _AGENTPACK_MARKER, _HOOK_EVENTS, install_git_hooks, remove_git_hooks
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
     (tmp_path / ".git" / "hooks").mkdir(parents=True)
     return tmp_path
+
+
+def _git(root: Path, *args: str) -> None:
+    subprocess.run(["git", *args], cwd=root, check=True, capture_output=True, text=True)
 
 
 class TestInstallGitHooks:
@@ -56,6 +61,29 @@ class TestInstallGitHooks:
         hook = root / ".git" / "hooks" / "post-commit"
         assert "--agent codex" in hook.read_text()
         assert "agentpack.cli" in hook.read_text()
+
+    def test_uses_common_hooks_directory_from_linked_worktree(self, tmp_path):
+        root = tmp_path / "repo"
+        linked = tmp_path / "linked"
+        root.mkdir()
+        _git(root, "init", "-b", "main")
+        _git(root, "config", "user.name", "AgentPack Test")
+        _git(root, "config", "user.email", "agentpack@example.com")
+        _git(root, "commit", "--allow-empty", "-m", "initial")
+        _git(root, "worktree", "add", "-b", "linked", str(linked))
+
+        results = install_git_hooks(linked, agent="codex")
+
+        assert set(results) == set(_HOOK_EVENTS)
+        for event in _HOOK_EVENTS:
+            hook = root / ".git" / "hooks" / event
+            assert hook.exists()
+            assert _AGENTPACK_MARKER in hook.read_text(encoding="utf-8")
+
+        remove_git_hooks(linked)
+        for event in _HOOK_EVENTS:
+            hook = root / ".git" / "hooks" / event
+            assert not hook.exists() or _AGENTPACK_MARKER not in hook.read_text(encoding="utf-8")
 
 
 class TestRemoveGitHooks:

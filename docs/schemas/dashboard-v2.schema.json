@@ -17,266 +17,3042 @@
     "impact"
   ],
   "properties": {
-    "schema_version": { "const": 2 },
-    "detail": { "enum": ["home", "full"] },
-    "snapshot": { "type": "object" },
-    "graph": { "$ref": "#/$defs/objectEnvelope" },
-    "map": { "$ref": "#/$defs/objectEnvelope" },
-    "action_history": { "type": "array", "items": { "type": "object" } },
+    "schema_version": {
+      "const": 2
+    },
+    "detail": {
+      "enum": [
+        "home",
+        "full"
+      ]
+    },
+    "snapshot": {
+      "type": "object",
+      "properties": {
+        "project_overview": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectOverview"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      }
+    },
+    "graph": {
+      "$ref": "#/$defs/objectEnvelope"
+    },
+    "map": {
+      "$ref": "#/$defs/objectEnvelope"
+    },
+    "action_history": {
+      "type": "array",
+      "items": {
+        "type": "object"
+      }
+    },
     "workspace": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["project", "workspace", "task", "context"],
+      "required": [
+        "project",
+        "workspace",
+        "task",
+        "context"
+      ],
       "properties": {
-        "project": { "type": "object" },
-        "workspace": { "type": ["object", "null"] },
-        "task": { "type": "object" },
-        "context": { "type": "object" }
+        "project": {
+          "type": "object"
+        },
+        "workspace": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "task": {
+          "type": "object"
+        },
+        "context": {
+          "type": "object"
+        }
       }
     },
     "agents": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["handoffs", "sessions", "threads", "integrations", "mcp_health"],
+      "required": [
+        "handoffs",
+        "sessions",
+        "threads",
+        "integrations",
+        "mcp_health"
+      ],
       "properties": {
-        "handoffs": { "type": "array", "items": { "$ref": "#/$defs/handoff" } },
-        "sessions": { "type": "array", "items": { "$ref": "#/$defs/session" } },
-        "threads": { "type": "array", "items": { "type": "object" } },
-        "integrations": { "type": "array", "items": { "type": "object" } },
-        "mcp_health": { "type": "object" }
+        "handoffs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handoff"
+          }
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session"
+          }
+        },
+        "threads": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "integrations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "mcp_health": {
+          "$ref": "#/$defs/McpHealth"
+        }
       }
     },
     "impact": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "available", "entity_count", "edge_count", "unresolved_count", "capabilities"],
+      "required": [
+        "schema_version",
+        "available",
+        "entity_count",
+        "edge_count",
+        "unresolved_count",
+        "capabilities"
+      ],
       "properties": {
-        "schema_version": { "type": "integer" },
-        "available": { "type": "boolean" },
-        "entity_count": { "type": "integer", "minimum": 0 },
-        "edge_count": { "type": "integer", "minimum": 0 },
-        "unresolved_count": { "type": "integer", "minimum": 0 },
-        "capabilities": { "type": "object", "additionalProperties": { "type": "string" } }
+        "schema_version": {
+          "type": "integer"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "entity_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "edge_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unresolved_count": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "capabilities": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
       }
+    },
+    "cached_project_status": {
+      "anyOf": [
+        {
+          "$ref": "#/$defs/CachedProjectStatus"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
     }
   },
   "$defs": {
-    "objectEnvelope": { "type": "object" },
+    "objectEnvelope": {
+      "type": "object"
+    },
     "handoff": {
       "type": "object",
-      "required": ["name", "status"],
+      "required": [
+        "name",
+        "status"
+      ],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "status": { "type": "string" },
-        "created_at": { "type": "string" },
-        "updated_at": { "type": "string" },
-        "source_provider": { "type": "string" },
-        "source_session_id": { "type": "string" },
-        "target_provider": { "type": "string" },
-        "target_session_id": { "type": "string" },
-        "task": { "type": "string" },
-        "summary": { "type": "string" },
-        "next_action": { "type": "string" },
-        "claim_provider": { "type": "string" },
-        "claim_session_id": { "type": "string" }
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "created_at": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "source_provider": {
+          "type": "string"
+        },
+        "source_session_id": {
+          "type": "string"
+        },
+        "target_provider": {
+          "type": "string"
+        },
+        "target_session_id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "next_action": {
+          "type": "string"
+        },
+        "claim_provider": {
+          "type": "string"
+        },
+        "claim_session_id": {
+          "type": "string"
+        }
       },
-      "not": { "required": ["handoff_id"] }
+      "not": {
+        "required": [
+          "handoff_id"
+        ]
+      }
     },
     "session": {
       "type": "object",
-      "required": ["provider", "session_id"],
+      "required": [
+        "provider",
+        "session_id"
+      ],
       "properties": {
-        "provider": { "type": "string" },
-        "session_id": { "type": "string" },
-        "thread_id": { "type": "string" },
-        "task": { "type": "string" },
-        "status": { "type": "string" },
-        "context_status": { "type": "string" },
-        "updated_at": { "type": "string" },
-        "worktree": { "type": "string" }
+        "provider": {
+          "type": "string"
+        },
+        "session_id": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "context_status": {
+          "type": "string"
+        },
+        "updated_at": {
+          "type": "string"
+        },
+        "worktree": {
+          "type": "string"
+        }
+      }
+    },
+    "learningRecommendationSet": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "recommendation_id",
+        "scope",
+        "generated_at",
+        "topics",
+        "warnings",
+        "mastery_summary"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "recommendation_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "scope": {
+          "enum": [
+            "local",
+            "global"
+          ]
+        },
+        "generated_at": {
+          "type": "string"
+        },
+        "topics": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "$ref": "#/$defs/learningRecommendationTopic"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "mastery_summary": {
+          "$ref": "#/$defs/learningMasterySummary"
+        }
+      }
+    },
+    "learningRecommendationTopic": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "topic_id",
+        "lane",
+        "project",
+        "title",
+        "why_now",
+        "score",
+        "score_reasons",
+        "concepts",
+        "evidence",
+        "exercise",
+        "completion_check",
+        "default_mode",
+        "prompt",
+        "questions",
+        "mastery_status",
+        "start_command"
+      ],
+      "properties": {
+        "topic_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "lane": {
+          "enum": [
+            "now",
+            "system",
+            "weak_spot"
+          ]
+        },
+        "project": {
+          "$ref": "#/$defs/learningProjectRef"
+        },
+        "title": {
+          "type": "string"
+        },
+        "why_now": {
+          "type": "string"
+        },
+        "score": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 100
+        },
+        "score_reasons": {
+          "type": "object",
+          "additionalProperties": {
+            "type": "integer"
+          }
+        },
+        "concepts": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "maxItems": 5,
+          "items": {
+            "$ref": "#/$defs/learningEvidence"
+          }
+        },
+        "exercise": {
+          "type": "string"
+        },
+        "completion_check": {
+          "type": "string"
+        },
+        "default_mode": {
+          "type": "string"
+        },
+        "prompt": {
+          "type": "string"
+        },
+        "questions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/learningQuestion"
+          }
+        },
+        "mastery_status": {
+          "enum": [
+            "mastered",
+            "developing",
+            "needs_practice",
+            "unassessed"
+          ]
+        },
+        "start_command": {
+          "type": "string"
+        }
+      }
+    },
+    "learningProjectRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "project_id",
+        "name",
+        "root"
+      ],
+      "properties": {
+        "project_id": {
+          "type": "string"
+        },
+        "name": {
+          "type": "string"
+        },
+        "root": {
+          "type": "string"
+        }
+      }
+    },
+    "learningEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "task_id",
+        "task",
+        "path",
+        "summary",
+        "observed_at",
+        "status",
+        "stale"
+      ],
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "observed_at": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
+        },
+        "stale": {
+          "type": "boolean"
+        }
+      }
+    },
+    "learningQuestion": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mode",
+        "question",
+        "expected_points",
+        "evidence_files",
+        "difficulty"
+      ],
+      "properties": {
+        "mode": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "expected_points": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "difficulty": {
+          "type": "string"
+        }
+      }
+    },
+    "learningMasterySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "mastered",
+        "developing",
+        "needs_practice",
+        "unassessed"
+      ],
+      "properties": {
+        "mastered": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "developing": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "needs_practice": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "unassessed": {
+          "type": "integer",
+          "minimum": 0
+        }
       }
     },
     "impactResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "query", "relationship", "language", "confidence", "available", "summary", "affected_tests", "entities", "relationships", "scene"],
+      "required": [
+        "schema_version",
+        "query",
+        "relationship",
+        "language",
+        "confidence",
+        "available",
+        "summary",
+        "affected_tests",
+        "entities",
+        "relationships",
+        "scene"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "query": { "type": "string" },
-        "relationship": { "type": "string" },
-        "language": { "type": "string" },
-        "confidence": { "type": "string" },
-        "available": { "type": "boolean" },
-        "summary": { "type": "object" },
-        "affected_tests": { "type": "array", "items": { "type": "object" } },
-        "entities": { "type": "array", "items": { "$ref": "#/$defs/impactEntity" } },
-        "relationships": { "type": "array", "items": { "$ref": "#/$defs/impactRelationship" } },
-        "scene": { "$ref": "#/$defs/impactScene" }
+        "schema_version": {
+          "const": 2
+        },
+        "query": {
+          "type": "string"
+        },
+        "relationship": {
+          "type": "string"
+        },
+        "language": {
+          "type": "string"
+        },
+        "confidence": {
+          "type": "string"
+        },
+        "available": {
+          "type": "boolean"
+        },
+        "summary": {
+          "type": "object"
+        },
+        "affected_tests": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/impactEntity"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/impactRelationship"
+          }
+        },
+        "scene": {
+          "$ref": "#/$defs/impactScene"
+        }
       }
     },
     "actionRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["action"],
+      "required": [
+        "action"
+      ],
       "properties": {
-        "action": { "type": "string", "minLength": 1 },
-        "cwd": { "type": "string" }, "agent": { "type": "string" }, "thread": { "type": "string" },
-        "task": { "type": "string" }, "target": { "type": "string" }, "path": { "type": "string" },
-        "mode": { "type": "string" }, "budget": { "type": ["integer", "null"], "minimum": 1 },
-        "status": { "type": "string" }, "summary": { "type": "string" }, "thread_id": { "type": "string" },
-        "older_than": { "type": "string" }, "refresh": { "type": "boolean" }, "guard": { "type": "boolean" },
-        "global": { "type": "boolean" }, "confirmed": { "type": "boolean" }
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "agent": {
+          "type": "string"
+        },
+        "thread": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "target": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "mode": {
+          "type": "string"
+        },
+        "budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "status": {
+          "type": "string"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "thread_id": {
+          "type": "string"
+        },
+        "older_than": {
+          "type": "string"
+        },
+        "refresh": {
+          "type": "boolean"
+        },
+        "guard": {
+          "type": "boolean"
+        },
+        "global": {
+          "type": "boolean"
+        },
+        "confirmed": {
+          "type": "boolean"
+        }
       }
     },
     "handoffOperationRequest": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["name"],
-      "properties": { "name": { "type": "string", "minLength": 1, "maxLength": 48 } }
+      "required": [
+        "name"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 48
+        }
+      }
     },
     "agentsResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "agents"],
-      "properties": { "schema_version": { "const": 2 }, "agents": { "$ref": "#/$defs/agents" } }
+      "required": [
+        "schema_version",
+        "agents"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 2
+        },
+        "agents": {
+          "$ref": "#/$defs/agents"
+        }
+      }
     },
     "agentOperationResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "handoff", "warnings"],
+      "required": [
+        "schema_version",
+        "handoff",
+        "warnings"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "handoff": { "$ref": "#/$defs/handoff" },
-        "warnings": { "type": "array", "items": { "type": "string" } }
+        "schema_version": {
+          "const": 2
+        },
+        "handoff": {
+          "$ref": "#/$defs/handoff"
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
       }
     },
     "agents": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["handoffs", "sessions", "threads", "integrations", "mcp_health"],
+      "required": [
+        "handoffs",
+        "sessions",
+        "threads",
+        "integrations",
+        "mcp_health"
+      ],
       "properties": {
-        "handoffs": { "type": "array", "items": { "$ref": "#/$defs/handoff" } },
-        "sessions": { "type": "array", "items": { "$ref": "#/$defs/session" } },
-        "threads": { "type": "array", "items": { "type": "object" } },
-        "integrations": { "type": "array", "items": { "type": "object" } },
-        "mcp_health": { "type": "object" }
+        "handoffs": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/handoff"
+          }
+        },
+        "sessions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/session"
+          }
+        },
+        "threads": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "integrations": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "mcp_health": {
+          "$ref": "#/$defs/McpHealth"
+        }
       }
     },
     "impactEntity": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "kind", "label", "path", "line", "parent_id", "confidence_tier", "task_relevant", "risk", "reasons", "related_ids", "evidence", "actions", "x", "y", "z"],
+      "required": [
+        "id",
+        "kind",
+        "label",
+        "path",
+        "line",
+        "parent_id",
+        "confidence_tier",
+        "task_relevant",
+        "risk",
+        "reasons",
+        "related_ids",
+        "evidence",
+        "actions",
+        "x",
+        "y",
+        "z"
+      ],
       "properties": {
-        "id": { "type": "string" }, "kind": { "enum": ["file", "symbol", "test", "action", "external"] },
-        "label": { "type": "string" }, "path": { "type": "string" }, "line": { "type": "integer" },
-        "parent_id": { "type": "string" }, "confidence_tier": { "type": "string" }, "task_relevant": { "type": "boolean" },
-        "risk": { "type": "string" }, "reasons": { "type": "array", "items": { "type": "string" } },
-        "related_ids": { "type": "array", "items": { "type": "string" } }, "evidence": { "type": "array", "items": { "type": "object" } },
-        "actions": { "type": "array", "items": { "type": "string" } }, "x": { "type": "number" }, "y": { "type": "number" }, "z": { "type": "number" }
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "enum": [
+            "file",
+            "symbol",
+            "test",
+            "action",
+            "external"
+          ]
+        },
+        "label": {
+          "type": "string"
+        },
+        "path": {
+          "type": "string"
+        },
+        "line": {
+          "type": "integer"
+        },
+        "parent_id": {
+          "type": "string"
+        },
+        "confidence_tier": {
+          "type": "string"
+        },
+        "task_relevant": {
+          "type": "boolean"
+        },
+        "risk": {
+          "type": "string"
+        },
+        "reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "related_ids": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "actions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "x": {
+          "type": "number"
+        },
+        "y": {
+          "type": "number"
+        },
+        "z": {
+          "type": "number"
+        }
       }
     },
     "impactRelationship": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["id", "source_id", "target_id", "relationship", "confidence_tier", "strength", "task_relevant", "evidence"],
+      "required": [
+        "id",
+        "source_id",
+        "target_id",
+        "relationship",
+        "confidence_tier",
+        "strength",
+        "task_relevant",
+        "evidence"
+      ],
       "properties": {
-        "id": { "type": "string" }, "source_id": { "type": "string" }, "target_id": { "type": "string" },
-        "relationship": { "type": "string" }, "confidence_tier": { "type": "string" }, "strength": { "type": "number" },
-        "task_relevant": { "type": "boolean" }, "evidence": { "type": "array", "items": { "type": "object" } }
+        "id": {
+          "type": "string"
+        },
+        "source_id": {
+          "type": "string"
+        },
+        "target_id": {
+          "type": "string"
+        },
+        "relationship": {
+          "type": "string"
+        },
+        "confidence_tier": {
+          "type": "string"
+        },
+        "strength": {
+          "type": "number"
+        },
+        "task_relevant": {
+          "type": "boolean"
+        },
+        "evidence": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
     "impactScene": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["available", "unavailable_reason", "entities", "relationships"],
+      "required": [
+        "available",
+        "unavailable_reason",
+        "entities",
+        "relationships"
+      ],
       "properties": {
-        "available": { "type": "boolean" }, "unavailable_reason": { "type": "string" },
-        "entities": { "type": "array", "items": { "$ref": "#/$defs/impactEntity" } },
-        "relationships": { "type": "array", "items": { "$ref": "#/$defs/impactRelationship" } }
+        "available": {
+          "type": "boolean"
+        },
+        "unavailable_reason": {
+          "type": "string"
+        },
+        "entities": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/impactEntity"
+          }
+        },
+        "relationships": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/impactRelationship"
+          }
+        }
       }
     },
     "actionInspection": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "action", "command", "cwd", "purpose", "risk", "risk_reasons", "affected_paths", "expected_effect", "confirm_required", "allowed"],
+      "required": [
+        "schema_version",
+        "action",
+        "command",
+        "cwd",
+        "purpose",
+        "risk",
+        "risk_reasons",
+        "affected_paths",
+        "expected_effect",
+        "confirm_required",
+        "allowed"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "action": { "type": "string", "minLength": 1 },
-        "command": { "type": "string" },
-        "cwd": { "type": "string" },
-        "purpose": { "type": "string" },
-        "risk": { "type": "string" },
-        "risk_reasons": { "type": "array", "items": { "type": "string" } },
-        "affected_paths": { "type": "array", "items": { "type": "string" } },
-        "expected_effect": { "type": "string" },
-        "confirm_required": { "type": "boolean" },
-        "allowed": { "type": "boolean" }
+        "schema_version": {
+          "const": 2
+        },
+        "action": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": "string"
+        },
+        "purpose": {
+          "type": "string"
+        },
+        "risk": {
+          "type": "string"
+        },
+        "risk_reasons": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "affected_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "expected_effect": {
+          "type": "string"
+        },
+        "confirm_required": {
+          "type": "boolean"
+        },
+        "allowed": {
+          "type": "boolean"
+        }
       }
     },
     "actionInspectionResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "inspection"],
+      "required": [
+        "schema_version",
+        "inspection"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "inspection": { "$ref": "#/$defs/actionInspection" }
+        "schema_version": {
+          "const": 2
+        },
+        "inspection": {
+          "$ref": "#/$defs/actionInspection"
+        }
       }
     },
     "actionRunResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "session", "command"],
+      "required": [
+        "schema_version",
+        "session",
+        "command"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "session": { "type": "object" },
-        "command": { "type": "string" }
+        "schema_version": {
+          "const": 2
+        },
+        "session": {
+          "type": "object"
+        },
+        "command": {
+          "type": "string"
+        }
       }
     },
     "unavailableState": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["kind", "title", "detail", "next_action", "retryable"],
+      "required": [
+        "kind",
+        "title",
+        "detail",
+        "next_action",
+        "retryable"
+      ],
       "properties": {
-        "kind": { "enum": ["stale_context", "tree_sitter_unavailable", "mcp_unavailable", "permission_denied", "repository_mismatch", "action_conflict", "webgl_unavailable", "server_error"] },
-        "title": { "type": "string" },
-        "detail": { "type": "string" },
-        "next_action": { "type": "string" },
-        "retryable": { "type": "boolean" }
+        "kind": {
+          "enum": [
+            "stale_context",
+            "tree_sitter_unavailable",
+            "mcp_unavailable",
+            "permission_denied",
+            "repository_mismatch",
+            "action_conflict",
+            "webgl_unavailable",
+            "server_error"
+          ]
+        },
+        "title": {
+          "type": "string"
+        },
+        "detail": {
+          "type": "string"
+        },
+        "next_action": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        }
       }
     },
     "evidenceResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "context", "selected_files", "task_map", "observer", "timeline"],
+      "required": [
+        "schema_version",
+        "context",
+        "selected_files",
+        "task_map",
+        "observer",
+        "timeline"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "context": { "type": "object" },
-        "selected_files": { "type": "array", "items": { "type": "object" } },
-        "task_map": { "type": "array", "items": { "type": "object" } },
-        "observer": { "type": "object" },
-        "timeline": { "type": "array", "items": { "type": "object" } }
+        "schema_version": {
+          "const": 2
+        },
+        "context": {
+          "type": "object"
+        },
+        "selected_files": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "task_map": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "observer": {
+          "type": "object"
+        },
+        "timeline": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
     "actionsResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "suggested", "catalog"],
+      "required": [
+        "schema_version",
+        "suggested",
+        "catalog"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "suggested": { "type": "array", "items": { "type": "object" } },
-        "catalog": { "type": "array", "items": { "type": "object" } }
+        "schema_version": {
+          "const": 2
+        },
+        "suggested": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        },
+        "catalog": {
+          "type": "array",
+          "items": {
+            "type": "object"
+          }
+        }
       }
     },
     "errorResponse": {
       "type": "object",
       "additionalProperties": false,
-      "required": ["schema_version", "error", "kind", "retryable", "detail"],
+      "required": [
+        "schema_version",
+        "error",
+        "kind",
+        "retryable",
+        "detail"
+      ],
       "properties": {
-        "schema_version": { "const": 2 },
-        "error": { "type": "string" },
-        "kind": { "type": "string" },
-        "retryable": { "type": "boolean" },
-        "detail": { "type": "string" }
+        "schema_version": {
+          "const": 2
+        },
+        "error": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "retryable": {
+          "type": "boolean"
+        },
+        "detail": {
+          "type": "string"
+        }
+      }
+    },
+    "ProjectEvidence": {
+      "properties": {
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "ref": {
+          "default": "",
+          "title": "Ref",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "path": {
+          "default": "",
+          "title": "Path",
+          "type": "string"
+        },
+        "occurred_at": {
+          "default": "",
+          "title": "Occurred At",
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ProjectEvidence",
+      "type": "object"
+    },
+    "ProjectDerivedRecord": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        }
+      },
+      "title": "ProjectDerivedRecord",
+      "type": "object"
+    },
+    "ProjectDecision": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "decision_id": {
+          "title": "Decision Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "title": "Context",
+          "type": "string"
+        },
+        "decision": {
+          "default": "",
+          "title": "Decision",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "title": "Owner",
+          "type": "string"
+        },
+        "status": {
+          "default": "proposed",
+          "enum": [
+            "proposed",
+            "accepted",
+            "rejected",
+            "superseded"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "decision_id",
+        "title"
+      ],
+      "title": "ProjectDecision",
+      "type": "object"
+    },
+    "ProjectHealthDimension": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "dimension": {
+          "enum": [
+            "delivery",
+            "validation",
+            "architecture",
+            "release",
+            "context",
+            "knowledge"
+          ],
+          "title": "Dimension",
+          "type": "string"
+        },
+        "status": {
+          "default": "unknown",
+          "enum": [
+            "healthy",
+            "attention",
+            "blocked",
+            "stale",
+            "unknown"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        }
+      },
+      "required": [
+        "dimension"
+      ],
+      "title": "ProjectHealthDimension",
+      "type": "object"
+    },
+    "McpHealth": {
+      "type": "object",
+      "title": "McpHealth",
+      "additionalProperties": true,
+      "properties": {
+        "status": {"type": "string", "default": "unknown"},
+        "checked_at": {"type": "string", "default": ""},
+        "source": {"type": "string", "default": ""},
+        "runtime_status": {"type": "string", "default": "unknown"},
+        "runtime_ok": {"type": "boolean", "default": false},
+        "runtime_detail": {"type": "string", "default": ""},
+        "registered": {"type": "boolean", "default": false},
+        "registrations": {"type": "array", "items": {"type": "object"}},
+        "live_exposure": {"type": "string", "default": "unknown"},
+        "expected_tools": {"type": "array", "items": {"type": "string"}},
+        "remediation": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectFocusItem": {
+      "type": "object",
+      "title": "ProjectFocusItem",
+      "required": ["item_id", "kind", "entity_id", "title", "target_view"],
+      "properties": {
+        "item_id": {"type": "string"},
+        "kind": {"enum": ["health", "risk", "decision", "milestone", "initiative"]},
+        "entity_id": {"type": "string"},
+        "title": {"type": "string"},
+        "summary": {"type": "string", "default": ""},
+        "status": {"type": "string", "default": ""},
+        "severity": {"type": "string", "default": ""},
+        "target_view": {"type": "string"},
+        "source": {"enum": ["declared", "observed", "inferred"], "default": "observed"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "updated_at": {"type": "string", "default": ""},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/ProjectEvidence"}},
+        "workspace_id": {"type": "string", "default": ""},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectNextAction": {
+      "type": "object",
+      "title": "ProjectNextAction",
+      "required": ["action_id", "entity_id", "title", "target_view"],
+      "properties": {
+        "action_id": {"type": "string"},
+        "entity_id": {"type": "string"},
+        "title": {"type": "string"},
+        "rationale": {"type": "string", "default": ""},
+        "target_view": {"type": "string"},
+        "source": {"enum": ["declared", "observed", "inferred"], "default": "observed"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "updated_at": {"type": "string", "default": ""},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/ProjectEvidence"}},
+        "workspace_id": {"type": "string", "default": ""},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectFocusSnapshot": {
+      "type": "object",
+      "title": "ProjectFocusSnapshot",
+      "properties": {
+        "outcome_id": {"type": "string", "default": ""},
+        "milestone_id": {"type": "string", "default": ""},
+        "attention": {"type": "array", "items": {"$ref": "#/$defs/ProjectFocusItem"}},
+        "next_actions": {"type": "array", "items": {"$ref": "#/$defs/ProjectNextAction"}},
+        "source": {"enum": ["declared", "observed", "inferred"], "default": "observed"},
+        "confidence": {"type": "number", "minimum": 0, "maximum": 1, "default": 1},
+        "updated_at": {"type": "string", "default": ""},
+        "evidence": {"type": "array", "items": {"$ref": "#/$defs/ProjectEvidence"}},
+        "workspace_id": {"type": "string", "default": ""},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "CachedProjectProfile": {
+      "type": "object",
+      "title": "CachedProjectProfile",
+      "properties": {
+        "display_name": {"type": "string", "default": ""},
+        "purpose": {"type": "string", "default": ""},
+        "audiences": {"type": "array", "items": {"type": "string"}},
+        "owners": {"type": "array", "items": {"type": "string"}},
+        "stage": {"type": "string", "default": ""},
+        "environments": {"type": "array", "items": {"type": "string"}},
+        "status_stale_days": {"type": "integer", "default": 14}
+      }
+    },
+    "CachedProjectStatus": {
+      "type": "object",
+      "title": "CachedProjectStatus",
+      "required": ["project_id", "generated_at", "profile", "metrics", "health"],
+      "properties": {
+        "schema_version": {"const": 1, "default": 1},
+        "project_id": {"type": "string"},
+        "generated_at": {"type": "string"},
+        "branch": {"type": "string", "default": ""},
+        "git_sha": {"type": "string", "default": ""},
+        "profile": {"$ref": "#/$defs/CachedProjectProfile"},
+        "metrics": {"$ref": "#/$defs/ProjectMetrics"},
+        "outcomes": {"type": "array", "items": {"$ref": "#/$defs/ProjectOutcomeState"}},
+        "initiatives": {"type": "array", "items": {"$ref": "#/$defs/ProjectInitiative"}},
+        "risks": {"type": "array", "items": {"$ref": "#/$defs/ProjectRisk"}},
+        "decisions": {"type": "array", "items": {"$ref": "#/$defs/ProjectDecision"}},
+        "health": {"$ref": "#/$defs/ProjectHealthSnapshot"},
+        "focus": {
+          "anyOf": [{"$ref": "#/$defs/ProjectFocusSnapshot"}, {"type": "null"}],
+          "default": null
+        },
+        "recent_changes": {"type": "array", "items": {"$ref": "#/$defs/ProjectTimelineEvent"}},
+        "partial": {"type": "boolean", "default": false},
+        "read_only": {"type": "boolean", "default": true},
+        "warnings": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "ProjectHealthSnapshot": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "dimensions": {
+          "items": {
+            "$ref": "#/$defs/ProjectHealthDimension"
+          },
+          "title": "Dimensions",
+          "type": "array"
+        }
+      },
+      "title": "ProjectHealthSnapshot",
+      "type": "object"
+    },
+    "ProjectInitiative": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "initiative_id": {
+          "title": "Initiative Id",
+          "type": "string"
+        },
+        "suggestion_id": {
+          "default": "",
+          "title": "Suggestion Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "title": "Owner",
+          "type": "string"
+        },
+        "outcome_id": {
+          "default": "",
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "confirmed",
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "initiative_id",
+        "title"
+      ],
+      "title": "ProjectInitiative",
+      "type": "object"
+    },
+    "ProjectInitiativeSuggestion": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "suggestion_id": {
+          "title": "Suggestion Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "rationale": {
+          "title": "Rationale",
+          "type": "string"
+        },
+        "outcome_id": {
+          "default": "",
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "score": {
+          "default": 0,
+          "maximum": 100,
+          "minimum": 0,
+          "title": "Score",
+          "type": "integer"
+        },
+        "task_ids": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Task Ids",
+          "type": "array"
+        }
+      },
+      "required": [
+        "suggestion_id",
+        "title",
+        "rationale"
+      ],
+      "title": "ProjectInitiativeSuggestion",
+      "type": "object"
+    },
+    "ProjectMetrics": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "outcome_count": {
+          "default": 0,
+          "title": "Outcome Count",
+          "type": "integer"
+        },
+        "active_outcomes": {
+          "default": 0,
+          "title": "Active Outcomes",
+          "type": "integer"
+        },
+        "milestone_count": {
+          "default": 0,
+          "title": "Milestone Count",
+          "type": "integer"
+        },
+        "completed_milestones": {
+          "default": 0,
+          "title": "Completed Milestones",
+          "type": "integer"
+        },
+        "milestone_completion_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Milestone Completion Pct"
+        },
+        "open_risks": {
+          "default": 0,
+          "title": "Open Risks",
+          "type": "integer"
+        },
+        "pending_decisions": {
+          "default": 0,
+          "title": "Pending Decisions",
+          "type": "integer"
+        },
+        "confirmed_initiatives": {
+          "default": 0,
+          "title": "Confirmed Initiatives",
+          "type": "integer"
+        },
+        "recent_changes": {
+          "default": 0,
+          "title": "Recent Changes",
+          "type": "integer"
+        },
+        "evidence_coverage": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Evidence Coverage"
+        }
+      },
+      "title": "ProjectMetrics",
+      "type": "object"
+    },
+    "ProjectMilestoneState": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "milestone_id": {
+          "title": "Milestone Id",
+          "type": "string"
+        },
+        "outcome_id": {
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "title": "Owner",
+          "type": "string"
+        },
+        "due_date": {
+          "default": "",
+          "title": "Due Date",
+          "type": "string"
+        },
+        "status": {
+          "default": "planned",
+          "enum": [
+            "planned",
+            "in_progress",
+            "blocked",
+            "done"
+          ],
+          "title": "Status",
+          "type": "string"
+        }
+      },
+      "required": [
+        "milestone_id",
+        "outcome_id",
+        "title"
+      ],
+      "title": "ProjectMilestoneState",
+      "type": "object"
+    },
+    "ProjectOutcomeState": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "outcome_id": {
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "title": "Owner",
+          "type": "string"
+        },
+        "target_date": {
+          "default": "",
+          "title": "Target Date",
+          "type": "string"
+        },
+        "status": {
+          "default": "planned",
+          "enum": [
+            "planned",
+            "on_track",
+            "at_risk",
+            "achieved",
+            "paused"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "progress_pct": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Progress Pct"
+        },
+        "milestones": {
+          "items": {
+            "$ref": "#/$defs/ProjectMilestoneState"
+          },
+          "title": "Milestones",
+          "type": "array"
+        }
+      },
+      "required": [
+        "outcome_id",
+        "title"
+      ],
+      "title": "ProjectOutcomeState",
+      "type": "object"
+    },
+    "ProjectProfile": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "config_revision": {
+          "title": "Config Revision",
+          "type": "string"
+        },
+        "display_name": {
+          "default": "",
+          "title": "Display Name",
+          "type": "string"
+        },
+        "purpose": {
+          "default": "",
+          "title": "Purpose",
+          "type": "string"
+        },
+        "audiences": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Audiences",
+          "type": "array"
+        },
+        "owners": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Owners",
+          "type": "array"
+        },
+        "stage": {
+          "default": "",
+          "title": "Stage",
+          "type": "string"
+        },
+        "links": {
+          "additionalProperties": {
+            "type": "string"
+          },
+          "title": "Links",
+          "type": "object"
+        },
+        "environments": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Environments",
+          "type": "array"
+        },
+        "status_stale_days": {
+          "default": 14,
+          "title": "Status Stale Days",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "project_id",
+        "config_revision"
+      ],
+      "title": "ProjectProfile",
+      "type": "object"
+    },
+    "ProjectRisk": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "risk_id": {
+          "title": "Risk Id",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "title": "Description",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "title": "Owner",
+          "type": "string"
+        },
+        "severity": {
+          "default": "medium",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "critical"
+          ],
+          "title": "Severity",
+          "type": "string"
+        },
+        "status": {
+          "default": "open",
+          "enum": [
+            "open",
+            "mitigating",
+            "accepted",
+            "resolved"
+          ],
+          "title": "Status",
+          "type": "string"
+        },
+        "mitigation": {
+          "default": "",
+          "title": "Mitigation",
+          "type": "string"
+        }
+      },
+      "required": [
+        "risk_id",
+        "title"
+      ],
+      "title": "ProjectRisk",
+      "type": "object"
+    },
+    "ProjectTimelineEvent": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "event_id": {
+          "title": "Event Id",
+          "type": "string"
+        },
+        "kind": {
+          "title": "Kind",
+          "type": "string"
+        },
+        "title": {
+          "title": "Title",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "title": "Summary",
+          "type": "string"
+        },
+        "entity_id": {
+          "default": "",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "actor": {
+          "default": "",
+          "title": "Actor",
+          "type": "string"
+        },
+        "git_sha": {
+          "default": "",
+          "title": "Git Sha",
+          "type": "string"
+        },
+        "branch": {
+          "default": "",
+          "title": "Branch",
+          "type": "string"
+        },
+        "tags": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Tags",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event_id",
+        "kind",
+        "title"
+      ],
+      "title": "ProjectTimelineEvent",
+      "type": "object"
+    },
+    "ProjectWorkspace": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "path": {
+          "title": "Path",
+          "type": "string"
+        },
+        "branch": {
+          "default": "",
+          "title": "Branch",
+          "type": "string"
+        },
+        "git_sha": {
+          "default": "",
+          "title": "Git Sha",
+          "type": "string"
+        },
+        "is_current": {
+          "default": false,
+          "title": "Is Current",
+          "type": "boolean"
+        },
+        "read_only": {
+          "default": false,
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "workspace_id",
+        "path"
+      ],
+      "title": "ProjectWorkspace",
+      "type": "object"
+    },
+    "ProjectOverview": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "schema_version": {
+          "default": 1,
+          "title": "Schema Version",
+          "type": "integer"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        },
+        "generated_at": {
+          "title": "Generated At",
+          "type": "string"
+        },
+        "selected_workspace": {
+          "default": "all",
+          "title": "Selected Workspace",
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/ProjectProfile"
+        },
+        "workspaces": {
+          "items": {
+            "$ref": "#/$defs/ProjectWorkspace"
+          },
+          "title": "Workspaces",
+          "type": "array"
+        },
+        "metrics": {
+          "$ref": "#/$defs/ProjectMetrics"
+        },
+        "outcomes": {
+          "items": {
+            "$ref": "#/$defs/ProjectOutcomeState"
+          },
+          "title": "Outcomes",
+          "type": "array"
+        },
+        "initiatives": {
+          "items": {
+            "$ref": "#/$defs/ProjectInitiative"
+          },
+          "title": "Initiatives",
+          "type": "array"
+        },
+        "initiative_suggestions": {
+          "items": {
+            "$ref": "#/$defs/ProjectInitiativeSuggestion"
+          },
+          "title": "Initiative Suggestions",
+          "type": "array"
+        },
+        "risks": {
+          "items": {
+            "$ref": "#/$defs/ProjectRisk"
+          },
+          "title": "Risks",
+          "type": "array"
+        },
+        "decisions": {
+          "items": {
+            "$ref": "#/$defs/ProjectDecision"
+          },
+          "title": "Decisions",
+          "type": "array"
+        },
+        "health": {
+          "$ref": "#/$defs/ProjectHealthSnapshot"
+        },
+        "focus": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProjectFocusSnapshot"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "recent_changes": {
+          "items": {
+            "$ref": "#/$defs/ProjectTimelineEvent"
+          },
+          "title": "Recent Changes",
+          "type": "array"
+        },
+        "partial": {
+          "default": false,
+          "title": "Partial",
+          "type": "boolean"
+        },
+        "read_only": {
+          "default": false,
+          "title": "Read Only",
+          "type": "boolean"
+        }
+      },
+      "required": [
+        "project_id",
+        "generated_at",
+        "profile"
+      ],
+      "title": "ProjectOverview",
+      "type": "object"
+    },
+    "ProjectStatusBrief": {
+      "properties": {
+        "source": {
+          "default": "observed",
+          "enum": [
+            "declared",
+            "observed",
+            "inferred"
+          ],
+          "title": "Source",
+          "type": "string"
+        },
+        "confidence": {
+          "default": 1.0,
+          "maximum": 1.0,
+          "minimum": 0.0,
+          "title": "Confidence",
+          "type": "number"
+        },
+        "updated_at": {
+          "default": "",
+          "title": "Updated At",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEvidence"
+          },
+          "title": "Evidence",
+          "type": "array"
+        },
+        "workspace_id": {
+          "default": "",
+          "title": "Workspace Id",
+          "type": "string"
+        },
+        "warnings": {
+          "items": {
+            "type": "string"
+          },
+          "title": "Warnings",
+          "type": "array"
+        },
+        "mode": {
+          "enum": [
+            "summary",
+            "engineering"
+          ],
+          "title": "Mode",
+          "type": "string"
+        },
+        "markdown": {
+          "title": "Markdown",
+          "type": "string"
+        },
+        "project_id": {
+          "title": "Project Id",
+          "type": "string"
+        }
+      },
+      "required": [
+        "mode",
+        "markdown",
+        "project_id"
+      ],
+      "title": "ProjectStatusBrief",
+      "type": "object"
+    },
+    "ProjectMilestoneInput": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Owner",
+          "type": "string"
+        },
+        "due_date": {
+          "default": "",
+          "maxLength": 10,
+          "title": "Due Date",
+          "type": "string"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "ProjectMilestoneInput",
+      "type": "object"
+    },
+    "ProjectOutcomeInput": {
+      "additionalProperties": false,
+      "properties": {
+        "id": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Id",
+          "type": "string"
+        },
+        "title": {
+          "maxLength": 160,
+          "minLength": 1,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Description",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Owner",
+          "type": "string"
+        },
+        "target_date": {
+          "default": "",
+          "maxLength": 10,
+          "title": "Target Date",
+          "type": "string"
+        },
+        "milestones": {
+          "items": {
+            "$ref": "#/$defs/ProjectMilestoneInput"
+          },
+          "maxItems": 100,
+          "title": "Milestones",
+          "type": "array"
+        }
+      },
+      "required": [
+        "title"
+      ],
+      "title": "ProjectOutcomeInput",
+      "type": "object"
+    },
+    "ProjectProfilePatch": {
+      "additionalProperties": false,
+      "properties": {
+        "display_name": {
+          "anyOf": [
+            {
+              "maxLength": 160,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Display Name"
+        },
+        "purpose": {
+          "anyOf": [
+            {
+              "maxLength": 2000,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Purpose"
+        },
+        "audiences": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Audiences"
+        },
+        "owners": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Owners"
+        },
+        "stage": {
+          "anyOf": [
+            {
+              "maxLength": 32,
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Stage"
+        },
+        "links": {
+          "anyOf": [
+            {
+              "additionalProperties": {
+                "type": "string"
+              },
+              "maxProperties": 20,
+              "type": "object"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Links"
+        },
+        "environments": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "string"
+              },
+              "maxItems": 20,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Environments"
+        },
+        "status_stale_days": {
+          "anyOf": [
+            {
+              "maximum": 3650,
+              "minimum": 1,
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Status Stale Days"
+        },
+        "outcomes": {
+          "anyOf": [
+            {
+              "items": {
+                "$ref": "#/$defs/ProjectOutcomeInput"
+              },
+              "maxItems": 50,
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Outcomes"
+        }
+      },
+      "title": "ProjectProfilePatch",
+      "type": "object"
+    },
+    "ProjectProfileUpdateRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "mutation_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Mutation Id",
+          "type": "string"
+        },
+        "expected_revision": {
+          "maxLength": 64,
+          "minLength": 64,
+          "pattern": "^[a-f0-9]{64}$",
+          "title": "Expected Revision",
+          "type": "string"
+        },
+        "profile": {
+          "$ref": "#/$defs/ProjectProfilePatch"
+        }
+      },
+      "required": [
+        "mutation_id",
+        "expected_revision",
+        "profile"
+      ],
+      "title": "ProjectProfileUpdateRequest",
+      "type": "object"
+    },
+    "ProjectEventEvidenceInput": {
+      "additionalProperties": false,
+      "properties": {
+        "kind": {
+          "maxLength": 64,
+          "minLength": 1,
+          "title": "Kind",
+          "type": "string"
+        },
+        "ref": {
+          "default": "",
+          "maxLength": 240,
+          "title": "Ref",
+          "type": "string"
+        },
+        "summary": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Summary",
+          "type": "string"
+        },
+        "path": {
+          "default": "",
+          "maxLength": 500,
+          "title": "Path",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind"
+      ],
+      "title": "ProjectEventEvidenceInput",
+      "type": "object"
+    },
+    "ProjectEventRequest": {
+      "additionalProperties": false,
+      "properties": {
+        "event_type": {
+          "enum": [
+            "project_outcome_status",
+            "project_milestone_status",
+            "project_risk_upsert",
+            "project_decision_recorded",
+            "project_initiative_confirmed",
+            "project_initiative_dismissed"
+          ],
+          "title": "Event Type",
+          "type": "string"
+        },
+        "mutation_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Mutation Id",
+          "type": "string"
+        },
+        "entity_id": {
+          "maxLength": 64,
+          "minLength": 1,
+          "pattern": "^[A-Za-z0-9][A-Za-z0-9._-]*$",
+          "title": "Entity Id",
+          "type": "string"
+        },
+        "status": {
+          "default": "",
+          "maxLength": 32,
+          "title": "Status",
+          "type": "string"
+        },
+        "title": {
+          "default": "",
+          "maxLength": 160,
+          "title": "Title",
+          "type": "string"
+        },
+        "description": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Description",
+          "type": "string"
+        },
+        "owner": {
+          "default": "",
+          "maxLength": 120,
+          "title": "Owner",
+          "type": "string"
+        },
+        "severity": {
+          "default": "",
+          "maxLength": 16,
+          "title": "Severity",
+          "type": "string"
+        },
+        "mitigation": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Mitigation",
+          "type": "string"
+        },
+        "context": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Context",
+          "type": "string"
+        },
+        "decision": {
+          "default": "",
+          "maxLength": 2000,
+          "title": "Decision",
+          "type": "string"
+        },
+        "outcome_id": {
+          "default": "",
+          "maxLength": 64,
+          "title": "Outcome Id",
+          "type": "string"
+        },
+        "evidence": {
+          "items": {
+            "$ref": "#/$defs/ProjectEventEvidenceInput"
+          },
+          "maxItems": 20,
+          "title": "Evidence",
+          "type": "array"
+        }
+      },
+      "required": [
+        "event_type",
+        "mutation_id",
+        "entity_id"
+      ],
+      "title": "ProjectEventRequest",
+      "type": "object"
+    },
+    "ProjectTimelineResponse": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "timeline"
+      ],
+      "properties": {
+        "timeline": {
+          "type": "array",
+          "maxItems": 200,
+          "items": {
+            "$ref": "#/$defs/ProjectTimelineEvent"
+          }
+        },
+        "warnings": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "ProjectProfileMutationResponse": {
+      "type": "object",
+      "required": [
+        "duplicate",
+        "profile",
+        "project_overview"
+      ],
+      "properties": {
+        "duplicate": {
+          "type": "boolean"
+        },
+        "profile": {
+          "$ref": "#/$defs/ProjectProfile"
+        },
+        "project_overview": {
+          "$ref": "#/$defs/ProjectOverview"
+        }
+      }
+    },
+    "ProjectEventMutationResponse": {
+      "type": "object",
+      "required": [
+        "duplicate",
+        "event",
+        "project_overview"
+      ],
+      "properties": {
+        "duplicate": {
+          "type": "boolean"
+        },
+        "event": {
+          "type": "object"
+        },
+        "project_overview": {
+          "$ref": "#/$defs/ProjectOverview"
+        }
       }
     }
   }

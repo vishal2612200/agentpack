@@ -1,10 +1,23 @@
 ---
-description: Pack repo context and immediately start working on the task. Supports session mode (start once, work normally) and manual pack mode. Reads context and begins helping — no manual piping needed.
+description: Route normal development through AgentPack work, learn, finish, and doctor while preserving advanced commands.
 ---
 
 # AgentPack
 
 Pack repo context and immediately start working on the task.
+
+## Product Loop
+
+Use four commands for normal development:
+
+```bash
+agentpack work "<task>"
+agentpack learn --json
+agentpack finish
+agentpack doctor
+```
+
+Use review, resolve, route, pack, handoff, and the remaining subcommands only for their specialized workflows. AgentPack is not a coding agent; its context is a starting map, not proof.
 
 ## Usage
 

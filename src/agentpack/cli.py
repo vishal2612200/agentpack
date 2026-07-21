@@ -65,14 +65,21 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(help="AgentPack — token-aware context packing for AI coding agents.")
 
-_CORE_HELP_CALLBACKS = {
+_CORE_HELP_CALLBACKS = {"work", "learn", "finish", "doctor"}
+_SETUP_HELP_CALLBACKS = {
     "quickstart",
     "start",
     "next_action",
-    "doctor",
     "init",
     "route_task",
     "pack",
+}
+_REVIEW_HELP_CALLBACKS = {"guard", "review", "resolve", "skill_review_command"}
+_HELP_PANEL_ORDER = {
+    "Core loop": 0,
+    "Setup and orientation": 1,
+    "Review and safety": 2,
+    "Advanced, diagnostics, and release": 3,
 }
 
 
@@ -141,13 +148,24 @@ for mod in [
 
 def _configure_help_panels() -> None:
     """Keep the default help focused while retaining every command path."""
+    original_order = {id(command): index for index, command in enumerate(app.registered_commands)}
     for command in app.registered_commands:
         callback_name = getattr(command.callback, "__name__", "")
-        command.rich_help_panel = (
-            "Core loop"
-            if callback_name in _CORE_HELP_CALLBACKS
-            else "Advanced, diagnostics, and release"
+        if callback_name in _CORE_HELP_CALLBACKS:
+            command.rich_help_panel = "Core loop"
+        elif callback_name in _SETUP_HELP_CALLBACKS:
+            command.rich_help_panel = "Setup and orientation"
+        elif callback_name in _REVIEW_HELP_CALLBACKS:
+            command.rich_help_panel = "Review and safety"
+        else:
+            command.rich_help_panel = "Advanced, diagnostics, and release"
+    core_order = {"work": 0, "learn": 1, "finish": 2, "doctor": 3}
+    app.registered_commands.sort(
+        key=lambda command: (
+            _HELP_PANEL_ORDER[str(command.rich_help_panel)],
+            core_order.get(getattr(command.callback, "__name__", ""), original_order[id(command)]),
         )
+    )
     for group in app.registered_groups:
         group.rich_help_panel = "Advanced, diagnostics, and release"
 

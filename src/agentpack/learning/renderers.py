@@ -3,11 +3,31 @@ from __future__ import annotations
 import html
 
 from agentpack.core.models import Citation
-from agentpack.learning.models import LearningReport
+from agentpack.learning.models import LearningRecommendationSet, LearningReport
 
 
 def learning_report_to_dict(report: LearningReport) -> dict:
     return report.model_dump(mode="json")
+
+
+def render_recommendations_markdown(recommendations: LearningRecommendationSet) -> str:
+    lines = ["## Next Technical Topics", ""]
+    if not recommendations.topics:
+        lines.append("No evidence-backed topic is available yet. Finish more AgentPack tasks and try again.")
+    for index, topic in enumerate(recommendations.topics, start=1):
+        lines.extend(
+            [
+                f"{index}. **{topic.title}** ({topic.lane.replace('_', ' ')}, score {topic.score})",
+                f"   - Project: {topic.project.name}",
+                f"   - Why now: {topic.why_now}",
+                f"   - Exercise: {topic.exercise}",
+                f"   - Start: `{topic.start_command}`",
+            ]
+        )
+    for warning in recommendations.warnings:
+        lines.append(f"- Warning: {warning}")
+    lines.append("")
+    return "\n".join(lines)
 
 
 def render_agent_lessons_markdown(report: LearningReport) -> str:
@@ -369,6 +389,8 @@ def render_learning_markdown(report: LearningReport) -> str:
         lines.append(f"**Since:** `{report.since}`")
     if report.issue_references:
         lines.append("**Issue references:** " + ", ".join(report.issue_references))
+    if report.recommendations is not None:
+        lines.extend(["", *render_recommendations_markdown(report.recommendations).rstrip().splitlines()])
     lines.extend(["", "## Summary"])
     lines.extend(f"- {item}" for item in report.summary)
     lines.extend(["", "## Changed Files"])

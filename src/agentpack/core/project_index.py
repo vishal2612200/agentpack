@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -20,6 +21,11 @@ def agentpack_home() -> Path:
 
 def project_index_path() -> Path:
     return agentpack_home() / "projects.json"
+
+
+def project_id(root: Path) -> str:
+    resolved = str(root.expanduser().resolve())
+    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
 
 
 def load_project_index(path: Path | None = None) -> list[dict[str, Any]]:
@@ -45,7 +51,13 @@ def load_project_index(path: Path | None = None) -> list[dict[str, Any]]:
         path_value = str(item.get("path") or "").strip()
         if not path_value:
             continue
-        rows.append(dict(item, path=path_value))
+        rows.append(
+            dict(
+                item,
+                path=path_value,
+                project_id=str(item.get("project_id") or project_id(Path(path_value))),
+            )
+        )
     return rows
 
 
@@ -71,6 +83,7 @@ def register_project(root: Path, path: Path | None = None, *, now: datetime | No
 def _project_index_row(root: Path, timestamp: str, previous: dict[str, Any]) -> dict[str, Any]:
     is_git = git.is_git_repo(root)
     return {
+        "project_id": str(previous.get("project_id") or project_id(root)),
         "path": str(root),
         "name": root.name or str(root),
         "first_seen_at": str(previous.get("first_seen_at") or timestamp),

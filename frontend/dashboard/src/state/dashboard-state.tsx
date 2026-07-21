@@ -1,7 +1,7 @@
 import { createContext, useContext, useMemo, useReducer, type Dispatch, type ReactNode } from "react";
 import type { PresentationMode } from "../data/schema";
 
-export type DashboardView = "home" | "analytics" | "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
+export type DashboardView = "home" | "roadmap" | "health" | "activity" | "analytics" | "cockpit" | "tasks" | "threads" | "context" | "graph" | "files" | "settings" | "integrations" | "workflow" | "learning" | "raw";
 export type MapMode = "city" | "network" | "semantic" | "table";
 export type ResourceStatus = "idle" | "loading" | "ready" | "empty" | "stale" | "unavailable" | "forbidden" | "conflict" | "error";
 export type OperationStatus = "idle" | "pending" | "success" | "conflict" | "stale" | "repository_mismatch" | "permission_denied" | "error";
@@ -36,7 +36,7 @@ type DashboardAction =
 const initialState: DashboardState = {
   view: "home",
   presentationMode: typeof window !== "undefined" && window.localStorage.getItem("agentpack.dashboard.presentation_mode") === "build" ? "build" : "explain",
-  selectedEntityId: "task:active",
+  selectedEntityId: "",
   mapMode: "city",
   cameraRequest: 0,
   resources: {},

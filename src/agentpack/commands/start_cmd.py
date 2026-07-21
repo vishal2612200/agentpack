@@ -9,6 +9,7 @@ from agentpack.commands._shared import console, _root
 from agentpack.core.command_surface import refresh_command_args
 from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core import git
+from agentpack.core.project_index import register_project
 from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.learning.task_memory import record_task_start_snapshot
@@ -32,6 +33,10 @@ def register(app: typer.Typer) -> None:
             console.print("[red]Task text cannot be empty.[/]")
             raise typer.Exit(1)
         root = _root()
+        try:
+            register_project(root)
+        except OSError:
+            pass
         thread_id = resolve_session_thread_option(thread)
         dirty_files_before = sorted(git.dirty_files(root)) if git.is_git_repo(root) else []
         task_path = _task_path(root, thread_id)

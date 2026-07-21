@@ -1,8 +1,14 @@
 # Dashboard v2 API
 
-Dashboard v2 is the typed workspace contract used by the local dashboard. It
-keeps the v1 snapshot, graph, map, terminal, and action routes available while
-adding task-aware impact, evidence-backed actions, and agent-session continuity.
+Dashboard v2 is the typed project workspace contract used by the local
+dashboard. The primary hierarchy is `Project -> Outcomes -> Initiatives ->
+Tasks -> Evidence`. Existing snapshot, graph, map, terminal, and action routes
+remain available for compatibility.
+
+The stable primary views are **Overview**, **Roadmap**, **Work**, **Health**,
+and **Knowledge**. Activity remains available from Overview and the command
+palette. Repository, operations, connection, and diagnostic tools are grouped
+under Explore so the project decision remains the first surface.
 
 The canonical response schema is
 [`docs/schemas/dashboard-v2.schema.json`](schemas/dashboard-v2.schema.json).
@@ -12,9 +18,11 @@ fields as forward-compatible.
 
 ## Workspace experience
 
-![AgentPack dashboard desktop workspace](assets/dashboard/workspace-desktop.png)
+![AgentPack project overview with roadmap, independent health, risks, decisions, and evidence coverage](assets/dashboard/workspace-desktop.png)
 
 ![AgentPack dashboard tablet impact map](assets/dashboard/workspace-tablet.png)
+
+![AgentPack Knowledge view on a mobile viewport](assets/dashboard/knowledge-mobile.png)
 
 ## Endpoints
 
@@ -30,8 +38,39 @@ All endpoints are loopback-only by default and require the dashboard token in
 | `POST` | `/api/dashboard/v2/actions/inspect` | Explain an action before execution |
 | `POST` | `/api/dashboard/v2/actions/run` | Run an approved action through the existing PTY runner |
 | `GET` | `/api/dashboard/v2/agents` | Public handoffs and detected agent sessions |
+| `GET` | `/api/learning/recommendations?scope=local\|global` | Read-only next-topic and mastery contract; dashboard reads do not record recommendation impressions |
+| `GET` | `/api/project/overview?workspace=all\|current\|ID` | Profile, roadmap, initiatives, risks, decisions, health, metrics, worktrees, and recent changes |
+| `GET` | `/api/project/timeline?workspace=...&kind=...&limit=50` | Unified project activity; `limit` is capped at 200 |
+| `GET` | `/api/project/brief?mode=summary\|engineering` | Deterministic redacted Markdown; no repository file is written |
+| `POST` | `/api/project/profile` | Revisioned, idempotent shared profile and roadmap update |
+| `POST` | `/api/project/events` | Idempotent local outcome, milestone, risk, decision, or initiative event |
 | `POST` | `/api/dashboard/v2/agents/resume` | Resume a named handoff |
 | `POST` | `/api/dashboard/v2/agents/release` | Release a claimed handoff |
+
+## Project contract
+
+The selected worktree's `.agentpack/config.toml` is authoritative for shared
+profile, outcome, and milestone definitions. Project reads discover up to 20
+worktrees through Git's common directory and aggregate bounded local artifacts.
+Malformed or inaccessible worktrees are skipped with warnings and
+`partial=true`; AgentPack never scans unrelated source trees.
+
+Every derived project record carries `source`, `confidence`, `updated_at`,
+bounded `evidence`, `workspace_id`, and `warnings`. Missing validation,
+architecture, release, context, or knowledge evidence remains `unknown`.
+Delivery progress comes only from declared milestones.
+
+Profile writes require both a unique `mutation_id` and the current 64-character
+`expected_revision`. The revision is the SHA-256 hash of the config contents.
+Duplicate mutation retries return their prior result; stale revisions return
+`409` without changing the file. Dynamic project state is appended as
+`project_*` rows in the existing session-event log and folded at read time.
+
+The Overview, Roadmap, Health, and Activity views support `all`, `current`, or a
+specific workspace ID. Mutating operations remain scoped to the current
+worktree. Summary and Engineering briefs are capped at 20 KB and run through
+the existing redactor. Summary omits absolute paths and raw commands;
+Engineering may include relative paths, branches, SHAs, and check details.
 
 ## Action inspection
 
@@ -102,8 +141,8 @@ stable `kind`, `retryable`, and optional `detail` fields.
 |---|---|---|
 | `400` | Malformed JSON, unknown fields, missing values, or invalid action | `malformed_json`, `invalid_request`, `invalid_action` |
 | `401` | Missing or invalid dashboard token | `unauthorized` |
-| `403` | Provider/session restriction or denied operation | `permission_denied` |
-| `409` | Confirmation, claim, stale-state, or repository conflict | `action_conflict`, `handoff_conflict`, `stale_handoff`, `repository_mismatch` |
+| `403` | Read-only project, provider/session restriction, or denied operation | `permission_denied` |
+| `409` | Config revision, confirmation, claim, stale-state, or repository conflict | `config_conflict`, `action_conflict`, `handoff_conflict`, `stale_handoff`, `repository_mismatch` |
 | `500` | Unexpected local server failure | `server_error` |
 
 Tree-sitter, MCP, and scene availability are represented inside successful
@@ -118,8 +157,25 @@ Existing `/api/dashboard`, `/api/graph`, `/api/map`, `/api/action/run`, and
 terminal endpoints are unchanged. Migrate consumers incrementally by reading
 the v2 workspace envelope first, then using `/impact` for symbol-level
 navigation and `/actions/inspect` before `/actions/run`. The dashboard stores
-the global presentation preference locally as
-`agentpack.dashboard.presentation_mode` with values `explain` or `build`.
+the global Summary/Engineering preference locally as
+`agentpack.dashboard.presentation_mode`. Stored values remain `explain` or
+`build` for compatibility.
+
+The top-bar search control opens a keyboard command palette with `Cmd+K` or
+`Ctrl+K`. It indexes loaded project evidence immediately and requests bounded
+repository evidence lazily. Palette actions are fixed, parameterless AgentPack
+actions and always pass through the existing inspection and confirmation flow.
+Queries, task text, command strings, and result content are never persisted;
+only eight result IDs per project may be stored as recents.
+
+The home payload includes independent API, snapshot, Context, and MCP evidence
+instead of a composite runtime claim. It may also include
+`cached_project_status`, a server-produced, secret-redacted project summary
+that excludes absolute paths, task and memory content, commands, graphs,
+terminal history, and action history. The browser retains one compatible
+snapshot for up to seven days. Last-known mode is read-only: navigation and
+cached project-evidence search remain available, while mutations, checks,
+actions, brief generation, and project switching are disabled.
 
 When Tree-sitter, MCP, WebGL, or an optional artifact is unavailable, v2 keeps
 the already-loaded envelope and reports an unavailable or stale state. Clients

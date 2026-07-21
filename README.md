@@ -52,10 +52,10 @@
 </p>
 
 <p align="center">
-  <img src="docs/assets/dashboard/workspace-desktop.png" alt="AgentPack workspace showing repository context, active work, proof, and project state" width="1100">
+  <img src="docs/assets/dashboard/workspace-desktop.png" alt="AgentPack project overview showing outcomes, milestone progress, independent health, risks, decisions, and evidence coverage" width="1100">
 </p>
 
-<p align="center"><sub>One local workspace for repository context, active work, review evidence, and continuity.</sub></p>
+<p align="center"><sub>One local project workspace connecting outcomes, initiatives, tasks, health, knowledge, and engineering evidence.</sub></p>
 
 ## The Missing Project Layer
 
@@ -83,6 +83,21 @@ and when another session needs to continue it. These are not separate products
 or isolated command families. They share the same local repository, task,
 session, context, evidence, and memory state.
 
+Normal development uses one four-command loop:
+
+```bash
+agentpack work "<task>"
+agentpack learn --json
+agentpack finish
+agentpack doctor
+```
+
+`learn` turns the same local work, project, and assessment memory into up to
+three evidence-backed topics: what matters now, how the system fits together,
+and a scored weak spot when one exists. `--global` explicitly ranks topics
+across registered AgentPack projects; the coding-agent host teaches the chosen
+topic and records the developer's result locally.
+
 ### Prepare with project evidence
 
 AgentPack starts from a concrete task and the repository as it exists now. It
@@ -98,9 +113,22 @@ inspectable starting point, not a guarantee that every selected file is right.
 ### Coordinate active work
 
 Task and session state, context freshness, token guidance, and same-worktree
-overlap warnings stay connected. The local dashboard makes the repository,
-active work, queued work, proof, and handoff state visible without requiring a
-hosted project index.
+overlap warnings stay connected. The local dashboard makes the project the
+primary object: user-owned outcomes lead to confirmed initiatives, tasks, and
+bounded evidence. Independent Delivery, Validation, Architecture, Release,
+Context, and Knowledge signals keep missing evidence visible as unknown rather
+than hiding it inside a composite score.
+
+Summary and Engineering lenses present the same local project state for
+different audiences. Deterministic status briefs can be copied or downloaded
+without writing repository files, and project reads can aggregate accessible
+worktrees while mutations stay scoped to the current one.
+
+Overview leads with an evidence-ranked Now section. The five stable project
+views are Overview, Roadmap, Work, Health, and Knowledge; Activity and advanced
+repository tools remain available from Overview, Explore, and the `Cmd+K` /
+`Ctrl+K` command palette. A redacted seven-day browser snapshot provides a
+read-only last-known project status when the local server is unavailable.
 
 Structured handoffs carry acceptance criteria, completed and remaining work,
 decisions, blockers, changed files, and validation evidence into another

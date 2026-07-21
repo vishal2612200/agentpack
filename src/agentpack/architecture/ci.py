@@ -11,6 +11,8 @@ def write_ci_artifacts(*, diff_path: Path, check_path: Path, output_dir: Path) -
     """Render source-free architecture artifacts from local command JSON."""
     diff = _sanitize(_read_json(diff_path))
     check = _sanitize(_read_json(check_path))
+    violations = check.get("violations") if isinstance(check.get("violations"), list) else []
+    blocking = sum(1 for item in violations if isinstance(item, dict) and item.get("blocking"))
     output_dir.mkdir(parents=True, exist_ok=True)
     diff_output = output_dir / "architecture-diff.json"
     markdown_output = output_dir / "architecture-diff.md"
@@ -25,6 +27,9 @@ def write_ci_artifacts(*, diff_path: Path, check_path: Path, output_dir: Path) -
                 "artifacts": [path.name for path in (diff_output, markdown_output)],
                 "diff_sha256": _sha256(diff_output),
                 "check_sha256": _sha256(check_path),
+                "blocking_violations": blocking,
+                "advisory_violations": len(violations) - blocking,
+                "git_sha": str(check.get("git_sha") or diff.get("git_sha") or ""),
             }
         ),
         encoding="utf-8",

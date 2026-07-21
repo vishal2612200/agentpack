@@ -1,0 +1,43 @@
+[project]
+root = "."
+ignore_file = ".agentignore"
+display_name = "Example Product"
+purpose = "Give teams one evidence-backed view of project outcomes and engineering state."
+audiences = ["Product", "Engineering", "Operations"]
+owners = ["Platform"]
+stage = "active"
+links = { repository = "https://github.com/example/product", docs = "https://example.com/product/docs" }
+environments = ["development", "staging", "production"]
+status_stale_days = 14
+
+[[project.outcomes]]
+id = "outcome-reliable-release"
+title = "Make releases predictable"
+description = "Expose delivery and validation evidence before release decisions."
+owner = "Platform"
+target_date = "2026-09-30"
+
+[[project.outcomes.milestones]]
+id = "milestone-release-checks"
+title = "Run release checks against the current SHA"
+owner = "Platform"
+due_date = "2026-08-31"
+
+[[project.outcomes.milestones]]
+id = "milestone-status-brief"
+title = "Share the first engineering status brief"
+owner = "Platform"
+due_date = "2026-09-15"
+
+[[project.outcomes]]
+id = "outcome-project-knowledge"
+title = "Reduce repeated project rediscovery"
+description = "Connect accepted decisions, procedures, and assessed learning to active work."
+owner = "Developer Experience"
+target_date = "2026-10-15"
+
+[[project.outcomes.milestones]]
+id = "milestone-knowledge-baseline"
+title = "Record the first accepted decision and reusable procedure"
+owner = "Developer Experience"
+due_date = "2026-09-30"

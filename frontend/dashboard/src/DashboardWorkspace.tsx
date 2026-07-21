@@ -5,13 +5,16 @@ import {
   BarChart3,
   Brain,
   Building2,
+  Check,
   CheckCircle2,
   ChevronRight,
   CircleDot,
   ClipboardList,
   Code2,
+  Copy,
   Database,
   FileText,
+  Flag,
   FolderKanban,
   GitBranch,
   ListFilter,
@@ -25,6 +28,7 @@ import {
   Send,
   Settings,
   ShieldAlert,
+  ShieldCheck,
   SlidersHorizontal,
   Table2,
   TerminalSquare,
@@ -43,10 +47,19 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
-import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, DashboardTaskDetail, DashboardTaskRecord, DashboardTimelineEvent, MapBuilding, MapRoad, PresentationMode, SemanticGraphSummary } from "./data/schema";
-import { AgentWorkbench } from "./components/dashboard/agent-workbench";
+import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, loadLearningRecommendations, loadProjectOverview, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, LearningRecommendationSet, LearningScope, MapBuilding, MapRoad, PresentationMode, ProjectOverview, SemanticGraphSummary } from "./data/schema";
+import { ProjectActivityView } from "./components/dashboard/project/ProjectActivityView";
+import { DashboardCommandPalette, type PaletteTarget } from "./components/dashboard/CommandPalette";
+import { RuntimeStatusDialog, type DashboardConnectionState } from "./components/dashboard/RuntimeStatusDialog";
+import { ProjectHealthView } from "./components/dashboard/project/ProjectHealthView";
+import { ProjectKnowledgeSummary } from "./components/dashboard/project/ProjectKnowledgeSummary";
+import { ProjectOverviewView } from "./components/dashboard/project/ProjectOverviewView";
+import { ProjectRoadmapView } from "./components/dashboard/project/ProjectRoadmapView";
+import { ProjectWorkView } from "./components/dashboard/project/ProjectWorkView";
+import { ProjectViewState } from "./components/dashboard/project/project-shared";
 import { ConfirmCommandDialog, ErrorState, LoadingState, Metric, Panel, StateSurface, StatusPill, TechnicalDetail, type CommandInspection, type PendingCommand } from "./components/dashboard/shared";
+import { cachedStatusToOverview, cachedStatusToPayload, clearDashboardCache, readDashboardCache, writeDashboardCache } from "./data/dashboardCache";
 import { buildingHoverInfo, labelize, roadHoverInfo, type MapHoverInfo } from "./mapInfo";
 import { useDashboardState, type DashboardView as View, type MapMode } from "./state/dashboard-state";
 
@@ -63,24 +76,37 @@ interface TerminalSessionState {
 
 const primaryViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
   { id: "home", label: "Overview", icon: Building2 },
-  { id: "tasks", label: "Work queue", icon: ClipboardList },
-  { id: "analytics", label: "Proof", icon: BarChart3 }
+  { id: "roadmap", label: "Roadmap", icon: Flag },
+  { id: "tasks", label: "Work", icon: ClipboardList },
+  { id: "health", label: "Health", icon: ShieldCheck },
+  { id: "learning", label: "Knowledge", icon: Brain }
 ];
 
-const advancedViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
-  { id: "graph", label: "Impact map", icon: MapIcon },
-  { id: "context", label: "AI context", icon: Database },
-  { id: "files", label: "Files", icon: FileText },
-  { id: "workflow", label: "Run checks", icon: Workflow },
-  { id: "threads", label: "Work sessions", icon: GitBranch },
-  { id: "learning", label: "Learning", icon: Brain },
-  { id: "settings", label: "Settings", icon: Settings },
-  { id: "integrations", label: "Agent connection", icon: TerminalSquare },
-  { id: "raw", label: "Diagnostics", icon: Code2 },
-  { id: "cockpit", label: "Decision details", icon: Activity }
+const advancedViewGroups: Array<{ label: string; views: Array<{ id: View; label: string; icon: typeof Activity }> }> = [
+  { label: "Repository", views: [
+    { id: "graph", label: "Impact map", icon: MapIcon },
+    { id: "context", label: "AI context", icon: Database },
+    { id: "files", label: "Files", icon: FileText }
+  ] },
+  { label: "Operations", views: [
+    { id: "workflow", label: "Run checks", icon: Workflow },
+    { id: "threads", label: "Work sessions", icon: GitBranch }
+  ] },
+  { label: "Connections", views: [
+    { id: "integrations", label: "Agent connection", icon: TerminalSquare }
+  ] },
+  { label: "Diagnostics", views: [
+    { id: "settings", label: "Settings", icon: Settings },
+    { id: "raw", label: "Diagnostics", icon: Code2 },
+    { id: "cockpit", label: "Decision details", icon: Activity }
+  ] }
 ];
+
+const advancedViews = advancedViewGroups.flatMap((group) => group.views);
+const inspectorViews = new Set<View>(["graph", "context", "files", "cockpit"]);
 
 export function DashboardWorkspace() {
+  const initialCacheRef = useRef(readDashboardCache());
   const { state: dashboardState, dispatch } = useDashboardState();
   const view = dashboardState.view;
   const selectedId = dashboardState.selectedEntityId;
@@ -88,9 +114,20 @@ export function DashboardWorkspace() {
   const setView = (value: View) => dispatch({ type: "view", value });
   const setSelectedId = (value: string | ((current: string) => string)) => dispatch({ type: "select", value: typeof value === "function" ? value(dashboardState.selectedEntityId) : value });
   const setPresentationMode = (value: PresentationMode) => dispatch({ type: "presentation", value });
-  const [payload, setPayload] = useState<DashboardPayload | null>(null);
+  const [payload, setPayload] = useState<DashboardPayload | null>(() => initialCacheRef.current ? cachedStatusToPayload(initialCacheRef.current.status) : null);
   const [payloadDetail, setPayloadDetail] = useState<"home" | "full">("home");
+  const [projectOverview, setProjectOverview] = useState<ProjectOverview | null>(() => initialCacheRef.current ? cachedStatusToOverview(initialCacheRef.current.status) : null);
+  const [projectWorkspace, setProjectWorkspace] = useState("all");
+  const [projectLoading, setProjectLoading] = useState(false);
+  const [projectError, setProjectError] = useState("");
   const [error, setError] = useState<string>("");
+  const [connection, setConnection] = useState<DashboardConnectionState>(initialCacheRef.current ? "stale" : "connecting");
+  const [observedAt, setObservedAt] = useState("");
+  const [cachedAt, setCachedAt] = useState(initialCacheRef.current?.cached_at || "");
+  const [loadingPhase, setLoadingPhase] = useState("Connecting to the local AgentPack dashboard.");
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [paletteLoading, setPaletteLoading] = useState(false);
+  const [statusOpen, setStatusOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [terminalOpen, setTerminalOpen] = useState(false);
   const [sessions, setSessions] = useState<TerminalSessionState[]>([]);
@@ -101,6 +138,8 @@ export function DashboardWorkspace() {
   const impactParentRef = useRef<Map<string, string>>(new Map());
   const refreshGenerationRef = useRef(0);
   const latestActionGenerationRef = useRef(0);
+  const projectWorkspaceRef = useRef("all");
+  const cachedOnly = connection !== "live";
 
   useEffect(() => { selectedEntityRef.current = selectedId; }, [selectedId]);
 
@@ -108,18 +147,91 @@ export function DashboardWorkspace() {
     const loaded = await loadDashboardPayload(detail);
     setPayloadDetail(detail);
     setPayload(loaded);
-    setSelectedId((current) => current || loaded.graph.root_id || "task:active");
+    const overview = projectWorkspaceRef.current === "all"
+      ? loaded.snapshot.project_overview || null
+      : await loadProjectOverview(projectWorkspaceRef.current);
+    setProjectOverview(overview);
+    setConnection("live");
+    const observed = new Date().toISOString();
+    setObservedAt(observed);
+    setError("");
+    if (loaded.cached_project_status) {
+      writeDashboardCache(loaded.cached_project_status);
+      setCachedAt(observed);
+    }
     return loaded;
   };
 
-  const loadFullDashboard = () => {
-    refreshDashboard("full").catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard details"));
+  const handleProjectWorkspaceChange = async (value: string) => {
+    projectWorkspaceRef.current = value;
+    setProjectWorkspace(value);
+    setProjectLoading(true);
+    setProjectError("");
+    try {
+      setProjectOverview(await loadProjectOverview(value));
+    } catch (caught) {
+      setProjectError(caught instanceof Error ? caught.message : "Project scope could not be loaded.");
+    } finally {
+      setProjectLoading(false);
+    }
+  };
+
+  const handleProjectOverviewMutation = (next: ProjectOverview) => {
+    if (projectWorkspaceRef.current === "all") {
+      setProjectOverview(next);
+      return;
+    }
+    setProjectLoading(true);
+    loadProjectOverview(projectWorkspaceRef.current)
+      .then(setProjectOverview)
+      .catch((caught: unknown) => setProjectError(caught instanceof Error ? caught.message : "Project scope could not be refreshed."))
+      .finally(() => setProjectLoading(false));
+  };
+
+  const loadFullDashboard = async () => {
+    if (cachedOnly || payloadDetail === "full" || paletteLoading) return;
+    setPaletteLoading(true);
+    try {
+      await refreshDashboard("full");
+    } catch (err) {
+      dispatch({ type: "resource", key: "workspace", value: { status: "error", message: err instanceof Error ? err.message : "Failed to load dashboard details", retryable: true } });
+    } finally {
+      setPaletteLoading(false);
+    }
   };
 
   useEffect(() => {
+    const readingTimer = window.setTimeout(() => setLoadingPhase("Reading project and workspace evidence."), 2_000);
+    const waitingTimer = window.setTimeout(() => setLoadingPhase("Still waiting for the local dashboard server."), 6_000);
     refreshDashboard("home")
-      .catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
+      .catch((err: unknown) => {
+        setConnection(initialCacheRef.current ? "stale" : "unavailable");
+        setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+      })
+      .finally(() => {
+        window.clearTimeout(readingTimer);
+        window.clearTimeout(waitingTimer);
+      });
+    return () => {
+      window.clearTimeout(readingTimer);
+      window.clearTimeout(waitingTimer);
+    };
   }, []);
+
+  useEffect(() => {
+    const openPalette = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === "k") {
+        event.preventDefault();
+        setPaletteOpen((value) => !value);
+      }
+    };
+    window.addEventListener("keydown", openPalette);
+    return () => window.removeEventListener("keydown", openPalette);
+  }, []);
+
+  useEffect(() => {
+    if (paletteOpen) void loadFullDashboard();
+  }, [paletteOpen]);
 
 
   useEffect(() => {
@@ -129,19 +241,26 @@ export function DashboardWorkspace() {
     };
   }, []);
 
-  if (error) {
+  const retryDashboard = () => {
+    setError("");
+    setConnection("connecting");
+    setLoadingPhase("Connecting to the local AgentPack dashboard.");
+    refreshDashboard("home").catch((err: unknown) => {
+      setConnection(payload ? "stale" : "unavailable");
+      setError(err instanceof Error ? err.message : "Failed to load dashboard data");
+    });
+  };
+
+  if (error && !payload) {
     return (
       <ErrorState
         message={error}
-        onRetry={() => {
-          setError("");
-          refreshDashboard("home").catch((err: unknown) => setError(err instanceof Error ? err.message : "Failed to load dashboard data"));
-        }}
+        onRetry={retryDashboard}
       />
     );
   }
   if (!payload) {
-    return <LoadingState />;
+    return <LoadingState phase={loadingPhase} />;
   }
 
   const selected = findSelected(payload.graph, selectedId);
@@ -154,7 +273,8 @@ export function DashboardWorkspace() {
         className={view === item.id ? "nav-item active" : "nav-item"}
         onClick={() => {
           setView(item.id);
-          if (item.id !== "home" && item.id !== "analytics") loadFullDashboard();
+          if (inspectorViews.has(item.id) && !selectedId && payload.graph.root_id) setSelectedId(payload.graph.root_id);
+          if (["graph", "context", "files", "workflow", "threads", "learning", "settings", "integrations", "raw", "cockpit"].includes(item.id)) void loadFullDashboard();
         }}
         aria-label={item.label}
         title={item.label}
@@ -165,7 +285,19 @@ export function DashboardWorkspace() {
     );
   };
 
+  const handlePaletteNavigate = (target: PaletteTarget) => {
+    setView(target.view);
+    if (target.entityId) setSelectedId(target.entityId);
+    else if (inspectorViews.has(target.view) && payload.graph.root_id) setSelectedId(payload.graph.root_id);
+    if (target.anchor) window.setTimeout(() => document.getElementById(target.anchor!)?.scrollIntoView({ block: "start" }), 0);
+    if (advancedViews.some((item) => item.id === target.view) || target.view === "learning") void loadFullDashboard();
+  };
+
   const handleRunCommand = async (command: string) => {
+    if (cachedOnly) {
+      setStatusOpen(true);
+      return;
+    }
     const inspection = await inspectCommand(command);
     if (!inspection.allowed) {
       openLocalError(command, inspection.reason);
@@ -179,6 +311,10 @@ export function DashboardWorkspace() {
   };
 
   const handleRunAction = async (action: string, body: Record<string, unknown> = {}) => {
+    if (cachedOnly) {
+      setStatusOpen(true);
+      return;
+    }
     const inspectionResponse = await fetch(apiUrl("/api/dashboard/v2/actions/inspect"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -236,24 +372,6 @@ export function DashboardWorkspace() {
     attachEventStream(session.id, ++latestActionGenerationRef.current);
   };
 
-  const handleHandoffAction = async (action: "resume" | "release", name: string) => {
-    dispatch({ type: "handoff", name, value: "pending" });
-    const response = await fetch(apiUrl(`/api/dashboard/v2/agents/${action}`), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ name })
-    });
-    const result = await response.json() as { error?: string; kind?: string };
-    if (!response.ok) {
-      const state = result.kind === "repository_mismatch" ? "repository_mismatch" : result.kind === "permission_denied" ? "permission_denied" : result.kind === "stale_handoff" ? "stale" : result.kind === "handoff_conflict" ? "conflict" : "error";
-      dispatch({ type: "handoff", name, value: state });
-      openLocalError(name, result.error || `Could not ${action} handoff.`);
-      return;
-    }
-    dispatch({ type: "handoff", name, value: "success" });
-    await refreshDashboard("home");
-  };
-
   const handleSaveConfig = async (updates: Record<string, unknown>) => {
     const response = await fetch(apiUrl("/api/config/update"), {
       method: "POST",
@@ -269,6 +387,10 @@ export function DashboardWorkspace() {
   };
 
   const handleSwitchProject = async (path: string) => {
+    if (cachedOnly) {
+      setStatusOpen(true);
+      return;
+    }
     const response = await fetch(apiUrl("/api/projects/switch"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -281,7 +403,11 @@ export function DashboardWorkspace() {
     }
     setPayload(result as DashboardPayload);
     setPayloadDetail("full");
-    setSelectedId((result as DashboardPayload).graph.root_id || "task:active");
+    projectWorkspaceRef.current = "all";
+    setProjectWorkspace("all");
+    setProjectOverview((result as DashboardPayload).snapshot.project_overview || null);
+    setProjectError("");
+    setSelectedId(inspectorViews.has(view) ? (result as DashboardPayload).graph.root_id || "" : "");
     setSessions([]);
     setActiveSessionId("");
     setTerminalOpen(false);
@@ -386,10 +512,18 @@ export function DashboardWorkspace() {
       ]);
       if (generation !== refreshGenerationRef.current) return;
       setPayload(loaded);
+      setProjectOverview(loaded.snapshot.project_overview || null);
+      setConnection("live");
+      const observed = new Date().toISOString();
+      setObservedAt(observed);
+      if (loaded.cached_project_status) {
+        writeDashboardCache(loaded.cached_project_status);
+        setCachedAt(observed);
+      }
       const exists = Boolean(findSelected(loaded.graph, current) || impact.entities.some((entity) => entity.id === current) || impact.relationships.some((relationship) => relationship.id === current));
       if (!exists) {
         const parentExists = previousParent && impact.entities.some((entity) => entity.id === previousParent);
-        setSelectedId(parentExists ? previousParent : loaded.graph.root_id || "task:active");
+        setSelectedId(parentExists ? previousParent : inspectorViews.has(view) ? loaded.graph.root_id || "" : "");
       }
       impactParentRef.current = new Map(impact.entities.flatMap((entity) => entity.parent_id ? [[entity.id, entity.parent_id]] : []));
       dispatch({ type: "resource", key: "workspace", value: { status: "ready" } });
@@ -419,7 +553,7 @@ export function DashboardWorkspace() {
   };
 
   return (
-    <div className="app-shell" data-presentation-mode={presentationMode} data-testid="dashboard-workspace">
+    <div className="app-shell" data-presentation-mode={presentationMode} data-inspector-open={Boolean(inspectorViews.has(view) && selected)} data-testid="dashboard-workspace">
       <aside className="sidebar" aria-label="Dashboard navigation">
         <div className="brand-block">
           <div className="brand-mark" aria-hidden="true">
@@ -431,15 +565,22 @@ export function DashboardWorkspace() {
           </div>
         </div>
         <nav className="nav-list">
-          <span className="nav-group-label">Control</span>
+          <span className="nav-group-label">Project</span>
           {primaryViews.map(renderNavItem)}
-          <details className="advanced-nav" open={view !== "home" && view !== "tasks" && view !== "analytics"}>
-            <summary>Observe</summary>
-            <div className="nav-list nav-list-nested">{advancedViews.map(renderNavItem)}</div>
+          <details className="advanced-nav" open={!primaryViews.some((item) => item.id === view)}>
+            <summary>Explore</summary>
+            <div className="nav-list nav-list-nested">
+              {advancedViewGroups.map((group) => (
+                <section key={group.label} className="advanced-nav-group">
+                  <span>{group.label}</span>
+                  {group.views.map(renderNavItem)}
+                </section>
+              ))}
+            </div>
           </details>
         </nav>
         <div className="sidebar-footer">
-          <span><CircleDot size={12} aria-hidden="true" /> Runtime nominal</span>
+          <button type="button" onClick={() => setStatusOpen(true)}><CircleDot size={12} aria-hidden="true" /> {connection === "live" ? "Live data" : connection === "stale" ? "Last known" : connection}</button>
           <code>{payload.snapshot.workspace?.branch || payload.snapshot.project.branch || "local workspace"}</code>
         </div>
       </aside>
@@ -448,29 +589,28 @@ export function DashboardWorkspace() {
         <TopBar
           snapshot={payload.snapshot}
           mode={presentationMode}
+          overview={projectOverview}
+          connection={connection}
+          cachedAt={cachedAt}
           onModeChange={setPresentationMode}
           onSwitchProject={handleSwitchProject}
-          onOpenSearch={() => { setView("graph"); loadFullDashboard(); }}
+          onOpenSearch={() => setPaletteOpen(true)}
+          onOpenStatus={() => setStatusOpen(true)}
         />
         <section className="main-panel" aria-label={`${view} view`}>
-          <StateSurface state={dashboardState.resources.workspace || { status: "ready" }} onRetry={() => void refreshAfterSuccessfulAction()} />
-          {view === "home" && (
-            <ProjectHomeView
-              snapshot={payload.snapshot}
-              repositoryMap={payload.map}
-              agents={payload.agents}
-              mode={presentationMode}
-              onRunAction={handleRunAction}
-              onHandoffAction={handleHandoffAction}
-              onRefresh={refreshDashboard}
-              onOpenGraph={() => { setView("graph"); loadFullDashboard(); }}
-            />
-          )}
+          {cachedOnly ? <StateSurface state={{ status: "stale", message: error || `Showing stored project status from ${cachedAt || payload.snapshot.generated_at || "an earlier session"}.`, retryable: true }} onRetry={retryDashboard} /> : <StateSurface state={dashboardState.resources.workspace || { status: "ready" }} onRetry={() => void refreshAfterSuccessfulAction()} />}
+          {projectLoading && ["home", "roadmap", "health", "activity"].includes(view) ? <ProjectViewState status="loading" message="Loading the selected project workspace..." /> : null}
+          {projectError && ["home", "roadmap", "health", "activity"].includes(view) ? <ProjectViewState status="error" message={projectError} onRetry={() => void handleProjectWorkspaceChange(projectWorkspace)} /> : null}
+          {view === "home" && projectOverview ? <ProjectOverviewView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} offline={cachedOnly} mode={presentationMode} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} onNavigate={(nextView, entityId) => handlePaletteNavigate({ view: nextView, entityId })} /> : null}
+          {view === "home" && !projectOverview ? <ProjectViewState status="empty" message="Project overview is not available yet." /> : null}
+          {view === "roadmap" && projectOverview ? <ProjectRoadmapView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} /> : null}
+          {view === "health" && projectOverview ? <><ProjectHealthView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} actionsDisabled={cachedOnly} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onRunAction={handleRunAction} onRunCommand={handleRunCommand} /><AnalyticsView snapshot={payload.snapshot} /></> : null}
+          {view === "activity" && projectOverview ? <ProjectActivityView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} /> : null}
           {view === "analytics" && <AnalyticsView snapshot={payload.snapshot} />}
           {view === "cockpit" && (
             <CockpitView payload={payload} onSelect={setSelectedId} onOpenGraph={() => setView("graph")} onRunCommand={handleRunCommand} onRunAction={handleRunAction} />
           )}
-          {view === "tasks" && <TasksView snapshot={payload.snapshot} onRunAction={handleRunAction} onRefresh={refreshDashboard} />}
+          {view === "tasks" && <ProjectWorkView snapshot={payload.snapshot} overview={projectOverview} selectedTaskId={selectedId} onRunAction={handleRunAction} onRefresh={refreshDashboard} />}
           {view === "threads" && <ThreadsView snapshot={payload.snapshot} onRunAction={handleRunAction} />}
           {view === "context" && <ContextView snapshot={payload.snapshot} onSelect={setSelectedId} onRunAction={handleRunAction} onRunCommand={handleRunCommand} />}
           {view === "graph" && (
@@ -494,12 +634,14 @@ export function DashboardWorkspace() {
           {view === "settings" && <SettingsView snapshot={payload.snapshot} onSaveConfig={handleSaveConfig} />}
           {view === "integrations" && <IntegrationsView snapshot={payload.snapshot} onRunCommand={handleRunCommand} onRunAction={handleRunAction} />}
           {view === "workflow" && <WorkflowView snapshot={payload.snapshot} onRunCommand={handleRunCommand} onRunAction={handleRunAction} />}
-          {view === "learning" && <MemoryView snapshot={payload.snapshot} graph={payload.graph} onSelect={setSelectedId} />}
+          {view === "learning" && <div className="view-stack">{projectOverview ? <ProjectKnowledgeSummary overview={projectOverview} graph={payload.graph} /> : null}<MemoryView snapshot={payload.snapshot} graph={payload.graph} onSelect={setSelectedId} /></div>}
           {view === "raw" && <RawDataView payload={payload} />}
         </section>
       </main>
 
-      <Inspector selected={selected} onRunCommand={handleRunCommand} />
+      {inspectorViews.has(view) && selected ? <Inspector selected={selected} onRunCommand={handleRunCommand} /> : null}
+      <DashboardCommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} payload={payload} overview={projectOverview} loadingFull={paletteLoading} cachedOnly={cachedOnly} onNavigate={handlePaletteNavigate} onRunAction={(action) => void handleRunAction(action)} />
+      <RuntimeStatusDialog open={statusOpen} onOpenChange={setStatusOpen} connection={connection} observedAt={observedAt} cachedAt={cachedAt} snapshot={payload.snapshot} onRetry={retryDashboard} onClearCache={() => { clearDashboardCache(); setCachedAt(""); if (cachedOnly) { setPayload(null); setProjectOverview(null); setConnection("unavailable"); setError("Stored project status was cleared. Reconnect to the local dashboard server."); } }} />
       <TerminalPanel
         open={terminalOpen}
         sessions={sessions}
@@ -539,36 +681,46 @@ async function inspectCommand(command: string): Promise<CommandInspection> {
 
 function TopBar({
   snapshot,
+  overview,
+  connection,
+  cachedAt,
   mode,
   onModeChange,
   onSwitchProject,
-  onOpenSearch
+  onOpenSearch,
+  onOpenStatus
 }: {
   snapshot: DashboardSnapshot;
+  overview: ProjectOverview | null;
+  connection: DashboardConnectionState;
+  cachedAt: string;
   mode: PresentationMode;
   onModeChange: (mode: PresentationMode) => void;
   onSwitchProject: (path: string) => void;
   onOpenSearch: () => void;
+  onOpenStatus: () => void;
 }) {
   return (
     <header className="topbar">
       <div className="topbar-leading">
-        <span className="system-kicker"><CircleDot size={12} aria-hidden="true" /> Local control plane</span>
-        <ProjectDropdown snapshot={snapshot} onSwitchProject={onSwitchProject} />
+        <ProjectDropdown snapshot={snapshot} displayName={overview?.profile.display_name || ""} disabled={connection !== "live"} onSwitchProject={onSwitchProject} />
       </div>
-      <button type="button" className="command-trigger" onClick={onOpenSearch} aria-label="Search AgentPack context">
+      <button type="button" className="command-trigger" onClick={onOpenSearch} aria-label="Open project command palette">
         <Search size={16} aria-hidden="true" />
-        <span>Search paths, memory, tests</span>
+        <span>Find project evidence or action</span>
         <kbd>⌘ K</kbd>
       </button>
       <div className="mode-switch" role="group" aria-label="Workspace detail mode">
-        <button type="button" className={mode === "explain" ? "active" : ""} onClick={() => onModeChange("explain")}>Explain</button>
-        <button type="button" className={mode === "build" ? "active" : ""} onClick={() => onModeChange("build")}>Build</button>
+        <button type="button" className={mode === "explain" ? "active" : ""} onClick={() => onModeChange("explain")}>Summary</button>
+        <button type="button" className={mode === "build" ? "active" : ""} onClick={() => onModeChange("build")}>Engineering</button>
       </div>
       <div className="topbar-status" aria-label="Dashboard health">
         <span className="topbar-meta">{snapshot.workspace?.branch || snapshot.project.branch || "local"}</span>
         <StatusPill label="Context" status={snapshot.context.status} />
         <StatusPill label="MCP" status={snapshot.mcp_health?.status || "unknown"} />
+        <button type="button" className={`runtime-status-trigger ${connection}`} onClick={onOpenStatus}>
+          <CircleDot size={12} aria-hidden="true" /> {connection === "live" ? "Live" : connection === "stale" ? `Last known${cachedAt ? ` · ${new Date(cachedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}` : ""}` : connection}
+        </button>
       </div>
     </header>
   );
@@ -576,9 +728,13 @@ function TopBar({
 
 function ProjectDropdown({
   snapshot,
+  displayName,
+  disabled,
   onSwitchProject
 }: {
   snapshot: DashboardSnapshot;
+  displayName: string;
+  disabled: boolean;
   onSwitchProject: (path: string) => void;
 }) {
   const [open, setOpen] = useState(false);
@@ -597,9 +753,9 @@ function ProjectDropdown({
   };
   return (
     <div className="project-dropdown">
-      <button type="button" className="project-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open}>
+      <button type="button" className="project-trigger" onClick={() => setOpen((value) => !value)} aria-expanded={open} disabled={disabled}>
         <span>
-          <strong>{current.name}</strong>
+          <strong>{displayName || current.name}</strong>
           <small>{snapshot.workspace?.branch || current.branch || "local workspace"}{current.git_sha ? ` · ${current.git_sha}` : ""}</small>
         </span>
         <span className="badge neutral">Workspace</span>
@@ -652,275 +808,6 @@ function ProjectDropdown({
   );
 }
 
-function ProjectHomeView({
-  snapshot,
-  repositoryMap,
-  agents,
-  mode,
-  onRunAction,
-  onHandoffAction,
-  onRefresh,
-  onOpenGraph
-}: {
-  snapshot: DashboardSnapshot;
-  repositoryMap: DashboardMap;
-  agents?: DashboardPayload["agents"];
-  mode: PresentationMode;
-  onRunAction: (action: string, body?: Record<string, unknown>) => void;
-  onHandoffAction: (action: "resume" | "release", name: string) => void;
-  onRefresh: () => Promise<unknown>;
-  onOpenGraph: () => void;
-}) {
-  const tasks = snapshot.project_tasks || [];
-  const active = snapshot.active_task || tasks.find((item) => item.active) || tasks[0] || null;
-  const [selectedTaskId, setSelectedTaskId] = useState(active?.task_id || "");
-  const [newTask, setNewTask] = useState("");
-  const [taskError, setTaskError] = useState("");
-  const [feedbackSent, setFeedbackSent] = useState(false);
-  const [taskDetail, setTaskDetail] = useState<DashboardTaskDetail | null>(null);
-  const [taskDetailState, setTaskDetailState] = useState<"idle" | "loading" | "ready" | "error">("idle");
-  const selected = tasks.find((item) => item.task_id === selectedTaskId) || active;
-
-  useEffect(() => {
-    setSelectedTaskId(active?.task_id || "");
-  }, [active?.task_id]);
-
-  useEffect(() => {
-    const taskId = selected?.task_id;
-    if (!taskId) {
-      setTaskDetail(null);
-      setTaskDetailState("idle");
-      return;
-    }
-    let cancelled = false;
-    setTaskDetail(null);
-    setTaskDetailState("loading");
-    fetch(apiUrl(`/api/project/tasks/${encodeURIComponent(taskId)}`), { headers: authHeaders() })
-      .then(async (response) => {
-        if (!response.ok) throw new Error("Could not load task details.");
-        return response.json() as Promise<DashboardTaskDetail>;
-      })
-      .then((detail) => {
-        if (cancelled) return;
-        setTaskDetail(detail);
-        setTaskDetailState("ready");
-      })
-      .catch(() => {
-        if (cancelled) return;
-        setTaskDetail(null);
-        setTaskDetailState("error");
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [selected?.task_id]);
-
-  useEffect(() => {
-    setFeedbackSent(false);
-  }, [selected?.task_id]);
-
-  const createTask = async (event: FormEvent) => {
-    event.preventDefault();
-    const title = newTask.trim();
-    if (!title) return;
-    setTaskError("");
-    const response = await fetch(apiUrl("/api/project/tasks"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ title })
-    });
-    if (!response.ok) {
-      setTaskError("Could not start this task.");
-      return;
-    }
-    setNewTask("");
-    await onRefresh();
-  };
-
-  const updateStatus = async (status: string) => {
-    if (!selected) return;
-    await fetch(apiUrl("/api/project/tasks/update"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ task_id: selected.task_id, status })
-    });
-    await onRefresh();
-  };
-
-  const submitFeedback = async (value: "helped" | "partly_helped" | "missed_context" | "not_sure") => {
-    if (!selected) return;
-    const response = await fetch(apiUrl("/api/project/feedback"), {
-      method: "POST",
-      headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ task_id: selected.task_id, run_id: taskDetail && taskDetail.runs.length ? taskDetail.runs[taskDetail.runs.length - 1].run_id : selected.last_run_id || "", value })
-    });
-    if (response.ok) setFeedbackSent(true);
-  };
-
-  const selectedDetail = taskDetail?.task.task_id === selected?.task_id ? taskDetail : null;
-  const latestRun = selectedDetail && selectedDetail.runs.length ? selectedDetail.runs[selectedDetail.runs.length - 1] : undefined;
-  const selectedFiles = latestRun?.selected_files || [];
-  const omittedFiles = latestRun?.omitted_files || [];
-  const repositoryContextStatus = snapshot.context.status || "unknown";
-  const repositoryEntityCount = repositoryMap.summary.building_count || snapshot.semantic_graph?.entity_count || 0;
-  const repositoryRelationshipCount = repositoryMap.summary.road_count || snapshot.semantic_graph?.edge_count || 0;
-  const activeWorkCount = tasks.filter((item) => item.status !== "done").length;
-
-  return (
-    <div className="view-stack project-home" data-testid="project-home">
-      <section className="project-home-hero">
-        <div>
-          <div className="hero-mode"><span className="signal-dot" /> Repository workspace <code>{snapshot.project.git_sha || "local"}</code></div>
-          <h1>{snapshot.project.name}</h1>
-          <p className="muted">{mode === "explain" ? "Understand this project across code, tests, context, agents, and current work." : "Inspect repository structure, symbols, relationships, evidence, sessions, and work items from one control plane."}</p>
-          <div className="workspace-context">
-            <span><GitBranch size={13} aria-hidden="true" /> {snapshot.workspace?.branch || snapshot.project.branch || "local workspace"}</span>
-            <code>{snapshot.workspace?.path || snapshot.project.path}</code>
-          </div>
-        </div>
-        <div className="hero-actions">
-          <span className="hero-state"><CircleDot size={13} aria-hidden="true" /> Repository {repositoryContextStatus}</span>
-          <button className="primary-action" type="button" onClick={onOpenGraph}>
-            Explore repository <ChevronRight size={16} aria-hidden="true" />
-          </button>
-          {active ? <button className="secondary-action" type="button" onClick={() => onRunAction("next")}><PlayCircle size={16} aria-hidden="true" /> Prepare active work</button> : null}
-        </div>
-      </section>
-
-      <div className="metric-grid home-metrics">
-        <Metric label="Mapped files" value={repositoryEntityCount || "Not ready"} tone={repositoryEntityCount ? "neutral" : "warn"} />
-        <Metric label="Relationships" value={repositoryRelationshipCount || "Not ready"} tone={repositoryRelationshipCount ? "memory" : "warn"} />
-        <Metric label="Active work" value={activeWorkCount} tone={activeWorkCount ? "neutral" : "good"} />
-        <Metric label="Project context" value={repositoryContextStatus} tone={riskTone(repositoryContextStatus)} />
-      </div>
-
-      <div className="home-grid">
-        <Panel title="Active work" icon={ClipboardList}>
-          {active ? (
-            <div className="task-focus-card">
-              <div className="task-card-heading">
-                <span className={`badge ${riskTone(active.status)}`}>{taskStatusLabel(active.status)}</span>
-                {active.imported ? <span className="badge neutral">from task files</span> : null}
-              </div>
-              <h2>{active.title}</h2>
-              <p className="muted">{snapshot.suggested_actions[0]?.label || "AgentPack is ready to prepare focused context for this task."}</p>
-              <div className="inline-actions">
-                <button type="button" className="primary-action" onClick={() => onRunAction("next")}>
-                  <PlayCircle size={16} aria-hidden="true" />
-                  Prepare next step
-                </button>
-                <button type="button" className="secondary-action" onClick={() => updateStatus(active.status === "done" ? "in_progress" : "done")}>
-                  {active.status === "done" ? "Reopen task" : "Mark done"}
-                </button>
-              </div>
-            </div>
-          ) : (
-            <div className="empty-state-block">
-              <strong>No task is active yet.</strong>
-              <p>Start with a plain-language goal and AgentPack will organize the context.</p>
-            </div>
-          )}
-        </Panel>
-
-        <Panel title="Project work queue" icon={FolderKanban}>
-          <div className="stack-sm">
-            {tasks.slice(0, 20).map((task) => (
-              <button key={task.task_id} type="button" className={task.task_id === selected?.task_id ? "task-list-row active" : "task-list-row"} onClick={() => setSelectedTaskId(task.task_id)}>
-                <span>
-                  <strong>{task.title}</strong>
-                  <small>{task.updated_at ? formatDashboardDate(task.updated_at) : "No activity yet"}</small>
-                </span>
-                <span className={`badge ${riskTone(task.status)}`}>{taskStatusLabel(task.status)}</span>
-              </button>
-            ))}
-            {!tasks.length ? <p className="empty">No tasks have been recorded for this workspace.</p> : null}
-          </div>
-          <form className="start-task-form" onSubmit={createTask}>
-            <input aria-label="New task" value={newTask} onChange={(event) => setNewTask(event.target.value)} placeholder="What do you want to build or fix?" />
-            <button type="submit" className="primary-action" disabled={!newTask.trim()}><PlayCircle size={16} aria-hidden="true" /> Start task</button>
-          </form>
-          {taskError ? <p className="error-text">{taskError}</p> : null}
-        </Panel>
-      </div>
-
-      <AgentWorkbench agents={agents} mode={mode} onRunAction={onRunAction} onHandoffAction={onHandoffAction} />
-
-      {selected ? (
-        <Panel title="Task details" icon={FileText}>
-          <div className="task-detail-grid">
-            <div>
-              <p className="eyebrow">Selected task</p>
-              <h2>{selected.title}</h2>
-              <p className="muted">This task belongs to <strong>{snapshot.project.name}</strong> on <strong>{snapshot.workspace?.branch || "the current workspace"}</strong>.</p>
-            </div>
-            <div className="stack-sm">
-              <label className="field"><span>Status</span><select value={selected.status} onChange={(event) => updateStatus(event.target.value)}><option value="todo">To do</option><option value="in_progress">In progress</option><option value="needs_attention">Needs attention</option><option value="done">Done</option></select></label>
-              <div className="detail-stat"><span>Files prepared</span><strong>{selectedDetail ? selectedFiles.length : taskDetailState === "loading" ? "Loading" : "Not run"}</strong></div>
-              <div className="detail-stat"><span>Evidence</span><strong>{selectedDetail ? selectedDetail.impact?.length || 0 : taskDetailState === "loading" ? "Loading" : "Not run"}</strong></div>
-            </div>
-          </div>
-          {taskDetailState === "loading" ? <p className="muted" data-testid="task-detail-loading">Loading this task&apos;s evidence...</p> : null}
-          {taskDetailState === "error" ? <p className="error-text" data-testid="task-detail-error">Task details could not be loaded.</p> : null}
-          {selectedDetail ? <div className="task-evidence-grid" data-testid="task-detail-evidence">
-            <div>
-              <p className="eyebrow">Files prepared</p>
-              {selectedFiles.length ? <ul className="compact-list">{selectedFiles.slice(0, 12).map((path) => <li key={`selected-${path}`}><code>{path}</code></li>)}</ul> : <p className="muted">No files were selected yet.</p>}
-            </div>
-            <div>
-              <p className="eyebrow">Files left out</p>
-              {omittedFiles.length ? <ul className="compact-list">{omittedFiles.slice(0, 12).map((path) => <li key={`omitted-${path}`}><code>{path}</code></li>)}</ul> : <p className="muted">No omitted-file evidence yet.</p>}
-            </div>
-            <div>
-              <p className="eyebrow">Checks</p>
-              {latestRun?.checks?.length ? <ul className="compact-list">{latestRun.checks.slice(0, 12).map((check) => <li key={check}>{check}</li>)}</ul> : <p className="muted">No checks recorded yet.</p>}
-            </div>
-            <div>
-              <p className="eyebrow">Impact evidence</p>
-              <p className="muted">{selectedDetail.impact_reason || "No impact evidence recorded yet."}</p>
-              {selectedDetail.github_references?.length ? <p className="muted">GitHub: {selectedDetail.github_references.join(", ")}</p> : null}
-            </div>
-          </div> : null}
-          <div className="feedback-box" data-testid="task-feedback">
-            <div><strong>Was this useful?</strong><small>Your answer improves future context selection.</small></div>
-            <div className="inline-actions">
-              {feedbackSent ? <span className="badge good">Thanks for the feedback</span> : <>
-                <button type="button" className="secondary-action" onClick={() => submitFeedback("helped")}>Yes</button>
-                <button type="button" className="secondary-action" onClick={() => submitFeedback("partly_helped")}>Partly</button>
-                <button type="button" className="secondary-action" onClick={() => submitFeedback("missed_context")}>Missed context</button>
-              </>}
-            </div>
-          </div>
-        </Panel>
-      ) : null}
-      {selected ? <Panel title="Work history" icon={Activity}>
-        {taskDetailState === "loading" && !selectedDetail ? <p className="muted">Loading work history...</p> : null}
-        {taskDetailState === "error" ? <p className="error-text">Work history could not be loaded.</p> : null}
-        {taskDetailState === "ready" && selectedDetail ? <TaskTimeline events={selectedDetail.timeline || []} /> : null}
-      </Panel> : null}
-    </div>
-  );
-}
-
-function TaskTimeline({ events }: { events: DashboardTimelineEvent[] }) {
-  if (!events.length) {
-    return <div className="empty-state-block" data-testid="task-timeline-empty"><strong>No work history yet.</strong><p>Start a task or prepare AI context to create the first evidence-backed update.</p></div>;
-  }
-  return <ol className="timeline" data-testid="task-timeline">
-    {events.slice().reverse().map((event) => (
-      <li key={event.event_id}>
-        <span className="timeline-dot good" />
-        <div>
-          <strong>{event.label || event.event_type || "Work update"}</strong>
-          <small>{event.occurred_at ? formatDashboardDate(event.occurred_at) : "Recorded locally"}{event.agent ? ` · ${event.agent}` : ""}</small>
-          {event.summary ? <p className="muted">{event.summary}</p> : null}
-          {event.context_path ? <code>{event.context_path}</code> : null}
-          {event.issue_references?.length ? <small>Linked: {event.issue_references.join(", ")}</small> : null}
-        </div>
-      </li>
-    ))}
-  </ol>;
-}
-
 function AnalyticsView({ snapshot }: { snapshot: DashboardSnapshot }) {
   const [range, setRange] = useState<"7d" | "30d">("7d");
   const [analytics, setAnalytics] = useState<DashboardAnalytics | null>(snapshot.analytics || null);
@@ -961,15 +848,6 @@ function AnalyticsView({ snapshot }: { snapshot: DashboardSnapshot }) {
 
 function ValueCard({ title, value, detail }: { title: string; value: string | number; detail: string }) {
   return <article className="value-card"><span className="eyebrow">{title}</span><strong>{value}</strong><p>{detail}</p></article>;
-}
-
-function taskStatusLabel(status: DashboardTaskRecord["status"]): string {
-  return { todo: "To do", in_progress: "In progress", needs_attention: "Needs attention", done: "Done" }[status];
-}
-
-function formatDashboardDate(value: string): string {
-  const parsed = new Date(value);
-  return Number.isNaN(parsed.getTime()) ? "Recent activity" : parsed.toLocaleString([], { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
 }
 
 function CockpitView({
@@ -1078,111 +956,6 @@ function CockpitView({
               <CommandAction key={`${action.label}:${action.command}`} label={action.label} command={action.command || ""} onRunCommand={onRunCommand} icon={CheckCircle2} />
             ))}
             {!snapshot.suggested_actions.length ? <p className="empty">No suggested actions found.</p> : null}
-          </div>
-        </Panel>
-      </div>
-    </div>
-  );
-}
-
-function TasksView({
-  snapshot,
-  onRunAction,
-  onRefresh
-}: {
-  snapshot: DashboardSnapshot;
-  onRunAction: (action: string, body?: Record<string, unknown>) => void;
-  onRefresh: () => void;
-}) {
-  const [task, setTask] = useState(snapshot.task.text || "");
-  const [thread, setThread] = useState("global");
-  const [state, setState] = useState(snapshot.task.state || "planned");
-  const taskRows = snapshot.task_control || [];
-  const history = snapshot.task_history || [];
-  useEffect(() => {
-    setTask(snapshot.task.text || "");
-    setThread(snapshot.task.thread_id || "global");
-    setState(snapshot.task.state || "planned");
-  }, [snapshot.project.path, snapshot.task.text, snapshot.task.thread_id, snapshot.task.state]);
-  return (
-    <div className="view-stack">
-      <SectionTitle title="Tasks" subtitle="Switch task text, state, and refresh context from the local control plane." />
-      <div className="control-grid">
-        <Panel title="Task Editor" icon={ClipboardList}>
-          <div className="form-grid">
-            <label className="field full">
-              <span>Task history</span>
-              <select
-                value=""
-                onChange={(event) => {
-                  const selected = history.find((item, index) => `${index}:${item.task}` === event.target.value);
-                  if (!selected) return;
-                  setTask(selected.task);
-                  setThread(selected.thread_id || "global");
-                  setState(selected.status || "planned");
-                }}
-              >
-                <option value="">Pick a previous task...</option>
-                {history.map((item, index) => (
-                  <option key={`${item.source}:${item.observed_at}:${item.task}:${index}`} value={`${index}:${item.task}`}>
-                    {item.task} · {item.source}{item.thread_id ? ` · ${item.thread_id}` : ""}
-                  </option>
-                ))}
-              </select>
-              <small>Selecting history only fills this form. Use Set and refresh to write files.</small>
-            </label>
-            <label className="field full">
-              <span>Task</span>
-              <textarea value={task} onChange={(event) => setTask(event.target.value)} rows={4} placeholder="Describe the local task" />
-            </label>
-            <label className="field">
-              <span>Scope</span>
-              <select value={thread} onChange={(event) => setThread(event.target.value)}>
-                <option value="global">global</option>
-                {taskRows.filter((row) => row.thread_id).map((row) => (
-                  <option key={row.thread_id || ""} value={row.thread_id || ""}>{row.thread_id}</option>
-                ))}
-              </select>
-            </label>
-            <label className="field">
-              <span>State</span>
-              <select value={state} onChange={(event) => setState(event.target.value)}>
-                <option value="planned">planned</option>
-                <option value="in_progress">in_progress</option>
-                <option value="blocked">blocked</option>
-                <option value="done">done</option>
-              </select>
-            </label>
-            <div className="inline-actions full">
-              <button type="button" className="primary-action" onClick={() => onRunAction("set_task", { task, thread, refresh: true })}>
-                <PlayCircle size={16} aria-hidden="true" />
-                Set and refresh
-              </button>
-              <button type="button" className="secondary-action" onClick={() => onRunAction("set_state", { status: state, thread, summary: "Updated from dashboard." })}>
-                Set state
-              </button>
-              <button type="button" className="secondary-action" onClick={() => onRunAction("clear_task", { thread })}>
-                Clear task
-              </button>
-              <button type="button" className="secondary-action" onClick={onRefresh}>
-                Refresh snapshot
-              </button>
-            </div>
-          </div>
-        </Panel>
-        <Panel title="Known Task State" icon={FolderKanban}>
-          <div className="stack-sm">
-            {taskRows.map((row) => (
-              <div key={`${row.scope}:${row.thread_id || "global"}`} className="list-row passive">
-                <span>
-                  <strong>{row.scope === "thread" ? row.thread_id : "global"}</strong>
-                  <small>{row.task || "No task text"}</small>
-                  <code>{row.task_path}</code>
-                </span>
-                <span className={`badge ${riskTone(row.state || row.status)}`}>{row.state || row.status || "unknown"}</span>
-              </div>
-            ))}
-            {!taskRows.length ? <p className="empty">No task files found.</p> : null}
           </div>
         </Panel>
       </div>
@@ -1948,9 +1721,102 @@ function MemoryView({
   onSelect: (id: string) => void;
 }) {
   const memoryNodes = graph.nodes.filter((node) => node.type === "episode" || node.type === "procedure");
+  const [scope, setScope] = useState<LearningScope>("local");
+  const [recommendations, setRecommendations] = useState<LearningRecommendationSet | null>(null);
+  const [learningError, setLearningError] = useState("");
+  const [copyError, setCopyError] = useState("");
+  const [learningLoading, setLearningLoading] = useState(true);
+  const [copiedTopic, setCopiedTopic] = useState("");
+  const learningRequestId = useRef(0);
+
+  const refreshLearning = (nextScope: LearningScope) => {
+    const requestId = ++learningRequestId.current;
+    setLearningLoading(true);
+    setLearningError("");
+    setRecommendations(null);
+    loadLearningRecommendations(nextScope)
+      .then((value) => { if (requestId === learningRequestId.current) setRecommendations(value); })
+      .catch((error: unknown) => {
+        if (requestId === learningRequestId.current) {
+          setLearningError(error instanceof Error ? error.message : "Failed to load learning recommendations");
+        }
+      })
+      .finally(() => { if (requestId === learningRequestId.current) setLearningLoading(false); });
+  };
+
+  useEffect(() => {
+    refreshLearning(scope);
+    return () => { learningRequestId.current += 1; };
+  }, [scope]);
+
+  const copyCommand = async (topicId: string, command: string) => {
+    try {
+      await navigator.clipboard.writeText(command);
+      setCopyError("");
+      setCopiedTopic(topicId);
+      window.setTimeout(() => setCopiedTopic((current) => current === topicId ? "" : current), 1500);
+    } catch {
+      setCopyError("Clipboard access failed. Select the command text manually.");
+    }
+  };
+
   return (
     <div className="view-stack">
-      <SectionTitle title="Memory Influence" subtitle="Episodic and procedural memory connected to this context decision." />
+      <SectionTitle title="Knowledge" subtitle="Next technical topics, assessed mastery, decisions, procedures, and durable project memory." />
+      <div className="learning-scope" role="group" aria-label="Learning recommendation scope">
+        <button type="button" className={scope === "local" ? "active" : ""} onClick={() => setScope("local")}>This project</button>
+        <button type="button" className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>All projects</button>
+      </div>
+      {recommendations ? (
+        <div className="metric-grid learning-metrics">
+          <Metric label="Mastered" value={recommendations.mastery_summary.mastered} tone="good" />
+          <Metric label="Developing" value={recommendations.mastery_summary.developing} tone="memory" />
+          <Metric label="Needs practice" value={recommendations.mastery_summary.needs_practice} tone="warn" />
+          <Metric label="Unassessed" value={recommendations.mastery_summary.unassessed} tone="neutral" />
+        </div>
+      ) : null}
+      <Panel title="Next Technical Topics" icon={Brain}>
+        {learningLoading ? <p className="empty">Loading project learning history...</p> : null}
+        {learningError ? (
+          <div className="learning-error">
+            <p>{learningError}</p>
+            <button type="button" className="toolbar-button" onClick={() => refreshLearning(scope)}>Retry</button>
+          </div>
+        ) : null}
+        {!learningLoading && !learningError && recommendations ? (
+          <div className="learning-topic-list">
+            {recommendations.topics.map((topic) => (
+              <div key={topic.topic_id} className="learning-topic-row">
+                <div className="learning-topic-copy">
+                  <div className="learning-topic-meta">
+                    <span className={`badge ${topic.lane === "weak_spot" ? "warn" : topic.lane === "system" ? "memory" : "good"}`}>{topic.lane.replace("_", " ")}</span>
+                    <span className="badge neutral">{topic.project.name}</span>
+                    <span className="badge neutral">{topic.score}</span>
+                  </div>
+                  <strong>{topic.title}</strong>
+                  <p>{topic.why_now}</p>
+                  <small>{topic.evidence[0]?.path || topic.evidence[0]?.summary || topic.exercise}</small>
+                  <div className="learning-command">
+                    <code>{topic.start_command}</code>
+                    <button
+                      type="button"
+                      className="icon-button"
+                      aria-label={`Copy command for ${topic.title}`}
+                      title="Copy start command"
+                      onClick={() => copyCommand(topic.topic_id, topic.start_command)}
+                    >
+                      {copiedTopic === topic.topic_id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            ))}
+            {!recommendations.topics.length ? <p className="empty">No evidence-backed topics yet. Complete more AgentPack work to build learning history.</p> : null}
+            {copyError ? <p className="learning-warning">{copyError}</p> : null}
+            {recommendations.warnings.map((warning) => <p key={warning} className="learning-warning">{warning}</p>)}
+          </div>
+        ) : null}
+      </Panel>
       <div className="content-grid">
         <Panel title="Map Memory" icon={Brain}>
           <ItemList

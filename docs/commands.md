@@ -1,27 +1,27 @@
 # Commands
 
-Full command reference for the `agentpack` CLI. Start with the core commands,
-then use the advanced map when you need review, release, learning, diagnostics,
-or benchmark workflows.
+Full command reference for the `agentpack` CLI. Start with the product loop,
+then use the advanced map for specialized review, release, diagnostics, or
+benchmark workflows.
 
 ## Commands
 
 Most users should start with four commands:
 
 ```bash
-agentpack quickstart
-agentpack start "describe the change"
-agentpack next
-agentpack doctor --agent auto
+agentpack work "describe the change"
+agentpack learn --json
+agentpack finish
+agentpack doctor
 ```
 
 Core command map:
 
 | Command | Use when |
 |---|---|
-| `agentpack quickstart` | Show the shortest first-run path for this repo |
-| `agentpack start` | Write one concrete task and refresh context |
-| `agentpack next` | Answer "what now?" from setup, task, context, token, and session state |
+| `agentpack work` | Initialize if needed, write one task, and prepare context |
+| `agentpack learn` | Recommend up to three evidence-backed technical topics and coach one |
+| `agentpack finish` | Run checks and record completed task memory |
 | `agentpack doctor` | Audit MCP, hooks, agent files, CLI path, and repo health |
 
 Advanced command map:
@@ -79,13 +79,19 @@ Advanced command map:
 
 ### `agentpack learn`
 
-Generate local learning notes from the latest task, pack metadata, git diff, or recent task memory. Lessons are generated on demand; `agentpack work` only records cheap task facts and advisory observer events.
+Generate the existing local learning report and recommend up to three technical
+topics from current work, recent task memory, episodes, procedures, graph
+relationships, and scored coaching sessions. Repository scope is the default;
+cross-project retrieval requires `--global`.
 
 ```bash
 agentpack learn --since main
+agentpack learn --global --json
 agentpack learn "quiz me on last task" --json
 agentpack learn "interview me on this PR"
 agentpack learn --json
+agentpack learn --topic <topic-id> --json
+agentpack learn --complete <session-id> --score 85 --self-assessment mastered --json
 agentpack learn feedback helpful --target card:1
 agentpack learn feedback not-helpful --note "too generic"
 ```
@@ -98,8 +104,10 @@ boost for those missed paths. Explicit feedback writes
 when `[learning].inject_agent_lessons = true`. Quoted learning requests switch
 the output into Task Coach mode (`quiz`, `interview`, `failure`, `review`, or
 `system-design`) and can use recent `task_memory` events from
-`.agentpack/session-events.jsonl`. Learning runs and feedback also refresh
-`.agentpack/observer-brief.md` for local advisory relationships.
+`.agentpack/session-events.jsonl`. Queued questions are unassessed; only scored
+results can become `developing`, `needs_practice`, or `mastered`. Learning runs
+and feedback also refresh `.agentpack/observer-brief.md` for local advisory
+relationships.
 
 ### `agentpack retrieve`
 
@@ -691,14 +699,16 @@ agentpack work "fix auth" --run --acceptance "login works" --acceptance "expired
 
 ### `agentpack learn`
 
-Create local learning artifacts from the current task and git changes. The
-output is designed for both the developer and future coding agents: developer
-notes explain what changed and what to practice next, while agent lessons
-capture compact repo-specific rules that can be injected into later context
-packs.
+Create the existing local learning artifacts and rank the next three
+evidence-backed topics from work memory, system relationships, and assessed
+mastery. The CLI stays deterministic; Codex or Claude teaches and scores the
+selected topic.
 
 ```bash
 agentpack learn
+agentpack learn --global --json
+agentpack learn --topic <topic-id> --project <project-id> --json
+agentpack learn --complete <session-id> --score 85 --self-assessment mastered --json
 agentpack learn --today
 agentpack learn --since HEAD~1
 agentpack learn --output .agentpack/review.md
@@ -728,7 +738,7 @@ Default outputs:
 - `.agentpack/learning-dashboard.html` with `--dashboard`
 - `.agentpack/team-lessons.md` with `--team-export`
 - `.agentpack/learning-feedback.jsonl` with `--feedback`
-- `.agentpack/learning-sessions.jsonl` for on-demand coach questions
+- `.agentpack/learning-sessions.jsonl` for append-only coaching sessions and scored updates
 
 The command reads the current session task file, changed files, and bounded redacted
 diffs. It does not call a hosted service by default. The human-facing summary
@@ -752,8 +762,8 @@ enrich the report; AgentPack sends the bounded report JSON on stdin and accepts
 LearningReport-compatible JSON fields on stdout. This keeps hosted model,
 company LLM gateway, or custom rules-engine integration behind an explicit local
 command boundary. `--dashboard` writes a static HTML learning dashboard for
-IDE/browser review, including recent task memory and queued weak spots from
-on-demand quiz/interview sessions. `--team-export` writes a shareable lessons file that omits
+IDE/browser review. Queued sessions remain unassessed and do not appear as weak
+spots until a score demonstrates a gap. `--team-export` writes a shareable lessons file that omits
 personal skill history. `--ci` prints a quality report and exits non-zero when
 learning is too generic or lacks changed-file evidence. `--skills` and
 `--drills` turn the local skill map into a quick progress view and
@@ -1537,7 +1547,7 @@ Newer metrics include token-weighted precision. File precision answers "how many
 
 ### `agentpack dashboard`
 
-Serve a local context-decision cockpit from existing `.agentpack/` artifacts.
+Serve a local project workspace from existing `.agentpack/` artifacts.
 
 ```bash
 agentpack dashboard
@@ -1548,23 +1558,30 @@ agentpack dashboard --json
 
 The dashboard serves at `http://127.0.0.1:8765/` by default. It no longer writes
 or supports static dashboard HTML; run `agentpack dashboard` and keep the local
-server process alive while using the cockpit. If port `8765` is occupied, use
+server process alive while using the dashboard. If port `8765` is occupied, use
 `--port`.
 
-The cockpit is local-only and does not load remote scripts or assets. It uses a
+The dashboard is local-only and does not load remote scripts or assets. It uses a
 loopback-only Python server for the dashboard data API and PTY-backed terminal
-sessions. Missing artifacts render empty states with suggested commands such as
-`agentpack pack --task auto`, `agentpack learn`, and
-`agentpack benchmark --init`. It shows selected and omitted context, task-map
-risk, tests, memory influence, observer signals from
-`.agentpack/observer-events.jsonl`, MCP health, and loop/action state.
+sessions. Its primary views are Overview, Roadmap, Work, Health, and Knowledge.
+Activity opens from Overview or the `Cmd+K` / `Ctrl+K` command palette. Impact
+map, AI context, files, checks, work sessions, settings, agent connection,
+diagnostics, and decision details remain available under Explore.
+Missing or partial artifacts produce explicit empty, stale, inaccessible, and
+retry states.
+
+The lightweight home response includes independent API, snapshot, Context, and
+MCP evidence plus a privacy-bounded project-status snapshot. The browser may
+retain that redacted snapshot for seven days and render it as read-only
+`Last known` data while reconnecting. It excludes absolute paths, task and
+memory content, commands, graphs, terminal history, and action history.
 
 The current workspace is backed by `/api/dashboard/v2`. It provides a typed
-workspace envelope, Tree-sitter impact inspection, agent-session continuity,
-and action inspection before execution. The Explain/Build preference is stored
-in the browser as `agentpack.dashboard.presentation_mode`; v1 routes remain
-available for existing integrations. See [`docs/dashboard-v2.md`](dashboard-v2.md)
-for request and response examples.
+workspace envelope, project overview, Tree-sitter impact inspection,
+agent-session continuity, and action inspection before execution. Visible
+Summary/Engineering lenses retain `explain`/`build` as their stored values. v1
+routes remain available for existing integrations. See
+[`docs/dashboard-v2.md`](dashboard-v2.md) for request and response examples.
 
 Command rows in the cockpit run through the local PTY runner instead of asking
 you to copy/paste. The server only allows AgentPack-related commands, runs them

@@ -10,6 +10,27 @@ Configuration is intentionally file-based and local. Most projects can start wit
 [project]
 root = "."
 ignore_file = ".agentignore"
+display_name = "AgentPack"
+purpose = "Keep project outcomes and engineering evidence connected."
+audiences = ["Developers", "Product"]
+owners = ["Platform"]
+stage = "active"
+links = { repository = "https://github.com/example/agentpack", docs = "https://example.com/docs" }
+environments = ["development", "production"]
+status_stale_days = 14
+
+[[project.outcomes]]
+id = "outcome-project-dashboard"
+title = "Ship the project dashboard"
+description = "Make outcomes, health, and evidence visible without task-count progress."
+owner = "Platform"
+target_date = "2026-08-31"
+
+[[project.outcomes.milestones]]
+id = "milestone-project-contracts"
+title = "Publish typed project contracts"
+owner = "Platform"
+due_date = "2026-08-15"
 
 [context]
 default_budget = 40000
@@ -83,6 +104,17 @@ patch_claude_md = true
 [agents.generic]
 output = ".agentpack/context.md"
 ```
+
+Project profile, outcome, and milestone definitions are shared configuration.
+The dashboard updates them with a revision check and preserves unrelated TOML
+keys. IDs may be omitted when first authoring a definition; AgentPack derives a
+stable ID from the project identity and normalized title.
+
+Outcome and milestone statuses, risks, decisions, and confirmed initiatives are
+local append-only project events. They are intentionally not written back into
+shared configuration. Project progress is calculated only from declared
+milestones; task counts never become a progress percentage. See the complete
+example at [`docs/examples/project-config.toml`](examples/project-config.toml).
 
 `broad_context = "auto"` keeps normal coding tasks compact, but adds curated
 repo-wide inventory and module summaries when the task asks for review, sharing,

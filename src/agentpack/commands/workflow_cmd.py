@@ -9,6 +9,7 @@ from typing import Any
 import typer
 
 from agentpack.commands._shared import console, _root, run_refresh
+from agentpack.core import git
 from agentpack.commands.guard import _context_is_fresh
 from agentpack.core.command_surface import refresh_commands
 from agentpack.core.config import load_config
@@ -22,6 +23,7 @@ from agentpack.core.loop_protocol import (
     resolve_runner_adapter,
     run_loop,
 )
+from agentpack.core.project_index import register_project
 from agentpack.core.thread_context import resolve_session_thread_option
 from agentpack.integrations.platform import cli_module_argv
 from agentpack.learning.task_memory import record_task_memory
@@ -51,6 +53,10 @@ def register(app: typer.Typer) -> None:
     ) -> None:
         """Initialize if needed, write a task, refresh context, and show next steps."""
         root = _root()
+        try:
+            register_project(root)
+        except OSError:
+            pass
         thread_id = resolve_session_thread_option(thread)
         stages: list[dict[str, Any]] = []
         if not no_init and not (root / ".agentpack" / "config.toml").exists():
@@ -168,10 +174,20 @@ def register(app: typer.Typer) -> None:
                 {
                     "task": finish_task,
                     "thread_id": thread_id or "",
+                    "check_kind": "development",
                     "command": stages[-1]["command"],
                     "status": "passed" if stages[-1]["returncode"] == 0 else "failed",
                     "returncode": stages[-1]["returncode"],
+                    "git_sha": git.current_sha(root) or "",
+                    "branch": git.current_branch(root) or "",
                     "summary": stages[-1].get("detail", ""),
+                    "evidence": [
+                        {
+                            "kind": "command",
+                            "ref": "development",
+                            "summary": str(stages[-1].get("detail", ""))[:500],
+                        }
+                    ],
                 },
                 source="workflow",
             )

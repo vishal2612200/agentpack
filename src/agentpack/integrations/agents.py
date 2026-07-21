@@ -8,6 +8,7 @@ from pathlib import Path
 
 from agentpack import __version__
 from agentpack.core.command_surface import refresh_commands
+from agentpack.integrations.git_hooks import git_hooks_dir
 from agentpack.installers.antigravity import AntigravityInstaller
 from agentpack.installers.claude import ClaudeInstaller
 from agentpack.installers.codex import CodexInstaller
@@ -220,8 +221,9 @@ def _current_vscode_tasks(root: Path, agent: str, fix: str) -> AgentCheck:
 
 def _check_git_hooks(root: Path, agent: str) -> list[AgentCheck]:
     checks: list[AgentCheck] = []
+    hooks_dir = git_hooks_dir(root)
     for event in GIT_HOOK_EVENTS:
-        path = root / ".git" / "hooks" / event
+        path = hooks_dir / event if hooks_dir is not None else root / ".git" / "hooks" / event
         if path.exists():
             try:
                 content = path.read_text(encoding="utf-8")

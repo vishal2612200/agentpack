@@ -5,6 +5,7 @@ import json
 import os
 import subprocess
 
+import pytest
 from typer.testing import CliRunner
 
 from agentpack.cli import app
@@ -13,12 +14,24 @@ from agentpack.cli import app
 runner = CliRunner()
 
 
+@pytest.fixture(autouse=True)
+def _isolated_agentpack_home(tmp_path: Path, monkeypatch):
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path.parent / f"{tmp_path.name}-agentpack-home"))
+
+
 def _git(repo: Path, *args: str) -> None:
     subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True)
 
 
 def _git_with_env(repo: Path, *args: str, env: dict[str, str]) -> None:
-    subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True, env={**os.environ, **env})
+    subprocess.run(
+        ["git", *args],
+        cwd=repo,
+        check=True,
+        capture_output=True,
+        text=True,
+        env={**os.environ, **env},
+    )
 
 
 def _repo(tmp_path: Path) -> Path:
@@ -48,6 +61,8 @@ def test_learn_writes_markdown_file(tmp_path, monkeypatch):
     assert output.exists()
     text = output.read_text(encoding="utf-8")
     assert "# AgentPack Learning Summary" in text
+    assert "## Next Technical Topics" in text
+    assert "Next Technical Topics" in result.output
     assert "`cli.py`" in text
 
 
@@ -61,7 +76,119 @@ def test_learn_json_outputs_json_without_writing_default_file(tmp_path, monkeypa
     payload = json.loads(result.stdout)
     assert payload["task"] == "Add CLI learning summaries"
     assert payload["source_files"][0]["path"] == "cli.py"
+    assert payload["recommendations"]["scope"] == "local"
+    assert payload["recommendations"]["topics"][0]["topic_id"].startswith("topic-")
     assert not (repo / ".agentpack" / "learning.md").exists()
+
+
+def test_learn_starts_and_completes_recommended_topic(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+    report_result = runner.invoke(app, ["learn", "--json"])
+    assert report_result.exit_code == 0, report_result.output
+    report = json.loads(report_result.stdout)
+    topic = report["recommendations"]["topics"][0]
+
+    start_result = runner.invoke(app, ["learn", "--topic", topic["topic_id"], "--json"])
+    assert start_result.exit_code == 0, start_result.output
+    session = json.loads(start_result.stdout)
+    assert session["topic_id"] == topic["topic_id"]
+    assert session["status"] == "queued"
+
+    complete_result = runner.invoke(
+        app,
+        [
+            "learn",
+            "--complete",
+            session["session_id"],
+            "--score",
+            "88",
+            "--self-assessment",
+            "mastered",
+            "--note",
+            "Explained the compatibility boundary",
+            "--json",
+        ],
+    )
+    assert complete_result.exit_code == 0, complete_result.output
+    completed = json.loads(complete_result.stdout)
+    assert completed["mastery_status"] == "mastered"
+    assert completed["note"] == "Explained the compatibility boundary"
+
+
+def test_learn_rejects_incomplete_completion_request(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    result = runner.invoke(app, ["learn", "--complete", "session-missing", "--score", "90"])
+
+    assert result.exit_code == 2
+    assert "requires --score and --self-assessment" in result.output
+
+
+def test_learn_global_session_is_written_and_completed_in_owning_repo(tmp_path, monkeypatch):
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    _repo(first)
+    _repo(second)
+    (second / ".agentpack" / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-19T10:00:00+00:00",
+                "task_id": "task-retry",
+                "task": "Bound worker retry attempts",
+                "status": "done",
+                "concepts": ["retry logic"],
+                "changed_files": ["src/worker/retry.py"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    monkeypatch.chdir(second)
+    second_report = runner.invoke(app, ["learn", "--json"])
+    assert second_report.exit_code == 0, second_report.output
+
+    monkeypatch.chdir(first)
+    global_report = runner.invoke(app, ["learn", "--global", "--json"])
+    assert global_report.exit_code == 0, global_report.output
+    recommendations = json.loads(global_report.stdout)["recommendations"]
+    topic = next(item for item in recommendations["topics"] if item["project"]["root"] == str(second.resolve()))
+
+    started = runner.invoke(
+        app,
+        ["learn", "--topic", topic["topic_id"], "--project", topic["project"]["project_id"], "--json"],
+    )
+    assert started.exit_code == 0, started.output
+    session = json.loads(started.stdout)
+    owner_rows = [
+        json.loads(line)
+        for line in (second / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()
+    ]
+    assert any(row["session_id"] == session["session_id"] for row in owner_rows)
+
+    completed = runner.invoke(
+        app,
+        [
+            "learn",
+            "--complete",
+            session["session_id"],
+            "--score",
+            "84",
+            "--self-assessment",
+            "mastered",
+            "--json",
+        ],
+    )
+    assert completed.exit_code == 0, completed.output
+    assert json.loads(completed.stdout)["mastery_status"] == "mastered"
+    latest_owner_row = json.loads((second / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()[-1])
+    assert latest_owner_row["session_id"] == session["session_id"]
+    assert latest_owner_row["status"] == "completed"
 
 
 def test_learn_json_accepts_on_demand_quiz_request(tmp_path, monkeypatch):
@@ -76,10 +203,7 @@ def test_learn_json_accepts_on_demand_quiz_request(tmp_path, monkeypatch):
     assert payload["coach_mode"] == "quiz"
     assert payload["learning_topics"][0]["questions"]
     assert payload["learning_topics"][0]["questions"][0]["mode"] == "quiz"
-    sessions = [
-        json.loads(line)
-        for line in (repo / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
+    sessions = [json.loads(line) for line in (repo / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()]
     assert sessions[0]["request"] == "quiz me on this task"
     assert sessions[0]["mode"] == "quiz"
     assert sessions[0]["status"] == "queued"
@@ -116,10 +240,7 @@ def test_learn_can_build_from_last_task_memory(tmp_path, monkeypatch):
     assert payload["coach_mode"] == "interview"
     assert payload["source_files"][0]["path"] == "src/cache.py"
     assert "caching" in payload["concepts"]
-    sessions = [
-        json.loads(line)
-        for line in (repo / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()
-    ]
+    sessions = [json.loads(line) for line in (repo / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()]
     assert sessions[0]["task"] == "Ship cache invalidation fix"
     assert sessions[0]["concepts"] == ["caching"]
 
@@ -160,7 +281,10 @@ def test_learn_today_uses_calendar_day_commits(tmp_path, monkeypatch):
         "commit",
         "-m",
         "old",
-        env={"GIT_AUTHOR_DATE": "2020-01-01T00:00:00+0000", "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+0000"},
+        env={
+            "GIT_AUTHOR_DATE": "2020-01-01T00:00:00+0000",
+            "GIT_COMMITTER_DATE": "2020-01-01T00:00:00+0000",
+        },
     )
     (repo / "new.py").write_text("import typer\napp = typer.Typer()\n", encoding="utf-8")
     _git(repo, "add", "new.py")
@@ -252,9 +376,7 @@ def test_learn_provider_command_enriches_report(tmp_path, monkeypatch):
     repo = _repo(tmp_path)
     provider = repo / "provider.py"
     provider.write_text(
-        "import json, sys\n"
-        "payload = json.load(sys.stdin)\n"
-        "print(json.dumps({'next_practice': 'Explain provider output for ' + payload['task']}))\n",
+        "import json, sys\npayload = json.load(sys.stdin)\nprint(json.dumps({'next_practice': 'Explain provider output for ' + payload['task']}))\n",
         encoding="utf-8",
     )
     monkeypatch.chdir(repo)
@@ -351,7 +473,15 @@ def test_learn_records_feedback(tmp_path, monkeypatch):
 
     result = runner.invoke(
         app,
-        ["learn", "--feedback", "helpful", "--feedback-note", "Useful cards", "--feedback-target", "skill:CLI design"],
+        [
+            "learn",
+            "--feedback",
+            "helpful",
+            "--feedback-note",
+            "Useful cards",
+            "--feedback-target",
+            "skill:CLI design",
+        ],
     )
 
     assert result.exit_code == 0, result.output
@@ -395,9 +525,7 @@ def test_learn_provider_preview_skips_configured_concept_provider(tmp_path, monk
     provider = repo / "concept_provider.py"
     provider.write_text("raise SystemExit('should not run')\n", encoding="utf-8")
     (repo / ".agentpack" / "config.toml").write_text(
-        "[learning]\n"
-        f"concept_provider_command = \"python {provider}\"\n"
-        "concept_provider_required = true\n",
+        f'[learning]\nconcept_provider_command = "python {provider}"\nconcept_provider_required = true\n',
         encoding="utf-8",
     )
     monkeypatch.chdir(repo)
@@ -413,8 +541,7 @@ def test_learn_configured_concept_provider_failure_warns_by_default(tmp_path, mo
     provider = repo / "concept_provider.py"
     provider.write_text("raise SystemExit('temporary unavailable')\n", encoding="utf-8")
     (repo / ".agentpack" / "config.toml").write_text(
-        "[learning]\n"
-        f"concept_provider_command = \"python {provider}\"\n",
+        f'[learning]\nconcept_provider_command = "python {provider}"\n',
         encoding="utf-8",
     )
     monkeypatch.chdir(repo)

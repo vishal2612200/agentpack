@@ -52,7 +52,66 @@ class LearningQuestion(BaseModel):
     difficulty: str = "medium"
 
 
+class LearningProjectRef(BaseModel):
+    project_id: str
+    name: str
+    root: str
+
+
+class LearningEvidence(BaseModel):
+    kind: str
+    task_id: str = ""
+    task: str = ""
+    path: str = ""
+    summary: str = ""
+    observed_at: str = ""
+    status: str = ""
+    stale: bool = False
+
+
+class LearningRecommendationTopic(BaseModel):
+    topic_id: str
+    lane: str
+    project: LearningProjectRef
+    title: str
+    why_now: str
+    score: int
+    score_reasons: dict[str, int] = Field(default_factory=dict)
+    concepts: list[str] = Field(default_factory=list)
+    evidence: list[LearningEvidence] = Field(default_factory=list)
+    exercise: str = ""
+    completion_check: str = ""
+    default_mode: str = "study"
+    prompt: str = ""
+    questions: list[LearningQuestion] = Field(default_factory=list)
+    mastery_status: str = "unassessed"
+    start_command: str = ""
+
+
+class LearningMasterySummary(BaseModel):
+    mastered: int = 0
+    developing: int = 0
+    needs_practice: int = 0
+    unassessed: int = 0
+
+
+class LearningRecommendationSet(BaseModel):
+    schema_version: int = 1
+    recommendation_id: str
+    scope: str = "local"
+    generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    topics: list[LearningRecommendationTopic] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+    mastery_summary: LearningMasterySummary = Field(default_factory=LearningMasterySummary)
+
+
 class LearningSession(BaseModel):
+    session_id: str = ""
+    topic_id: str = ""
+    recommendation_id: str = ""
+    project_id: str = ""
+    project_name: str = ""
+    project_root: str = ""
     task: str
     request: str = ""
     mode: str = "study"
@@ -63,9 +122,13 @@ class LearningSession(BaseModel):
     concepts: list[str] = Field(default_factory=list)
     answer: str = ""
     score: int | None = None
+    self_assessment: str = ""
+    note: str = ""
+    mastery_status: str = "unassessed"
     status: str = "queued"
     source: str = "agentpack learn"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    updated_at: str = ""
 
 
 class AgentLesson(BaseModel):
@@ -149,3 +212,4 @@ class LearningReport(BaseModel):
     uncited_claims: list[str] = Field(default_factory=list)
     selected_hits: list[str] = Field(default_factory=list)
     selected_misses: list[str] = Field(default_factory=list)
+    recommendations: LearningRecommendationSet | None = None

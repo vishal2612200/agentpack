@@ -1,5 +1,5 @@
 ---
-description: Learn one thing from the current local AgentPack session context.
+description: Choose and learn the next evidence-backed topic from AgentPack memory.
 ---
 
 # AgentPack Learn
@@ -41,15 +41,27 @@ test -f .agentpack/session-events.jsonl && tail -n 40 .agentpack/session-events.
 Use `.agentpack/context.md` only when compact context lacks needed detail.
 Do not invent repo facts not present in local context or checked files.
 
-## On-Demand Task Coach Payload
+## Next Topic Payload
 
-Before teaching, try to generate a bounded local learning payload for the exact user request:
+Ask the local CLI for evidence-backed recommendations. Omit the statement when it is empty, and use global scope only when the user explicitly asks for all projects.
 
 ```bash
+agentpack learn --json
 agentpack learn "<user learning statement>" --json
+agentpack learn --global --json
 ```
 
 If this fails, continue from the local files above and say the generated payload was unavailable. Do not run providers or dashboard rendering unless the user explicitly asks.
+
+Present the returned topics in order with lane, project, `why_now`, exercise, and evidence. Do not invent a fourth topic when history is insufficient.
+
+## Coaching Loop
+
+1. Let the developer choose one topic, then run its `start_command` with `--json`.
+2. Ask one returned question at a time and score the answer against `expected_points`.
+3. Keep the explanation grounded in returned evidence. Reveal answer only after at least two tries when using the Real Error Simulator.
+4. Ask the developer to confirm `mastered` or `needs-practice`.
+5. Record the result with `agentpack learn --complete <session_id> --score <0-100> --self-assessment <value> --json`.
 
 ## Teaching Modes
 
