@@ -1,6 +1,7 @@
 ---
 name: agentpack-learn
 description: Choose and learn the next evidence-backed technical topic from AgentPack memory.
+license: AGPL-3.0-only
 ---
 
 # AgentPack Learn

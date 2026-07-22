@@ -1,6 +1,7 @@
 ---
 name: agentpack
 description: Route normal development through AgentPack's work, learn, finish, and doctor loop.
+license: AGPL-3.0-only
 ---
 
 # AgentPack
