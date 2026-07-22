@@ -19,6 +19,12 @@ Use AgentPack as an MCP context engine when an agent needs fresh local repositor
 6. `route_task(task)` returns a read-only route: relevant files, rules, skills, commands, safety warnings, and an agent prompt.
 7. `get_skill(name_or_path)` loads one recommended skill's `SKILL.md` content on demand.
 
+For the learning loop, call `learning_recommendations()`,
+`learning_start(topic_id)`, and `learning_complete(session_id, proof)`. These
+tools share the CLI/dashboard services. The host agent performs coaching and
+rubric evaluation; AgentPack validates deterministic evidence and derives
+competency status without a hosted model dependency.
+
 This keeps the first prompt smaller while still letting the agent retrieve more detail when needed.
 
 ## Task map and reversible refs

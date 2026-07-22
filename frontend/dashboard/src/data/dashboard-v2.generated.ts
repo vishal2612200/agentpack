@@ -174,6 +174,22 @@ export type Tags = string[];
 export type RecentChanges1 = ProjectTimelineEvent[];
 export type Partial = boolean;
 export type ReadOnly1 = boolean;
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "competencyId".
+ */
+export type CompetencyId =
+  "product_reasoning" | "implementation" | "quality" | "systems" | "production" | "security" | "collaboration";
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "competencyStatus".
+ */
+export type CompetencyStatus = "mastered" | "developing" | "needs_practice" | "unassessed";
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "targetLevel".
+ */
+export type TargetLevel = "unspecified" | "junior" | "mid" | "senior" | "staff";
 export type Source13 = "declared" | "observed" | "inferred";
 export type Confidence13 = number;
 export type UpdatedAt13 = string;
@@ -1368,7 +1384,7 @@ export interface CachedProjectProfile {
  * via the `definition` "learningRecommendationSet".
  */
 export interface LearningRecommendationSet {
-  schema_version: 1;
+  schema_version: 2;
   recommendation_id: string;
   scope: "local" | "global";
   generated_at: string;
@@ -1382,6 +1398,20 @@ export interface LearningRecommendationSet {
     | [LearningRecommendationTopic, LearningRecommendationTopic, LearningRecommendationTopic];
   warnings: string[];
   mastery_summary: LearningMasterySummary;
+  profile: LearnerProfile;
+  /**
+   * @minItems 7
+   * @maxItems 7
+   */
+  competencies: [
+    CompetencySummary,
+    CompetencySummary,
+    CompetencySummary,
+    CompetencySummary,
+    CompetencySummary,
+    CompetencySummary,
+    CompetencySummary
+  ];
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
@@ -1389,7 +1419,7 @@ export interface LearningRecommendationSet {
  */
 export interface LearningRecommendationTopic {
   topic_id: string;
-  lane: "now" | "system" | "weak_spot";
+  lane: "now" | "weak_spot" | "breadth";
   project: LearningProjectRef;
   title: string;
   why_now: string;
@@ -1414,6 +1444,11 @@ export interface LearningRecommendationTopic {
   prompt: string;
   questions: LearningQuestion[];
   mastery_status: "mastered" | "developing" | "needs_practice" | "unassessed";
+  competency_id: CompetencyId;
+  competency_status: CompetencyStatus;
+  target_level: TargetLevel;
+  proof_requirement: "reasoning" | "artifact";
+  required_artifact: string;
   start_command: string;
 }
 /**
@@ -1459,6 +1494,84 @@ export interface LearningMasterySummary {
   developing: number;
   needs_practice: number;
   unassessed: number;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learnerProfile".
+ */
+export interface LearnerProfile {
+  schema_version: 1;
+  role: "frontend" | "backend" | "mobile" | "platform" | "general";
+  target_level: TargetLevel;
+  updated_at: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "competencySummary".
+ */
+export interface CompetencySummary {
+  competency_id: CompetencyId;
+  name: string;
+  status: CompetencyStatus;
+  passing_proofs: number;
+  verified_artifacts: number;
+  latest_evidence: string;
+  latest_score: number | null;
+  role_emphasis: boolean;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "rubricResult".
+ */
+export interface RubricResult {
+  criterion: string;
+  rating: "missing" | "partial" | "met";
+  evidence: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "verificationEvidence".
+ */
+export interface VerificationEvidence {
+  command: string;
+  exit_code: number;
+  summary: string;
+  executed_at: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningProof".
+ */
+export interface LearningProof {
+  kind: "reasoning" | "artifact";
+  answer: string;
+  rubric_results: RubricResult[];
+  artifact_paths: string[];
+  verification_evidence: VerificationEvidence[];
+  self_assessment: "" | "mastered" | "developing" | "needs-practice";
+  evaluator: string;
+  evaluated_at: string;
+}
+/**
+ * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
+ * via the `definition` "learningSession".
+ */
+export interface LearningSession {
+  session_id: string;
+  topic_id: string;
+  project_id: string;
+  project_name: string;
+  task_id: string;
+  task: string;
+  question: string;
+  expected_points: string[];
+  evidence_files: string[];
+  competency_id: CompetencyId | null;
+  target_level: TargetLevel;
+  proof_requirement: "reasoning" | "artifact";
+  required_artifact: string;
+  status: string;
+  [k: string]: unknown;
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema

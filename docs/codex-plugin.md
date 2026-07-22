@@ -155,10 +155,12 @@ $agentpack-learn explain the router scoring changes from this session
 ```
 
 The learning command keeps a stable prompt prefix for caching and appends the user learning statement at the end.
-It asks the local CLI for `agentpack learn ["<statement>"] --json`, presents up
-to three evidence-backed topics, coaches the selected topic one question at a
-time, and records score plus developer confirmation through `--complete`.
-Cross-project recommendations require an explicit `--global` request.
+It calls the AgentPack MCP learning tools first, presents up to three
+competency-backed topics, coaches the selected topic one question at a time,
+evaluates every expected point, and submits structured reasoning or artifact
+proof. The CLI `agentpack learn ... --json` and `--proof-file` flow is the
+fallback. Cross-project recommendations require an explicit global request;
+candidate progress is global while full answers remain in the owning project.
 
 ## Rules For Codex
 

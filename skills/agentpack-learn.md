@@ -47,7 +47,13 @@ Do not invent repo facts not present in local context or checked files.
 
 ## Next Topic Payload
 
-Ask the local CLI for evidence-backed recommendations. Use global scope only when the user explicitly asks for all projects.
+Use AgentPack MCP first. Use global scope only when the user explicitly asks for all projects.
+
+```text
+learning_recommendations(request="<user learning statement>", scope="local")
+```
+
+If the MCP learning tools are unavailable, use the CLI fallback:
 
 ```bash
 agentpack learn --json
@@ -57,15 +63,18 @@ agentpack learn --global --json
 
 If this fails, continue from the local files above and say the generated payload was unavailable. Do not run providers or dashboard rendering unless the user explicitly asks.
 
-Present the returned topics in their existing order with lane, project, `why_now`, exercise, and evidence. Do not invent a fourth topic when history is insufficient.
+Present the returned topics in their existing order with lane, competency, proof requirement, project, `why_now`, exercise, and evidence. Do not invent a fourth topic when history is insufficient. An `unassessed` breadth gap is missing proof, not a demonstrated weakness. Skill confidence is observed exposure, not mastery.
 
 ## Coaching Loop
 
-1. Let the developer choose one topic, then run its `start_command` with `--json`.
-2. Ask one returned question at a time and score the answer against `expected_points`.
-3. Keep the explanation grounded in the returned evidence. Reveal answer only after at least two tries when using the Real Error Simulator.
-4. Ask the developer to confirm `mastered` or `needs-practice`.
-5. Record the result with `agentpack learn --complete <session_id> --score <0-100> --self-assessment <value> --json`.
+1. Let the developer choose one topic, then call `learning_start(topic_id, project_id, mode)`. Use the returned `start_command --json` only as a fallback.
+2. Ask one returned question at a time. The host agent is the evaluator; AgentPack does not call a hosted model.
+3. Evaluate every `expected_point` as `missing`, `partial`, or `met`, with concise evidence. Do not accept a caller-supplied score.
+4. Keep explanations grounded in returned evidence. Reveal the answer only after at least two tries in Real Error Simulator mode.
+5. For artifact proof, collect at least one existing project-relative artifact path and verification evidence for commands that all exited successfully.
+6. Ask for self-assessment, then call `learning_complete(session_id, proof)`. If MCP is unavailable, write the same proof JSON and run `agentpack learn --complete <session_id> --proof-file <path|-> --json`.
+
+One successful proof is developing evidence, never mastery. Mastery is derived only after two passing proofs from distinct project/task pairs, including one verified artifact proof.
 
 ## Teaching Modes
 

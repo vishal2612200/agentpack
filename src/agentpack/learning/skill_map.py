@@ -49,12 +49,17 @@ def render_skill_summary(path: Path, *, limit: int = 10) -> str:
         if not value.get("suppressed", False)
     ]
     skills.sort(key=lambda item: (item.confidence, item.task_count, item.last_seen), reverse=True)
-    lines = ["# AgentPack Skill Memory", ""]
+    lines = [
+        "# AgentPack Skill Memory",
+        "",
+        "Confidence here measures observed exposure from project evidence, not demonstrated mastery.",
+        "",
+    ]
     if not skills:
         lines.append("No skill evidence captured yet.")
         return "\n".join(lines) + "\n"
     for skill in skills[:limit]:
-        lines.append(f"- {skill.skill}: confidence {skill.confidence}, {skill.task_count} task(s)")
+        lines.append(f"- {skill.skill}: exposure confidence {skill.confidence}, {skill.task_count} task(s)")
         if skill.last_task:
             lines.append(f"  Last task: {skill.last_task}")
         if skill.source_paths:

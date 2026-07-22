@@ -47,8 +47,8 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
-import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, loadLearningRecommendations, loadProjectOverview, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
-import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, LearningRecommendationSet, LearningScope, MapBuilding, MapRoad, PresentationMode, ProjectOverview, SemanticGraphSummary } from "./data/schema";
+import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, loadLearningProfile, loadLearningRecommendations, loadProjectOverview, startLearningSession, updateLearningProfile, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
+import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, LearnerProfile, LearningRecommendationSet, LearningScope, LearningSession, MapBuilding, MapRoad, PresentationMode, ProjectOverview, SemanticGraphSummary } from "./data/schema";
 import { ProjectActivityView } from "./components/dashboard/project/ProjectActivityView";
 import { DashboardCommandPalette, type PaletteTarget } from "./components/dashboard/CommandPalette";
 import { RuntimeStatusDialog, type DashboardConnectionState } from "./components/dashboard/RuntimeStatusDialog";
@@ -1724,19 +1724,30 @@ function MemoryView({
   const memoryNodes = graph.nodes.filter((node) => node.type === "episode" || node.type === "procedure");
   const [scope, setScope] = useState<LearningScope>("local");
   const [recommendations, setRecommendations] = useState<LearningRecommendationSet | null>(null);
+  const [profile, setProfile] = useState<LearnerProfile | null>(null);
+  const [profileWarnings, setProfileWarnings] = useState<string[]>([]);
+  const [profileSaving, setProfileSaving] = useState(false);
+  const [activeSession, setActiveSession] = useState<LearningSession | null>(null);
+  const [coachingPrompt, setCoachingPrompt] = useState("");
+  const [startingTopic, setStartingTopic] = useState("");
   const [learningError, setLearningError] = useState("");
   const [copyError, setCopyError] = useState("");
   const [learningLoading, setLearningLoading] = useState(true);
-  const [copiedTopic, setCopiedTopic] = useState("");
+  const [copiedValue, setCopiedValue] = useState("");
   const learningRequestId = useRef(0);
 
-  const refreshLearning = (nextScope: LearningScope) => {
+  const refreshLearning = (nextScope: LearningScope, preserve = false) => {
     const requestId = ++learningRequestId.current;
     setLearningLoading(true);
     setLearningError("");
-    setRecommendations(null);
-    loadLearningRecommendations(nextScope)
-      .then((value) => { if (requestId === learningRequestId.current) setRecommendations(value); })
+    if (!preserve) setRecommendations(null);
+    Promise.all([loadLearningRecommendations(nextScope), loadLearningProfile()])
+      .then(([value, profilePayload]) => {
+        if (requestId !== learningRequestId.current) return;
+        setRecommendations(value);
+        setProfile(profilePayload.profile);
+        setProfileWarnings(profilePayload.warnings);
+      })
       .catch((error: unknown) => {
         if (requestId === learningRequestId.current) {
           setLearningError(error instanceof Error ? error.message : "Failed to load learning recommendations");
@@ -1750,20 +1761,101 @@ function MemoryView({
     return () => { learningRequestId.current += 1; };
   }, [scope]);
 
-  const copyCommand = async (topicId: string, command: string) => {
+  useEffect(() => {
+    const handleFocus = () => refreshLearning(scope, true);
+    window.addEventListener("focus", handleFocus);
+    return () => window.removeEventListener("focus", handleFocus);
+  }, [scope]);
+
+  const copyText = async (key: string, value: string) => {
     try {
-      await navigator.clipboard.writeText(command);
+      await navigator.clipboard.writeText(value);
       setCopyError("");
-      setCopiedTopic(topicId);
-      window.setTimeout(() => setCopiedTopic((current) => current === topicId ? "" : current), 1500);
+      setCopiedValue(key);
+      window.setTimeout(() => setCopiedValue((current) => current === key ? "" : current), 1500);
     } catch {
-      setCopyError("Clipboard access failed. Select the command text manually.");
+      setCopyError("Clipboard access failed. Select the text manually.");
+    }
+  };
+
+  const saveProfile = async (next: LearnerProfile) => {
+    if (!profile || profileSaving) return;
+    const previous = profile;
+    setProfile(next);
+    setProfileSaving(true);
+    setLearningError("");
+    try {
+      const saved = await updateLearningProfile({
+        mutation_id: learningMutationId("profile"),
+        role: next.role,
+        target_level: next.target_level
+      });
+      setProfile(saved);
+      refreshLearning(scope, true);
+    } catch (error) {
+      setProfile(previous);
+      setLearningError(error instanceof Error ? error.message : "Could not update learner profile");
+    } finally {
+      setProfileSaving(false);
+    }
+  };
+
+  const startTopic = async (topicId: string, projectId: string) => {
+    setStartingTopic(topicId);
+    setLearningError("");
+    try {
+      const payload = await startLearningSession({
+        mutation_id: learningMutationId("start"),
+        topic_id: topicId,
+        project_id: projectId
+      });
+      setActiveSession(payload.session);
+      setCoachingPrompt(payload.coaching_prompt);
+    } catch (error) {
+      setLearningError(error instanceof Error ? error.message : "Could not start learning session");
+    } finally {
+      setStartingTopic("");
     }
   };
 
   return (
     <div className="view-stack">
       <SectionTitle title="Knowledge" subtitle="Next technical topics, assessed mastery, decisions, procedures, and durable project memory." />
+      {profile ? (
+        <div className="learning-profile-controls" aria-label="Learner profile">
+          <label>
+            <span>Role</span>
+            <select
+              aria-label="Learner role"
+              value={profile.role}
+              disabled={profileSaving}
+              onChange={(event) => saveProfile({ ...profile, role: event.target.value as LearnerProfile["role"] })}
+            >
+              <option value="general">General</option>
+              <option value="frontend">Frontend</option>
+              <option value="backend">Backend</option>
+              <option value="mobile">Mobile</option>
+              <option value="platform">Platform</option>
+            </select>
+          </label>
+          <label>
+            <span>Target level</span>
+            <select
+              aria-label="Target level"
+              value={profile.target_level}
+              disabled={profileSaving}
+              onChange={(event) => saveProfile({ ...profile, target_level: event.target.value as LearnerProfile["target_level"] })}
+            >
+              <option value="unspecified">Unspecified</option>
+              <option value="junior">Junior</option>
+              <option value="mid">Mid</option>
+              <option value="senior">Senior</option>
+              <option value="staff">Staff</option>
+            </select>
+          </label>
+          <span className="learning-profile-state" aria-live="polite">{profileSaving ? "Saving" : "Global profile"}</span>
+        </div>
+      ) : null}
       <div className="learning-scope" role="group" aria-label="Learning recommendation scope">
         <button type="button" className={scope === "local" ? "active" : ""} onClick={() => setScope("local")}>This project</button>
         <button type="button" className={scope === "global" ? "active" : ""} onClick={() => setScope("global")}>All projects</button>
@@ -1775,6 +1867,52 @@ function MemoryView({
           <Metric label="Needs practice" value={recommendations.mastery_summary.needs_practice} tone="warn" />
           <Metric label="Unassessed" value={recommendations.mastery_summary.unassessed} tone="neutral" />
         </div>
+      ) : null}
+      {recommendations ? (
+        <Panel title="Complete Engineer Matrix" icon={BarChart3}>
+          <div className="competency-matrix" role="table" aria-label="Complete engineer competency matrix">
+            <div className="competency-row competency-header" role="row">
+              <span role="columnheader">Competency</span>
+              <span role="columnheader">Status</span>
+              <span role="columnheader">Proofs</span>
+              <span role="columnheader">Artifacts</span>
+              <span role="columnheader">Latest evidence</span>
+            </div>
+            {recommendations.competencies.map((competency) => (
+              <div className="competency-row" role="row" key={competency.competency_id}>
+                <span role="cell"><strong>{competency.name}</strong>{competency.role_emphasis ? <small>Role focus</small> : null}</span>
+                <span role="cell" className={`badge ${competency.status === "mastered" ? "good" : competency.status === "needs_practice" ? "warn" : competency.status === "developing" ? "memory" : "neutral"}`}>{competency.status.replace("_", " ")}</span>
+                <span role="cell">{competency.passing_proofs}</span>
+                <span role="cell">{competency.verified_artifacts}</span>
+                <span role="cell" className="competency-evidence">{competency.latest_evidence || "No assessed proof"}</span>
+              </div>
+            ))}
+          </div>
+        </Panel>
+      ) : null}
+      {activeSession ? (
+        <Panel title="Active Learning Session" icon={ClipboardList}>
+          <div className="learning-session-view">
+            <div className="learning-topic-meta">
+              <span className="badge memory">{activeSession.competency_id?.replace("_", " ") || "competency"}</span>
+              <span className="badge neutral">{activeSession.proof_requirement} proof</span>
+              <span className="badge neutral">{activeSession.target_level}</span>
+            </div>
+            <strong>{activeSession.question}</strong>
+            <p><b>Required artifact:</b> {activeSession.required_artifact || "Reasoned answer"}</p>
+            <div>
+              <small>Evidence files</small>
+              <ul>{activeSession.evidence_files.map((path) => <li key={path}><code>{path}</code></li>)}</ul>
+            </div>
+            <div className="learning-prompt-copy">
+              <pre>{coachingPrompt}</pre>
+              <button type="button" className="toolbar-button" onClick={() => copyText("coaching-prompt", coachingPrompt)}>
+                {copiedValue === "coaching-prompt" ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                {copiedValue === "coaching-prompt" ? "Copied" : "Copy coaching prompt"}
+              </button>
+            </div>
+          </div>
+        </Panel>
       ) : null}
       <Panel title="Next Technical Topics" icon={Brain}>
         {learningLoading ? <p className="empty">Loading project learning history...</p> : null}
@@ -1790,13 +1928,17 @@ function MemoryView({
               <div key={topic.topic_id} className="learning-topic-row">
                 <div className="learning-topic-copy">
                   <div className="learning-topic-meta">
-                    <span className={`badge ${topic.lane === "weak_spot" ? "warn" : topic.lane === "system" ? "memory" : "good"}`}>{topic.lane.replace("_", " ")}</span>
+                    <span className={`badge ${topic.lane === "weak_spot" ? "warn" : topic.lane === "breadth" ? "memory" : "good"}`}>{topic.lane.replace("_", " ")}</span>
+                    <span className="badge neutral">{topic.competency_id.replace("_", " ")}</span>
+                    <span className="badge neutral">{topic.proof_requirement} proof</span>
                     <span className="badge neutral">{topic.project.name}</span>
                     <span className="badge neutral">{topic.score}</span>
                   </div>
                   <strong>{topic.title}</strong>
                   <p>{topic.why_now}</p>
-                  <small>{topic.evidence[0]?.path || topic.evidence[0]?.summary || topic.exercise}</small>
+                  <p className="learning-exercise"><b>Exercise:</b> {topic.exercise}</p>
+                  <small>{topic.evidence[0]?.kind}: {topic.evidence[0]?.path || topic.evidence[0]?.summary || "No direct file evidence"}</small>
+                  <p className="learning-required-artifact"><b>Proof:</b> {topic.required_artifact}</p>
                   <div className="learning-command">
                     <code>{topic.start_command}</code>
                     <button
@@ -1804,9 +1946,18 @@ function MemoryView({
                       className="icon-button"
                       aria-label={`Copy command for ${topic.title}`}
                       title="Copy start command"
-                      onClick={() => copyCommand(topic.topic_id, topic.start_command)}
+                      onClick={() => copyText(topic.topic_id, topic.start_command)}
                     >
-                      {copiedTopic === topic.topic_id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                      {copiedValue === topic.topic_id ? <Check size={15} aria-hidden="true" /> : <Copy size={15} aria-hidden="true" />}
+                    </button>
+                    <button
+                      type="button"
+                      className="toolbar-button"
+                      disabled={Boolean(startingTopic)}
+                      onClick={() => startTopic(topic.topic_id, topic.project.project_id)}
+                    >
+                      <PlayCircle size={15} aria-hidden="true" />
+                      {startingTopic === topic.topic_id ? "Starting" : "Start"}
                     </button>
                   </div>
                 </div>
@@ -1814,6 +1965,7 @@ function MemoryView({
             ))}
             {!recommendations.topics.length ? <p className="empty">No evidence-backed topics yet. Complete more AgentPack work to build learning history.</p> : null}
             {copyError ? <p className="learning-warning">{copyError}</p> : null}
+            {profileWarnings.map((warning) => <p key={warning} className="learning-warning">{warning}</p>)}
             {recommendations.warnings.map((warning) => <p key={warning} className="learning-warning">{warning}</p>)}
           </div>
         ) : null}
@@ -1848,6 +2000,13 @@ function MemoryView({
       </div>
     </div>
   );
+}
+
+function learningMutationId(kind: string): string {
+  const suffix = typeof crypto !== "undefined" && "randomUUID" in crypto
+    ? crypto.randomUUID()
+    : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  return `learning-${kind}-${suffix}`;
 }
 
 function RiskTestsView({

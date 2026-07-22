@@ -6,17 +6,31 @@ import os
 import re
 import shlex
 import uuid
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
 from agentpack.core.config import load_config
 from agentpack.core.project_index import load_project_index, project_id
+from agentpack.learning.competencies import (
+    COMPETENCY_DEFINITIONS,
+    competency_artifact,
+    competency_expected_points,
+    competency_proof_requirement,
+    derive_competency_summaries,
+    load_learner_profile,
+    map_to_competency,
+    mastery_summary_from_competencies,
+    readable_registered_project_roots,
+    role_drill_framing,
+    role_emphasizes,
+)
 from agentpack.learning.extractor import CONCEPT_RULES, build_learning_topic
 from agentpack.learning.models import (
+    CompetencyId,
+    CompetencySummary,
     LearningEvidence,
-    LearningMasterySummary,
     LearningProjectRef,
     LearningQuestion,
     LearningRecommendationSet,
@@ -28,7 +42,6 @@ from agentpack.learning.sessions import (
     derive_mastery_status,
     read_learning_sessions,
     read_learning_sessions_with_errors,
-    summarize_mastery,
 )
 from agentpack.learning.task_memory import (
     recent_task_memories,
@@ -101,6 +114,12 @@ class _Candidate:
     score: int = 0
     score_reasons: dict[str, int] = field(default_factory=dict)
     mastery_status: str = "unassessed"
+    competency_id: CompetencyId | None = None
+    competency_status: str = "unassessed"
+    target_level: str = "unspecified"
+    proof_requirement: str = "reasoning"
+    required_artifact: str = ""
+    role_emphasis: bool = False
     request_match: bool = False
 
     @property
@@ -121,14 +140,15 @@ def recommend_learning_topics(
     root = root.resolve()
     generated_at = (now or datetime.now(timezone.utc)).astimezone(timezone.utc)
     warnings: list[str] = []
+    profile, profile_warnings = load_learner_profile()
+    warnings.extend(profile_warnings)
+    competencies = derive_competency_summaries(
+        readable_registered_project_roots(root),
+        profile,
+    )
+    competency_index = {item.competency_id: item for item in competencies}
     projects = _projects(root, global_scope=global_scope, warnings=warnings)
     candidates: dict[str, _Candidate] = {}
-    mastery_counts = {
-        "mastered": 0,
-        "developing": 0,
-        "needs_practice": 0,
-        "unassessed": 0,
-    }
 
     for project_root, project in projects:
         project_report = report if project_root == root else None
@@ -145,10 +165,17 @@ def recommend_learning_topics(
         warnings.extend(project_warnings)
         for candidate in project_candidates:
             _merge_candidate(candidates, candidate)
-        for key, value in summarize_mastery(project_root).items():
-            mastery_counts[key] += value
 
     ranked = list(candidates.values())
+    for candidate in ranked:
+        _attach_competency(candidate, competency_index, profile.role, profile.target_level)
+    ranked = [candidate for candidate in ranked if candidate.competency_id is not None]
+    anchors = _task_anchors_by_project(ranked)
+    weak_candidate = _derived_weak_candidate(ranked, competency_index)
+    if weak_candidate is not None:
+        ranked.append(weak_candidate)
+    for project_anchor in anchors:
+        ranked.extend(_breadth_candidates(project_anchor, competencies, profile.role, profile.target_level))
     for candidate in ranked:
         _score(
             candidate,
@@ -169,7 +196,9 @@ def recommend_learning_topics(
         generated_at=generated_at.isoformat(),
         topics=topics,
         warnings=_unique(warnings),
-        mastery_summary=LearningMasterySummary(**mastery_counts),
+        mastery_summary=mastery_summary_from_competencies(competencies),
+        profile=profile,
+        competencies=competencies,
     )
 
 
@@ -417,7 +446,7 @@ def _project_candidates(
             candidates,
             _Candidate(
                 project=project,
-                subject=_subject(concepts, _subsystems(session.evidence_files)),
+                subject="weak:" + _subject(concepts, _subsystems(session.evidence_files)),
                 title=title,
                 why="A scored coaching session showed that this topic still needs practice.",
                 task=session.task,
@@ -436,6 +465,7 @@ def _project_candidates(
                 task_ids={session.session_id},
                 subsystems=_subsystems(session.evidence_files),
                 latest_at=session.updated_at or session.created_at,
+                competency_id=session.competency_id,
                 questions=[
                     LearningQuestion(
                         mode="quiz",
@@ -447,9 +477,6 @@ def _project_candidates(
             ),
         )
 
-    mastery = _mastery_index(root)
-    for candidate in candidates.values():
-        candidate.mastery_status = _candidate_mastery(candidate, mastery)
     return list(candidates.values()), warnings
 
 
@@ -571,6 +598,8 @@ def _merge_candidate(candidates: dict[str, _Candidate], incoming: _Candidate) ->
     existing.friction_count += incoming.friction_count
     existing.relation_count += incoming.relation_count
     existing.concepts = _unique([*existing.concepts, *incoming.concepts])
+    if incoming.competency_id and not existing.competency_id:
+        existing.competency_id = incoming.competency_id
     seen = {(item.kind, item.task_id, item.path, item.summary) for item in existing.evidence}
     for item in incoming.evidence:
         marker = (item.kind, item.task_id, item.path, item.summary)
@@ -591,6 +620,173 @@ def _merge_candidate(candidates: dict[str, _Candidate], incoming: _Candidate) ->
         existing.questions = incoming.questions
 
 
+def _attach_competency(
+    candidate: _Candidate,
+    competencies: dict[CompetencyId, CompetencySummary],
+    role: str,
+    target_level: str,
+) -> None:
+    evidence_kind = candidate.evidence[0].kind if candidate.evidence else ""
+    competency_id = candidate.competency_id or map_to_competency(
+        concepts=candidate.concepts,
+        task=" ".join([candidate.task, candidate.title, candidate.why]),
+        paths=[item.path for item in candidate.evidence if item.path],
+        evidence_kind=evidence_kind,
+    )
+    if competency_id is None:
+        return
+    summary = competencies[competency_id]
+    candidate.competency_id = competency_id
+    candidate.competency_status = summary.status
+    candidate.mastery_status = summary.status
+    candidate.target_level = target_level
+    candidate.proof_requirement = competency_proof_requirement(competency_id)
+    candidate.required_artifact = competency_artifact(competency_id)
+    candidate.role_emphasis = role_emphasizes(role, competency_id)
+
+
+def _task_anchors_by_project(candidates: list[_Candidate]) -> list[_Candidate]:
+    grounded = [
+        candidate
+        for candidate in candidates
+        if candidate.task
+        and any(item.kind in {"current_change", "task", "episode"} for item in candidate.evidence)
+    ]
+    if not grounded:
+        return []
+    projects: dict[str, _Candidate] = {}
+    for candidate in grounded:
+        existing = projects.get(candidate.project.project_id)
+        if existing is None or _anchor_sort_key(candidate) > _anchor_sort_key(existing):
+            projects[candidate.project.project_id] = candidate
+    return sorted(projects.values(), key=_anchor_sort_key, reverse=True)
+
+
+def _anchor_sort_key(candidate: _Candidate) -> tuple[Any, ...]:
+    return (
+        candidate.active,
+        _parse_datetime(candidate.latest_at) or datetime.min.replace(tzinfo=timezone.utc),
+        candidate.topic_id,
+    )
+
+
+def _derived_weak_candidate(
+    candidates: list[_Candidate],
+    competencies: dict[CompetencyId, CompetencySummary],
+) -> _Candidate | None:
+    if any("weak_spot" in candidate.lanes for candidate in candidates):
+        return None
+    for status in ("needs_practice", "developing"):
+        matches = [
+            candidate
+            for candidate in candidates
+            if candidate.competency_id is not None
+            and competencies[candidate.competency_id].status == status
+            and "breadth" not in candidate.lanes
+        ]
+        if not matches:
+            continue
+        anchor = max(
+            matches,
+            key=lambda item: (_parse_datetime(item.latest_at) or datetime.min.replace(tzinfo=timezone.utc), item.topic_id),
+        )
+        competency_id = anchor.competency_id
+        assert competency_id is not None
+        name = COMPETENCY_DEFINITIONS[competency_id]["name"]
+        return replace(
+            anchor,
+            subject=f"weak:{competency_id}:{anchor.subject}",
+            title=f"Strengthen {name} in {anchor.project.name}",
+            why=(
+                f"The candidate's latest assessed {name.lower()} evidence is {status.replace('_', ' ')}. "
+                "Use current project work to produce a distinct proof."
+            ),
+            lanes={"weak_spot"},
+            evidence=list(anchor.evidence),
+            task_ids=set(anchor.task_ids),
+            subsystems=set(anchor.subsystems),
+            score=0,
+            score_reasons={},
+        )
+    return None
+
+
+def _breadth_candidates(
+    anchor: _Candidate | None,
+    competencies: list[CompetencySummary],
+    role: str,
+    target_level: str,
+) -> list[_Candidate]:
+    if anchor is None:
+        return []
+    gaps = [
+        summary
+        for summary in competencies
+        if summary.status != "mastered" and summary.passing_proofs < 2
+    ]
+    if len(gaps) > 1 and anchor.competency_id is not None:
+        gaps = [summary for summary in gaps if summary.competency_id != anchor.competency_id]
+    results: list[_Candidate] = []
+    anchor_evidence = next(
+        (item for item in anchor.evidence if item.kind in {"current_change", "task", "episode"}),
+        anchor.evidence[0],
+    )
+    for summary in gaps:
+        competency_id = summary.competency_id
+        definition = COMPETENCY_DEFINITIONS[competency_id]
+        framing = role_drill_framing(role)
+        state = "unassessed" if summary.status == "unassessed" else "underrepresented"
+        why = (
+            f"{definition['name']} is {state}; this records a breadth gap, not a demonstrated weakness. "
+            f"Ground the drill in the latest real task and frame it around {framing}."
+        )
+        question = LearningQuestion(
+            mode="review",
+            question=(
+                f"Using '{anchor.task}', demonstrate {definition['name'].lower()} with specific project evidence."
+            ),
+            expected_points=competency_expected_points(competency_id),
+            evidence_files=[anchor_evidence.path] if anchor_evidence.path else [],
+            difficulty="medium",
+        )
+        results.append(
+            _Candidate(
+                project=anchor.project,
+                subject=f"breadth:{competency_id}:{_hash(anchor.task)}",
+                title=f"{definition['name']} Breadth Drill",
+                why=why,
+                task=anchor.task,
+                concepts=[definition["name"].lower()],
+                lanes={"breadth"},
+                evidence=[
+                    LearningEvidence(
+                        kind="competency_gap",
+                        task_id=anchor_evidence.task_id or (sorted(anchor.task_ids)[0] if anchor.task_ids else ""),
+                        task=anchor.task,
+                        path=anchor_evidence.path,
+                        summary=why,
+                        observed_at=anchor.latest_at,
+                        status=summary.status,
+                    )
+                ],
+                task_ids=set(anchor.task_ids),
+                subsystems=set(anchor.subsystems),
+                latest_at=anchor.latest_at,
+                active=anchor.active,
+                prompt=question.question,
+                questions=[question],
+                competency_id=competency_id,
+                competency_status=summary.status,
+                mastery_status=summary.status,
+                target_level=target_level,
+                proof_requirement=competency_proof_requirement(competency_id),
+                required_artifact=competency_artifact(competency_id),
+                role_emphasis=role_emphasizes(role, competency_id),
+            )
+        )
+    return results
+
+
 def _score(candidate: _Candidate, *, request: str, now: datetime, root: Path) -> None:
     reasons: dict[str, int] = {}
     if candidate.active:
@@ -609,13 +805,18 @@ def _score(candidate: _Candidate, *, request: str, now: datetime, root: Path) ->
     breadth = min(15, max(max(0, len(candidate.subsystems) - 1), candidate.relation_count) * 5)
     if breadth:
         reasons["system_breadth"] = breadth
-    mastery_adjustment = {
-        "needs_practice": 15,
-        "developing": 8,
-        "unassessed": 5,
-        "mastered": -40,
-    }[candidate.mastery_status]
-    reasons["mastery"] = mastery_adjustment
+    if candidate.competency_status == "needs_practice":
+        reasons["needs_practice"] = 20
+    elif candidate.competency_status == "developing":
+        reasons["developing"] = 10
+    elif candidate.competency_status == "unassessed":
+        reasons["unassessed"] = 5
+        if "breadth" in candidate.lanes:
+            reasons["unassessed_breadth"] = 25
+    elif candidate.competency_status == "mastered":
+        reasons["mastered"] = -40
+    if candidate.role_emphasis:
+        reasons["role_emphasis"] = 10
     request_terms = _terms(request)
     candidate.request_match = bool(request_terms and request_terms & _terms(" ".join([candidate.title, *candidate.concepts])))
     shown_at = _last_shown(root, candidate.topic_id)
@@ -632,12 +833,14 @@ def _select_topics(candidates: list[_Candidate], *, limit: int, global_scope: bo
     selected: list[_Candidate] = []
     used_ids: set[str] = set()
     used_projects: set[str] = set()
-    lanes = ["now", "system", "weak_spot"]
-    lane_counts = {lane: sum(1 for candidate in candidates if lane in candidate.lanes) for lane in lanes}
-    for lane in sorted(lanes, key=lambda value: (lane_counts[value], lanes.index(value))):
+    lanes = ["now", "weak_spot", "breadth"]
+    for lane in lanes:
         matches = [candidate for candidate in candidates if lane in candidate.lanes and candidate.topic_id not in used_ids]
+        not_mastered = [candidate for candidate in matches if candidate.competency_status != "mastered"]
+        matches = not_mastered or matches
         if global_scope:
-            matches = [candidate for candidate in matches if candidate.project.project_id not in used_projects]
+            fresh_project = [candidate for candidate in matches if candidate.project.project_id not in used_projects]
+            matches = fresh_project or matches
         if not matches:
             continue
         chosen = matches[0]
@@ -646,32 +849,13 @@ def _select_topics(candidates: list[_Candidate], *, limit: int, global_scope: bo
         used_projects.add(chosen.project.project_id)
         if len(selected) >= limit:
             break
-    if len(selected) < limit:
-        for candidate in candidates:
-            if candidate.topic_id in used_ids:
-                continue
-            if global_scope and len(used_projects) < min(limit, len({item.project.project_id for item in candidates})):
-                if candidate.project.project_id in used_projects:
-                    continue
-            selected.append(candidate)
-            used_ids.add(candidate.topic_id)
-            used_projects.add(candidate.project.project_id)
-            if len(selected) >= limit:
-                break
-    if len(selected) < limit:
-        for candidate in candidates:
-            if candidate.topic_id not in used_ids:
-                selected.append(candidate)
-                used_ids.add(candidate.topic_id)
-            if len(selected) >= limit:
-                break
-    lane_order = {"now": 0, "system": 1, "weak_spot": 2}
+    lane_order = {"now": 0, "weak_spot": 1, "breadth": 2}
     return sorted(selected, key=lambda item: (lane_order[_display_lane(item)], *_sort_key(item)))
 
 
 def _to_topic(candidate: _Candidate, *, request: str, global_scope: bool) -> LearningRecommendationTopic:
     lane = _display_lane(candidate)
-    default_mode = "quiz" if lane == "weak_spot" else "system-design" if lane == "system" else "failure" if candidate.friction_count else "review"
+    default_mode = "quiz" if lane == "weak_spot" else "review" if lane == "breadth" else "failure" if candidate.friction_count else "review"
     generated = build_learning_topic(
         task=candidate.task,
         title=candidate.title,
@@ -705,6 +889,11 @@ def _to_topic(candidate: _Candidate, *, request: str, global_scope: bool) -> Lea
         prompt=prompt,
         questions=questions,
         mastery_status=candidate.mastery_status,
+        competency_id=candidate.competency_id or "implementation",
+        competency_status=candidate.competency_status,
+        target_level=candidate.target_level,
+        proof_requirement=candidate.proof_requirement,
+        required_artifact=candidate.required_artifact,
         start_command=shlex.join(command),
     )
 
@@ -825,7 +1014,7 @@ def _display_subsystem(value: str) -> str:
 
 
 def _display_lane(candidate: _Candidate) -> str:
-    for lane in ("weak_spot", "system", "now"):
+    for lane in ("weak_spot", "breadth", "now"):
         if lane in candidate.lanes:
             return lane
     return "now"

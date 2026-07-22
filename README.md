@@ -93,9 +93,10 @@ agentpack doctor
 ```
 
 `learn` turns the same local work, project, and assessment memory into up to
-three evidence-backed topics: what matters now, how the system fits together,
-and a scored weak spot when one exists. `--global` explicitly ranks topics
-across registered AgentPack projects; the coding-agent host teaches the chosen
+three evidence-backed topics: what matters now, an assessed weak spot when one
+exists, and an underrepresented engineering competency. `--global` explicitly
+ranks topics across registered AgentPack projects while competency progress is
+derived globally; the coding-agent host teaches and evaluates the chosen
 topic and records the developer's result locally.
 
 ### Prepare with project evidence
