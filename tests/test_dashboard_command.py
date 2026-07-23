@@ -19,6 +19,7 @@ def test_dashboard_serves_project_dashboard(tmp_path, monkeypatch) -> None:
     (tmp_path / ".agentpack").mkdir()
     (tmp_path / ".agentpack" / "task.md").write_text("fix auth\n", encoding="utf-8")
     calls: list[dict[str, object]] = []
+    monkeypatch.setattr("agentpack.commands.dashboard._port_available", lambda host, port: True)
 
     def fake_serve(root, *, host, port, open_browser):
         calls.append({"root": root, "host": host, "port": port, "open_browser": open_browser})
@@ -78,6 +79,40 @@ def test_dashboard_open_passes_browser_flag(tmp_path, monkeypatch) -> None:
     assert call["host"] == "127.0.0.1"
     assert call["port"] == 8766
     assert call["open_browser"] is True
+
+
+def test_dashboard_uses_free_port_when_default_is_busy(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr("agentpack.commands.dashboard._port_available", lambda host, port: False)
+    monkeypatch.setattr("agentpack.commands.dashboard._free_port", lambda host: 9876)
+    monkeypatch.setattr(
+        "agentpack.commands.dashboard.serve_dashboard",
+        lambda root, *, host, port, open_browser: calls.append({"host": host, "port": port}),
+    )
+
+    result = runner.invoke(app, ["dashboard"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [{"host": "127.0.0.1", "port": 9876}]
+    assert "using port 9876 instead" in result.output
+
+
+def test_dashboard_keeps_explicit_port_strict(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    calls: list[dict[str, object]] = []
+    monkeypatch.setattr("agentpack.commands.dashboard._port_available", lambda host, port: False)
+    monkeypatch.setattr("agentpack.commands.dashboard._free_port", lambda host: 9876)
+    monkeypatch.setattr(
+        "agentpack.commands.dashboard.serve_dashboard",
+        lambda root, *, host, port, open_browser: calls.append({"host": host, "port": port}),
+    )
+
+    result = runner.invoke(app, ["dashboard", "--port", "8765"])
+
+    assert result.exit_code == 0, result.output
+    assert calls == [{"host": "127.0.0.1", "port": 8765}]
+    assert "using port" not in result.output
 
 
 def test_dashboard_shell_preserves_token_window_property() -> None:
