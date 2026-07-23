@@ -13,6 +13,15 @@ from agentpack.session.identity import remember_external_thread_ids, resolve_ide
 
 DEFAULT_EVENTS_PATH = ".agentpack/session-events.jsonl"
 EVENT_SCHEMA_VERSION = 1
+_IDENTITY_FIELDS = (
+    "project_id",
+    "workspace_id",
+    "task_id",
+    "logical_task_id",
+    "session_id",
+    "external_thread_ids",
+    "agent",
+)
 
 _CANONICAL_EVENT_TYPES = {
     "pack": "context_prepared",
@@ -82,6 +91,7 @@ def read_events(root: Path, *, output_path: str | None = None, limit: int = 200)
         paths.append(legacy_path)
     rows: list[dict[str, Any]] = []
     seen_ids: set[str] = set()
+    base_identity: dict[str, Any] | None = None
     for path in paths:
         if not path.exists():
             continue
@@ -95,7 +105,9 @@ def read_events(root: Path, *, output_path: str | None = None, limit: int = 200)
                 continue
             if not isinstance(rec, dict):
                 continue
-            normalized = normalize_event(root, rec)
+            if not all(key in rec for key in _IDENTITY_FIELDS) and base_identity is None:
+                base_identity = resolve_identity(root)
+            normalized = normalize_event(root, rec, base_identity=base_identity)
             event_id = str(normalized.get("event_id") or "")
             if event_id and event_id in seen_ids:
                 continue
@@ -106,7 +118,7 @@ def read_events(root: Path, *, output_path: str | None = None, limit: int = 200)
     return rows[-limit:]
 
 
-def normalize_event(root: Path, event: dict[str, Any]) -> dict[str, Any]:
+def normalize_event(root: Path, event: dict[str, Any], *, base_identity: dict[str, Any] | None = None) -> dict[str, Any]:
     """Return a compatibility-preserving canonical view without rewriting history."""
     result = dict(event)
     legacy_type = str(result.get("type") or result.get("event_type") or "unknown")
@@ -126,19 +138,21 @@ def normalize_event(root: Path, event: dict[str, Any]) -> dict[str, Any]:
             for key, value in result.items()
             if key not in {"schema_version", "event_id", "event_type", "occurred_at", "type", "timestamp", "source", "evidence", "payload"}
         }
-    identity = resolve_identity(
-        root,
-        task=str(result.get("task") or result.get("payload", {}).get("task") or ""),
-        thread_id=str(result.get("thread_id") or result.get("thread") or ""),
-        agent=str(result.get("agent") or ""),
-        explicit_task_id=str(result.get("task_id") or ""),
-    )
-    for key, value in identity.items():
-        if key == "external_thread_ids":
-            existing = result.get(key) if isinstance(result.get(key), list) else []
-            result[key] = list(dict.fromkeys([*existing, *value]))[:20]
-        else:
-            result[key] = value or result.get(key, "")
+    if not all(key in result for key in _IDENTITY_FIELDS):
+        identity = resolve_identity(
+            root,
+            task=str(result.get("task") or result.get("payload", {}).get("task") or ""),
+            thread_id=str(result.get("thread_id") or result.get("thread") or ""),
+            agent=str(result.get("agent") or ""),
+            explicit_task_id=str(result.get("task_id") or ""),
+            base=base_identity,
+        )
+        for key, value in identity.items():
+            if key == "external_thread_ids":
+                existing = result.get(key) if isinstance(result.get(key), list) else []
+                result[key] = list(dict.fromkeys([*existing, *value]))[:20]
+            else:
+                result[key] = value or result.get(key, "")
     if not result.get("event_id"):
         stable = json.dumps(result, sort_keys=True, separators=(",", ":"))
         result["event_id"] = "event-" + hashlib.sha256(stable.encode("utf-8")).hexdigest()[:20]

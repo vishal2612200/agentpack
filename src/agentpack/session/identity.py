@@ -36,24 +36,34 @@ def workspace_id(root: Path, *, current_project_id: str | None = None) -> str:
     return "workspace-" + digest(f"{project}:{root.resolve()}")
 
 
-def task_id(root: Path, task: str, *, thread_id: str = "", explicit: str = "") -> str:
+def task_id(
+    root: Path,
+    task: str,
+    *,
+    thread_id: str = "",
+    explicit: str = "",
+    project: str | None = None,
+    workspace: str | None = None,
+) -> str:
     if explicit.startswith("task-"):
         return explicit
     title = " ".join(task.strip().split())
     if not title:
         return ""
-    return "task-" + digest(f"{project_id(root)}:{workspace_id(root)}:{thread_id}:{title}")
+    resolved_project = project or project_id(root)
+    resolved_workspace = workspace or workspace_id(root, current_project_id=resolved_project)
+    return "task-" + digest(f"{resolved_project}:{resolved_workspace}:{thread_id}:{title}")
 
 
-def logical_task_id(root: Path, task: str) -> str:
+def logical_task_id(root: Path, task: str, *, project: str | None = None) -> str:
     """Return a task identity that remains stable across sessions and worktrees."""
     title = " ".join(task.strip().split())
     if not title:
         return ""
-    return "logical-task-" + digest(f"{project_id(root)}:{title}")
+    return "logical-task-" + digest(f"{project or project_id(root)}:{title}")
 
 
-def session_id(root: Path) -> str:
+def session_id(root: Path, *, project: str | None = None, workspace: str | None = None) -> str:
     data = _load_session(root)
     if not data:
         return ""
@@ -64,7 +74,9 @@ def session_id(root: Path) -> str:
     agent = str(data.get("agent") or "generic")
     if not started_at:
         return ""
-    return "session-" + digest(f"{project_id(root)}:{workspace_id(root)}:{agent}:{started_at}")
+    resolved_project = project or project_id(root)
+    resolved_workspace = workspace or workspace_id(root, current_project_id=resolved_project)
+    return "session-" + digest(f"{resolved_project}:{resolved_workspace}:{agent}:{started_at}")
 
 
 def external_thread_ids(root: Path, *values: object) -> list[str]:
@@ -107,16 +119,27 @@ def resolve_identity(
     thread_id: str = "",
     agent: str = "",
     explicit_task_id: str = "",
+    base: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    base = base or {}
+    resolved_project = str(base.get("project_id") or project_id(root))
+    resolved_workspace = str(base.get("workspace_id") or workspace_id(root, current_project_id=resolved_project))
     data = _load_session(root) or {}
     resolved_agent = agent.strip() or str(data.get("agent") or "generic")
     threads = external_thread_ids(root, thread_id)
     return {
-        "project_id": project_id(root),
-        "workspace_id": workspace_id(root),
-        "task_id": task_id(root, task, thread_id=thread_id, explicit=explicit_task_id),
-        "logical_task_id": logical_task_id(root, task),
-        "session_id": session_id(root),
+        "project_id": resolved_project,
+        "workspace_id": resolved_workspace,
+        "task_id": task_id(
+            root,
+            task,
+            thread_id=thread_id,
+            explicit=explicit_task_id,
+            project=resolved_project,
+            workspace=resolved_workspace,
+        ),
+        "logical_task_id": logical_task_id(root, task, project=resolved_project),
+        "session_id": str(base.get("session_id") or session_id(root, project=resolved_project, workspace=resolved_workspace)),
         "external_thread_ids": threads,
         "agent": resolved_agent,
     }

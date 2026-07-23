@@ -71,6 +71,40 @@ def test_legacy_events_are_normalized_without_rewriting_history(tmp_path: Path) 
     assert path.read_text(encoding="utf-8").count("not json") == 1
 
 
+def test_canonical_events_do_not_recompute_identity(tmp_path: Path, monkeypatch) -> None:
+    path = tmp_path / ".agentpack" / "session-events.jsonl"
+    path.parent.mkdir(parents=True)
+    path.write_text(
+        json.dumps(
+            {
+                "schema_version": 1,
+                "event_id": "event-canonical",
+                "event_type": "task_completed",
+                "type": "task_completed",
+                "timestamp": "2026-07-16T10:00:00+00:00",
+                "occurred_at": "2026-07-16T10:00:00+00:00",
+                "source": "agentpack",
+                "evidence": [],
+                "payload": {},
+                "project_id": "project-test",
+                "workspace_id": "workspace-test",
+                "task_id": "task-test",
+                "logical_task_id": "logical-task-test",
+                "session_id": "session-test",
+                "external_thread_ids": [],
+                "agent": "codex",
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr("agentpack.session.events.resolve_identity", lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("identity recomputed")))
+
+    events = read_events(tmp_path)
+
+    assert events[0]["project_id"] == "project-test"
+
+
 def test_legacy_session_gets_deterministic_migrated_id(tmp_path: Path) -> None:
     path = tmp_path / ".agentpack" / "session.json"
     path.parent.mkdir(parents=True)
