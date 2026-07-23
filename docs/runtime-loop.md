@@ -147,9 +147,11 @@ tasks changed, call out selected-file misses, or highlight repeated learning
 concepts. They do not replace `rg`, `git diff`, direct file reads, tests, or PR
 review evidence.
 
-`agentpack learn` ranks bounded current-work, system, and assessed weak-spot
-topics. Starting a topic appends a queued session to
-`.agentpack/learning-sessions.jsonl`; queued sessions remain unassessed until
-the agent host records a score and developer confirmation with `--complete`.
-The dashboard reads the same recommendation and mastery contract without
-recording an impression, so viewing it does not affect cooldown ranking.
+`agentpack learn` ranks bounded `now`, `weak_spot`, and `breadth` topics against
+seven stable engineering competencies. Starting a topic appends a queued session
+to `.agentpack/learning-sessions.jsonl`; queued sessions remain unassessed until
+the host agent evaluates every rubric point and submits structured proof. Changed
+files and concepts are exposure only. AgentPack derives mastery across readable
+registered projects while answers remain project-local. The dashboard reads the
+same recommendation and competency contract without recording an impression, so
+viewing it does not affect cooldown ranking.

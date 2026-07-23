@@ -204,13 +204,135 @@ def test_learning_recommendations_endpoint_is_typed_and_read_only(tmp_path: Path
         server.server_close()
         thread.join(timeout=5)
 
-    assert payload["schema_version"] == 1
+    assert payload["schema_version"] == 2
     assert payload["scope"] == "local"
     assert payload["topics"][0]["topic_id"].startswith("topic-")
     assert payload["topics"][0]["start_command"].startswith("agentpack learn --topic")
     assert set(payload["mastery_summary"]) == {"mastered", "developing", "needs_practice", "unassessed"}
+    assert len(payload["competencies"]) == 7
+    assert payload["profile"]["role"] == "general"
     _assert_schema(json.loads(SCHEMA_PATH.read_text(encoding="utf-8")), "learningRecommendationSet", payload)
     assert events.read_text(encoding="utf-8") == before
+
+
+def test_learning_profile_start_complete_and_read_only_guards(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (agentpack / "config.toml").write_text("[context]\n", encoding="utf-8")
+    source = tmp_path / "src" / "learn.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    (agentpack / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-22T10:00:00+00:00",
+                "task_id": "task-learn",
+                "task": "Implement learning API",
+                "status": "done",
+                "concepts": ["implementation"],
+                "changed_files": ["src/learn.py"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    server = create_dashboard_server(tmp_path, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base = f"http://127.0.0.1:{server.server_address[1]}"
+    try:
+        with pytest.raises(urllib.error.HTTPError) as unauthorized:
+            urllib.request.urlopen(f"{base}/api/learning/profile", timeout=30)
+        assert unauthorized.value.code == 401
+        with pytest.raises(urllib.error.HTTPError) as invalid:
+            _post_request(
+                f"{base}/api/learning/profile",
+                server.state.token,
+                {"mutation_id": "profile-invalid", "role": "database", "target_level": "mid"},
+            )
+        assert invalid.value.code == 400
+
+        profile = _request(f"{base}/api/learning/profile", server.state.token)
+        assert profile["profile"]["role"] == "general"
+        updated = _post_request(
+            f"{base}/api/learning/profile",
+            server.state.token,
+            {"mutation_id": "profile-1", "role": "backend", "target_level": "mid"},
+        )
+        assert updated["profile"]["role"] == "backend"
+        duplicate_profile = _post_request(
+            f"{base}/api/learning/profile",
+            server.state.token,
+            {"mutation_id": "profile-1", "role": "backend", "target_level": "mid"},
+        )
+        assert duplicate_profile["duplicate"] is True
+
+        recommendations = _request(
+            f"{base}/api/learning/recommendations?scope=local",
+            server.state.token,
+        )
+        topic = recommendations["topics"][0]
+        start_request = {
+            "mutation_id": "start-1",
+            "topic_id": topic["topic_id"],
+            "project_id": topic["project"]["project_id"],
+            "mode": "review",
+        }
+        started = _post_request(f"{base}/api/learning/sessions/start", server.state.token, start_request)
+        duplicate_start = _post_request(f"{base}/api/learning/sessions/start", server.state.token, start_request)
+        assert duplicate_start["duplicate"] is True
+        assert duplicate_start["session"]["session_id"] == started["session"]["session_id"]
+        assert "Evaluate every expected point" in started["coaching_prompt"]
+
+        session = started["session"]
+        proof = {
+            "kind": "artifact",
+            "answer": "The API contract is additive and the focused check passes.",
+            "rubric_results": [
+                {"criterion": point, "rating": "met", "evidence": "Covered"}
+                for point in session["expected_points"]
+            ],
+            "artifact_paths": ["src/learn.py"],
+            "verification_evidence": [
+                {"command": "python -m compileall src/learn.py", "exit_code": 0, "summary": "compiled", "executed_at": ""}
+            ],
+            "self_assessment": "mastered",
+            "evaluator": "codex",
+            "evaluated_at": "",
+        }
+        complete_request = {"mutation_id": "complete-1", "session_id": session["session_id"], "proof": proof}
+        completed = _post_request(f"{base}/api/learning/sessions/complete", server.state.token, complete_request)
+        retried = _post_request(
+            f"{base}/api/learning/sessions/complete",
+            server.state.token,
+            {**complete_request, "mutation_id": "complete-2"},
+        )
+        assert completed["session"]["score"] == 100
+        assert retried["duplicate"] is True
+
+        second = _post_request(
+            f"{base}/api/learning/sessions/start",
+            server.state.token,
+            {**start_request, "mutation_id": "start-read-only"},
+        )
+        sessions_path = agentpack / "learning-sessions.jsonl"
+        before = sessions_path.read_text(encoding="utf-8")
+        agentpack.chmod(0o555)
+        with pytest.raises(urllib.error.HTTPError) as error:
+            _post_request(
+                f"{base}/api/learning/sessions/complete",
+                server.state.token,
+                {"mutation_id": "complete-read-only", "session_id": second["session"]["session_id"], "proof": proof},
+            )
+        assert error.value.code == 403
+        assert sessions_path.read_text(encoding="utf-8") == before
+    finally:
+        agentpack.chmod(0o755)
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
 
 
 def test_project_endpoints_are_authenticated_bounded_and_read_only_on_get(tmp_path: Path, monkeypatch) -> None:

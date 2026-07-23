@@ -1,10 +1,73 @@
 from __future__ import annotations
 
 from datetime import datetime, timezone
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 from agentpack.core.models import Citation
+
+
+CompetencyId = Literal[
+    "product_reasoning",
+    "implementation",
+    "quality",
+    "systems",
+    "production",
+    "security",
+    "collaboration",
+]
+LearnerRole = Literal["frontend", "backend", "mobile", "platform", "general"]
+TargetLevel = Literal["unspecified", "junior", "mid", "senior", "staff"]
+CompetencyStatus = Literal["mastered", "developing", "needs_practice", "unassessed"]
+
+
+class LearnerProfile(BaseModel):
+    schema_version: Literal[1] = 1
+    role: LearnerRole = "general"
+    target_level: TargetLevel = "unspecified"
+    updated_at: str = ""
+
+
+class RubricResult(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    criterion: str = Field(min_length=1, max_length=500)
+    rating: Literal["missing", "partial", "met"]
+    evidence: str = Field(default="", max_length=1000)
+
+
+class VerificationEvidence(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    command: str = Field(min_length=1, max_length=2000)
+    exit_code: int
+    summary: str = Field(default="", max_length=2000)
+    executed_at: str = ""
+
+
+class LearningProof(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    kind: Literal["reasoning", "artifact"]
+    answer: str = Field(min_length=1, max_length=50_000)
+    rubric_results: list[RubricResult] = Field(default_factory=list, max_length=50)
+    artifact_paths: list[str] = Field(default_factory=list, max_length=50)
+    verification_evidence: list[VerificationEvidence] = Field(default_factory=list, max_length=50)
+    self_assessment: Literal["", "mastered", "developing", "needs-practice"] = ""
+    evaluator: str = Field(default="host-agent", max_length=120)
+    evaluated_at: str = ""
+
+
+class CompetencySummary(BaseModel):
+    competency_id: CompetencyId
+    name: str
+    status: CompetencyStatus = "unassessed"
+    passing_proofs: int = 0
+    verified_artifacts: int = 0
+    latest_evidence: str = ""
+    latest_score: int | None = None
+    role_emphasis: bool = False
 
 
 class LearningOptions(BaseModel):
@@ -85,6 +148,11 @@ class LearningRecommendationTopic(BaseModel):
     prompt: str = ""
     questions: list[LearningQuestion] = Field(default_factory=list)
     mastery_status: str = "unassessed"
+    competency_id: CompetencyId = "implementation"
+    competency_status: CompetencyStatus = "unassessed"
+    target_level: TargetLevel = "unspecified"
+    proof_requirement: Literal["reasoning", "artifact"] = "reasoning"
+    required_artifact: str = ""
     start_command: str = ""
 
 
@@ -96,22 +164,26 @@ class LearningMasterySummary(BaseModel):
 
 
 class LearningRecommendationSet(BaseModel):
-    schema_version: int = 1
+    schema_version: int = 2
     recommendation_id: str
     scope: str = "local"
     generated_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
     topics: list[LearningRecommendationTopic] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
     mastery_summary: LearningMasterySummary = Field(default_factory=LearningMasterySummary)
+    profile: LearnerProfile = Field(default_factory=LearnerProfile)
+    competencies: list[CompetencySummary] = Field(default_factory=list)
 
 
 class LearningSession(BaseModel):
     session_id: str = ""
+    mutation_id: str = ""
     topic_id: str = ""
     recommendation_id: str = ""
     project_id: str = ""
     project_name: str = ""
     project_root: str = ""
+    task_id: str = ""
     task: str
     request: str = ""
     mode: str = "study"
@@ -120,11 +192,19 @@ class LearningSession(BaseModel):
     expected_points: list[str] = Field(default_factory=list)
     evidence_files: list[str] = Field(default_factory=list)
     concepts: list[str] = Field(default_factory=list)
+    competency_id: CompetencyId | None = None
+    target_level: TargetLevel = "unspecified"
+    proof_requirement: Literal["reasoning", "artifact"] = "reasoning"
+    required_artifact: str = ""
     answer: str = ""
     score: int | None = None
     self_assessment: str = ""
     note: str = ""
     mastery_status: str = "unassessed"
+    proof: LearningProof | None = None
+    proof_hash: str = ""
+    artifact_hashes: dict[str, str] = Field(default_factory=dict)
+    legacy_evidence: bool = False
     status: str = "queued"
     source: str = "agentpack learn"
     created_at: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
@@ -156,6 +236,7 @@ class SkillProgress(BaseModel):
     evidence: list[SkillEvidence] = Field(default_factory=list)
     aliases: list[str] = Field(default_factory=list)
     confidence: int = 0
+    confidence_kind: Literal["exposure"] = "exposure"
     first_seen: str = ""
     last_seen: str = ""
     source_paths: list[str] = Field(default_factory=list)

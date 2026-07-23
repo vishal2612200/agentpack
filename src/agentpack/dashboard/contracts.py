@@ -24,6 +24,7 @@ from agentpack.dashboard.models import (
     ProjectRisk,
     ProjectTimelineEvent,
 )
+from agentpack.learning.models import LearningProof
 
 
 class DashboardV2Workspace(BaseModel):
@@ -248,6 +249,31 @@ class ProjectEventRequest(BaseModel):
     decision: str = Field(default="", max_length=2000)
     outcome_id: str = Field(default="", max_length=64)
     evidence: list[ProjectEventEvidenceInput] = Field(default_factory=list, max_length=20)
+
+
+class LearningProfileUpdateRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    role: Literal["frontend", "backend", "mobile", "platform", "general"]
+    target_level: Literal["unspecified", "junior", "mid", "senior", "staff"]
+
+
+class LearningSessionStartRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    topic_id: str = Field(min_length=1, max_length=128)
+    project_id: str = Field(default="", max_length=64)
+    mode: str = Field(default="", max_length=32)
+
+
+class LearningSessionCompleteRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
+    session_id: str = Field(min_length=1, max_length=128)
+    proof: LearningProof
 
 
 class DashboardV2AgentOperationResponse(BaseModel):

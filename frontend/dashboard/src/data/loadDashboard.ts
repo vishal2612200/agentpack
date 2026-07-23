@@ -1,4 +1,4 @@
-import type { ActionHistoryRow, CachedProjectStatus, DashboardGraph, DashboardMap, DashboardSnapshot, DashboardV2AgentSession, DashboardV2Handoff, DashboardV2ImpactResponse, DashboardV2ActionInspection, LearningRecommendationSet, LearningScope, ProjectOverview, ProjectStatusBrief, ProjectTimelineEvent } from "./schema";
+import type { ActionHistoryRow, CachedProjectStatus, DashboardGraph, DashboardMap, DashboardSnapshot, DashboardV2AgentSession, DashboardV2Handoff, DashboardV2ImpactResponse, DashboardV2ActionInspection, LearnerProfile, LearningRecommendationSet, LearningScope, LearningSession, ProjectOverview, ProjectStatusBrief, ProjectTimelineEvent } from "./schema";
 
 declare global {
   interface Window {
@@ -114,6 +114,47 @@ export async function loadLearningRecommendations(scope: LearningScope = "local"
   const response = await fetchWithDeadline(apiUrl(`/api/learning/recommendations?scope=${scope}`), { headers: authHeaders() }, 15_000);
   if (!response.ok) throw new Error(`Learning recommendations API failed: ${response.status}`);
   return await response.json() as LearningRecommendationSet;
+}
+
+export async function loadLearningProfile(): Promise<{ profile: LearnerProfile; warnings: string[] }> {
+  const response = await fetchWithDeadline(apiUrl("/api/learning/profile"), { headers: authHeaders() }, 8_000);
+  if (!response.ok) throw new Error(`Learning profile API failed: ${response.status}`);
+  return await response.json() as { profile: LearnerProfile; warnings: string[] };
+}
+
+export async function updateLearningProfile(request: {
+  mutation_id: string;
+  role: LearnerProfile["role"];
+  target_level: LearnerProfile["target_level"];
+}): Promise<LearnerProfile> {
+  const response = await fetch(apiUrl("/api/learning/profile"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(request)
+  });
+  const payload = await response.json() as { profile?: LearnerProfile; error?: string };
+  if (!response.ok || !payload.profile) throw new Error(payload.error || `Learning profile update failed: ${response.status}`);
+  return payload.profile;
+}
+
+export async function startLearningSession(request: {
+  mutation_id: string;
+  topic_id: string;
+  project_id: string;
+  mode?: string;
+}): Promise<{ session: LearningSession; coaching_prompt: string; duplicate: boolean }> {
+  const response = await fetch(apiUrl("/api/learning/sessions/start"), {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeaders() },
+    body: JSON.stringify(request)
+  });
+  const payload = await response.json() as { session?: LearningSession; coaching_prompt?: string; duplicate?: boolean; error?: string };
+  if (!response.ok || !payload.session) throw new Error(payload.error || `Learning session start failed: ${response.status}`);
+  return {
+    session: payload.session,
+    coaching_prompt: payload.coaching_prompt || "",
+    duplicate: Boolean(payload.duplicate)
+  };
 }
 
 export async function loadProjectOverview(workspace = "all"): Promise<ProjectOverview> {

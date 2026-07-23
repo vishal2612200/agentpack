@@ -94,6 +94,25 @@ def test_learn_starts_and_completes_recommended_topic(tmp_path, monkeypatch):
     session = json.loads(start_result.stdout)
     assert session["topic_id"] == topic["topic_id"]
     assert session["status"] == "queued"
+    assert "Evaluate every expected point" in session["coaching_prompt"]
+
+    proof = {
+        "kind": "artifact",
+        "answer": "The command is additive and the focused verification passes.",
+        "rubric_results": [
+            {"criterion": point, "rating": "met", "evidence": "Covered by the answer"}
+            for point in session["expected_points"]
+        ],
+        "artifact_paths": ["cli.py"],
+        "verification_evidence": [
+            {"command": "python -m compileall cli.py", "exit_code": 0, "summary": "compiled", "executed_at": ""}
+        ],
+        "self_assessment": "mastered",
+        "evaluator": "codex",
+        "evaluated_at": "",
+    }
+    proof_path = repo / "proof.json"
+    proof_path.write_text(json.dumps(proof), encoding="utf-8")
 
     complete_result = runner.invoke(
         app,
@@ -101,19 +120,24 @@ def test_learn_starts_and_completes_recommended_topic(tmp_path, monkeypatch):
             "learn",
             "--complete",
             session["session_id"],
-            "--score",
-            "88",
-            "--self-assessment",
-            "mastered",
-            "--note",
-            "Explained the compatibility boundary",
+            "--proof-file",
+            "proof.json",
             "--json",
         ],
     )
     assert complete_result.exit_code == 0, complete_result.output
     completed = json.loads(complete_result.stdout)
-    assert completed["mastery_status"] == "mastered"
-    assert completed["note"] == "Explained the compatibility boundary"
+    assert completed["mastery_status"] == "developing"
+    assert completed["score"] == 100
+    assert completed["artifact_hashes"]["cli.py"]
+
+    retry = runner.invoke(
+        app,
+        ["learn", "--complete", session["session_id"], "--proof-file", "-", "--json"],
+        input=json.dumps(proof),
+    )
+    assert retry.exit_code == 0, retry.output
+    assert json.loads(retry.stdout)["duplicate"] is True
 
 
 def test_learn_rejects_incomplete_completion_request(tmp_path, monkeypatch):
@@ -123,7 +147,7 @@ def test_learn_rejects_incomplete_completion_request(tmp_path, monkeypatch):
     result = runner.invoke(app, ["learn", "--complete", "session-missing", "--score", "90"])
 
     assert result.exit_code == 2
-    assert "requires --score and --self-assessment" in result.output
+    assert "requires --proof-file" in result.output
 
 
 def test_learn_global_session_is_written_and_completed_in_owning_repo(tmp_path, monkeypatch):
@@ -185,10 +209,39 @@ def test_learn_global_session_is_written_and_completed_in_owning_repo(tmp_path, 
         ],
     )
     assert completed.exit_code == 0, completed.output
-    assert json.loads(completed.stdout)["mastery_status"] == "mastered"
+    assert json.loads(completed.stdout)["mastery_status"] == "developing"
+    assert "deprecated" in completed.stderr
     latest_owner_row = json.loads((second / ".agentpack" / "learning-sessions.jsonl").read_text(encoding="utf-8").splitlines()[-1])
     assert latest_owner_row["session_id"] == session["session_id"]
     assert latest_owner_row["status"] == "completed"
+
+
+def test_learn_profile_defaults_and_atomic_update(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    defaults = runner.invoke(app, ["learn", "--profile", "--json"])
+    assert defaults.exit_code == 0, defaults.output
+    assert json.loads(defaults.stdout)["profile"]["role"] == "general"
+
+    updated = runner.invoke(
+        app,
+        ["learn", "--profile", "--role", "backend", "--level", "mid", "--json"],
+    )
+    assert updated.exit_code == 0, updated.output
+    payload = json.loads(updated.stdout)
+    assert payload["profile"]["role"] == "backend"
+    assert payload["profile"]["target_level"] == "mid"
+
+
+def test_learn_profile_rejects_invalid_role(tmp_path, monkeypatch):
+    repo = _repo(tmp_path)
+    monkeypatch.chdir(repo)
+
+    result = runner.invoke(app, ["learn", "--profile", "--role", "database"])
+
+    assert result.exit_code == 2
+    assert "role must be" in result.output
 
 
 def test_learn_json_accepts_on_demand_quiz_request(tmp_path, monkeypatch):

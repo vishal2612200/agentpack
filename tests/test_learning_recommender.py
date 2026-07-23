@@ -5,7 +5,10 @@ import os
 from datetime import datetime, timezone
 from pathlib import Path
 
+import pytest
+
 from agentpack.core.project_index import register_project
+from agentpack.learning.competencies import update_learner_profile
 from agentpack.learning.models import LearningSession
 from agentpack.learning.recommender import (
     recommend_learning_topics,
@@ -24,6 +27,11 @@ from agentpack.learning.sessions import (
 NOW = datetime(2026, 7, 19, 12, 0, tzinfo=timezone.utc)
 
 
+@pytest.fixture(autouse=True)
+def _isolated_agentpack_home(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "agentpack-home"))
+
+
 def _project(root: Path) -> Path:
     (root / ".agentpack").mkdir(parents=True)
     (root / ".agentpack" / "config.toml").write_text("[context]\n", encoding="utf-8")
@@ -35,7 +43,7 @@ def _write_task_memories(root: Path, rows: list[dict]) -> None:
     path.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
 
 
-def test_recommender_selects_now_system_and_assessed_weak_spot(tmp_path) -> None:
+def test_recommender_selects_now_assessed_weak_spot_and_breadth(tmp_path) -> None:
     root = _project(tmp_path)
     _write_task_memories(
         root,
@@ -78,13 +86,54 @@ def test_recommender_selects_now_system_and_assessed_weak_spot(tmp_path) -> None
     first = recommend_learning_topics(root, now=NOW)
     second = recommend_learning_topics(root, now=NOW)
 
-    assert [topic.lane for topic in first.topics] == ["now", "system", "weak_spot"]
+    assert [topic.lane for topic in first.topics] == ["now", "weak_spot", "breadth"]
+    assert first.schema_version == 2
+    assert len(first.competencies) == 7
+    assert first.mastery_summary.needs_practice == 1
+    assert all(topic.competency_id and topic.required_artifact for topic in first.topics)
     assert [topic.topic_id for topic in first.topics] == [topic.topic_id for topic in second.topics]
     assert first.topics[0].score_reasons["friction"] == 10
     assert first.topics[0].score_reasons["recurrence"] == 5
-    assert first.topics[1].score_reasons["system_breadth"] == 5
-    assert first.topics[2].mastery_status == "needs_practice"
+    assert first.topics[1].mastery_status == "needs_practice"
+    assert first.topics[2].evidence[0].kind == "competency_gap"
+    assert "not a demonstrated weakness" in first.topics[2].why_now
     assert all(topic.evidence for topic in first.topics)
+
+
+def test_current_and_failed_evidence_for_same_capability_keep_distinct_lanes(tmp_path) -> None:
+    root = _project(tmp_path)
+    _write_task_memories(
+        root,
+        [
+            {
+                "type": "task_memory",
+                "timestamp": NOW.isoformat(),
+                "task_id": "task-api-current",
+                "task": "Stabilize API serialization",
+                "concepts": ["serialization"],
+                "changed_files": ["src/api/schema.py"],
+            }
+        ],
+    )
+    append_learning_session(
+        root,
+        LearningSession(
+            task="Stabilize API serialization",
+            topic="Stable Serialization",
+            question="How should old clients read new fields?",
+            expected_points=["additive fields", "stable names"],
+            evidence_files=["src/api/schema.py"],
+            concepts=["serialization"],
+            score=55,
+            self_assessment="needs-practice",
+            status="completed",
+        ),
+    )
+
+    recommendations = recommend_learning_topics(root, now=NOW)
+
+    assert [topic.lane for topic in recommendations.topics] == ["now", "weak_spot", "breadth"]
+    assert recommendations.topics[0].topic_id != recommendations.topics[1].topic_id
 
 
 def test_queued_session_is_unassessed_until_scored(tmp_path) -> None:
@@ -112,14 +161,14 @@ def test_queued_session_is_unassessed_until_scored(tmp_path) -> None:
     assert summarize_weak_spots(root)[0]["concept"] == "caching"
 
 
-def test_mastery_transitions_require_score_and_developer_confirmation() -> None:
+def test_single_session_status_never_claims_mastery() -> None:
     base = LearningSession(task="Review retries", topic="Safe Retry Logic")
 
     assert derive_mastery_status(base) == "unassessed"
     assert derive_mastery_status(base.model_copy(update={"score": 69, "self_assessment": "mastered"})) == "needs_practice"
     assert derive_mastery_status(base.model_copy(update={"score": 75, "self_assessment": "mastered"})) == "developing"
     assert derive_mastery_status(base.model_copy(update={"score": 80, "self_assessment": "needs-practice"})) == "needs_practice"
-    assert derive_mastery_status(base.model_copy(update={"score": 80, "self_assessment": "mastered"})) == "mastered"
+    assert derive_mastery_status(base.model_copy(update={"score": 80, "self_assessment": "mastered"})) == "developing"
 
 
 def test_recommendation_history_applies_cooldown(tmp_path) -> None:
@@ -195,8 +244,41 @@ def test_free_text_biases_ranking_without_changing_formula_score(tmp_path) -> No
     recommendations = recommend_learning_topics(root, request="retry", now=NOW)
 
     assert recommendations.topics[0].concepts == ["retry logic"]
-    assert recommendations.topics[0].score == recommendations.topics[1].score == 25
+    assert recommendations.topics[0].score == 25
     assert "request_match" not in recommendations.topics[0].score_reasons
+
+
+def test_role_emphasis_adds_bonus_without_changing_competency_mapping(tmp_path) -> None:
+    root = _project(tmp_path)
+    update_learner_profile(role="backend", target_level="mid")
+    _write_task_memories(
+        root,
+        [
+            {
+                "type": "task_memory",
+                "timestamp": NOW.isoformat(),
+                "task_id": "task-auth",
+                "task": "Verify authorization behavior",
+                "concepts": ["authorization"],
+                "changed_files": ["src/auth.py"],
+            },
+            {
+                "type": "task_memory",
+                "timestamp": NOW.isoformat(),
+                "task_id": "task-test",
+                "task": "Add a regression test",
+                "concepts": ["testing"],
+                "changed_files": ["tests/test_feature.py"],
+            },
+        ],
+    )
+
+    recommendations = recommend_learning_topics(root, now=NOW)
+
+    assert recommendations.profile.role == "backend"
+    assert recommendations.profile.target_level == "mid"
+    assert recommendations.topics[0].competency_id == "security"
+    assert recommendations.topics[0].score_reasons["role_emphasis"] == 10
 
 
 def test_newer_friction_bypasses_cooldown_across_iso_formats(tmp_path) -> None:

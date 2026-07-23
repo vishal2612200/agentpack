@@ -7,7 +7,7 @@ AgentPack is built for private source repositories. Its default scan, route, pac
 | Question | Answer |
 |---|---|
 | Does AgentPack upload code? | No, not for scan, summarize, rank, route, pack, stats, or benchmark. |
-| Where is data stored? | Local files under `.agentpack/`, plus repo-local agent config created by installers. |
+| Where is data stored? | Local files under `.agentpack/`, plus the private global learner profile at `$AGENTPACK_HOME/learner-profile.json` and repo-local agent config created by installers. |
 | What files are ignored? | `.gitignore`, `.agentignore`, generated/vendor defaults, and configured ignore rules. |
 | Can secrets leak into packs? | Secret-like strings are redacted in generated packs, but users should still configure `.agentignore` and review outputs before sharing. |
 | Does MCP expose repo data? | MCP tools expose local repo context only to the configured local agent/client that connects to them. |
@@ -25,8 +25,17 @@ Common generated files:
 - `.agentpack/benchmark_results.jsonl`
 - `.agentpack/benchmark-report.md`
 - `.agentpack/benchmark-report.json`
+- `.agentpack/learning-sessions.jsonl`
+- `$AGENTPACK_HOME/learner-profile.json`
 
 Generated context can contain source excerpts. Do not paste it into public issues, chat tools, or logs unless you have reviewed it.
+
+Learning answers, rubric evidence, artifact paths, and verification summaries stay
+in the owning project's `.agentpack/learning-sessions.jsonl`. They are excluded
+from `--team-export`. The global learner profile stores only schema version,
+role, target level, and update time; AgentPack writes it with user-only
+permissions where the platform supports them. Learning observability events are
+bounded to IDs, competency status, and score and never include the full answer.
 
 ## Network Behavior
 

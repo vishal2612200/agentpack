@@ -1,9 +1,22 @@
-import type { ImpactEntity, ImpactRelationship, ImpactScene, LearningRecommendationSet as GeneratedLearningRecommendationSet } from "./dashboard-v2.generated";
+import type {
+  CompetencySummary as GeneratedCompetencySummary,
+  ImpactEntity,
+  ImpactRelationship,
+  ImpactScene,
+  LearnerProfile as GeneratedLearnerProfile,
+  LearningProof as GeneratedLearningProof,
+  LearningRecommendationSet as GeneratedLearningRecommendationSet,
+  LearningSession as GeneratedLearningSession
+} from "./dashboard-v2.generated";
 
 export type ContextStatus = "fresh" | "stale" | "missing" | "unknown";
 export type { ImpactEntity as DashboardV2ImpactEntity, ImpactRelationship as DashboardV2ImpactRelationship, ImpactScene as DashboardV2ImpactScene } from "./dashboard-v2.generated";
 export type PresentationMode = "explain" | "build";
 export type LearningRecommendationSet = GeneratedLearningRecommendationSet;
+export type LearnerProfile = GeneratedLearnerProfile;
+export type CompetencySummary = GeneratedCompetencySummary;
+export type LearningProof = GeneratedLearningProof;
+export type LearningSession = GeneratedLearningSession;
 export type LearningScope = LearningRecommendationSet["scope"];
 export type LearningLane = LearningRecommendationSet["topics"][number]["lane"];
 export type NodeType = "task" | "file" | "symbol" | "test" | "episode" | "procedure" | "action";

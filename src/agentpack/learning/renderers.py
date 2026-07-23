@@ -19,8 +19,10 @@ def render_recommendations_markdown(recommendations: LearningRecommendationSet) 
             [
                 f"{index}. **{topic.title}** ({topic.lane.replace('_', ' ')}, score {topic.score})",
                 f"   - Project: {topic.project.name}",
+                f"   - Competency: {topic.competency_id.replace('_', ' ')} ({topic.competency_status.replace('_', ' ')})",
                 f"   - Why now: {topic.why_now}",
                 f"   - Exercise: {topic.exercise}",
+                f"   - Proof: {topic.proof_requirement}; {topic.required_artifact}",
                 f"   - Start: `{topic.start_command}`",
             ]
         )
