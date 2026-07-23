@@ -377,6 +377,8 @@ def summarize_weak_spots(root: Path, *, limit: int = 6) -> list[dict[str, Any]]:
 def _validate_proof(root: Path, session: LearningSession, proof: LearningProof) -> dict[str, str]:
     if not proof.answer.strip():
         raise ValueError("proof answer must not be empty")
+    if proof.self_assessment not in {"mastered", "developing", "needs-practice"}:
+        raise ValueError("proof self-assessment is required")
     expected = [_criterion_key(value) for value in session.expected_points if value.strip()]
     if not expected:
         raise ValueError("learning session has no expected points to evaluate")

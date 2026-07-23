@@ -200,6 +200,12 @@ def test_proof_validation_rejects_incomplete_rubric_artifact_failures_and_escape
     with pytest.raises(ValueError, match="exit successfully"):
         record_learning_proof(root, session.session_id, failed)
 
+    missing_self_assessment = _proof(kind="artifact", artifact="feature.py").model_copy(
+        update={"self_assessment": ""}
+    )
+    with pytest.raises(ValueError, match="self-assessment is required"):
+        record_learning_proof(root, session.session_id, missing_self_assessment)
+
     escaped = _proof(kind="artifact", artifact="../outside.py")
     with pytest.raises(ValueError, match="traversal"):
         record_learning_proof(root, session.session_id, escaped)
@@ -251,6 +257,21 @@ def test_latest_competency_result_uses_chronological_timestamp_order(tmp_path: P
     assert append_learning_session(root, later)
 
     assert _status(root) == "needs_practice"
+
+
+def test_empty_self_assessment_is_not_a_passing_mastery_proof(tmp_path: Path) -> None:
+    root = _project(tmp_path)
+    session = _session(root, task_id="empty-self-assessment").model_copy(
+        update={
+            "status": "completed",
+            "score": 100,
+            "self_assessment": "",
+            "proof": _proof().model_copy(update={"self_assessment": ""}),
+        }
+    )
+    assert append_learning_session(root, session)
+
+    assert _status(root) == "developing"
 
 
 def test_profile_role_and_level_validation(tmp_path: Path) -> None:

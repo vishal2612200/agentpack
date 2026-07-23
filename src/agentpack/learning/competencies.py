@@ -435,7 +435,7 @@ def _is_structured_passing_proof(session: LearningSession) -> bool:
         and not session.legacy_evidence
         and session.score is not None
         and session.score >= 80
-        and session.self_assessment != "needs-practice"
+        and session.self_assessment in {"mastered", "developing"}
     )
 
 
