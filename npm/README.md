@@ -36,11 +36,17 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ## Latest Update
 
-`0.4.1` adds the unified work/learn loop, project-level dashboard views, worktree-aware
-project status, and last-known dashboard recovery scoped to the served project.
+`0.4.1` adds the unified work/learn/finish loop, typed Dashboard v2 workspace
+views, evidence-backed project health and decision briefs, and read-only
+last-known recovery scoped to the served project. It also adds cited PR comment
+resolution, structured handoff/resume flows, skill review evaluations, and
+worktree-safe project mutations.
 
 ```bash
-npx @vishal2612200/agentpack release prepare --notes-path /tmp/agentpack-release-notes.md
+npx @vishal2612200/agentpack work "fix auth token expiry"
+npx @vishal2612200/agentpack learn --json
+npx @vishal2612200/agentpack finish
+npx @vishal2612200/agentpack doctor
 ```
 
 ## Before vs After

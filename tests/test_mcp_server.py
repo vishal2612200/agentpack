@@ -7,6 +7,7 @@ from unittest.mock import patch, MagicMock
 
 
 from agentpack.mcp_server import (
+    MCP_TOOL_NAMES,
     _repo_root,
     _readiness_impl,
     _truncate_to_budget,
@@ -22,6 +23,9 @@ from agentpack.mcp_server import (
     _pack_context_impl,
     _route_task_impl,
     _validate_toon_impl,
+    _learning_complete_impl,
+    _learning_recommendations_impl,
+    _learning_start_impl,
 )
 
 
@@ -810,3 +814,60 @@ def test_get_related_files_excludes_self(tmp_path):
     # src/a.py should not appear as its own neighbour
     lines = [ln for ln in result.splitlines() if "src/a.py" in ln and "Related files for" not in ln]
     assert not lines
+
+
+def test_learning_mcp_tools_share_recommendation_start_and_proof_services(tmp_path, monkeypatch):
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home"))
+    agentpack = tmp_path / ".agentpack"
+    agentpack.mkdir()
+    (agentpack / "config.toml").write_text("[context]\n", encoding="utf-8")
+    source = tmp_path / "src" / "api.py"
+    source.parent.mkdir()
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    (agentpack / "session-events.jsonl").write_text(
+        json.dumps(
+            {
+                "type": "task_memory",
+                "timestamp": "2026-07-22T10:00:00+00:00",
+                "task_id": "task-api",
+                "task": "Implement API compatibility",
+                "concepts": ["implementation"],
+                "changed_files": ["src/api.py"],
+            }
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    recommendations_output = _learning_recommendations_impl(tmp_path)
+    assert "@format toon" in recommendations_output
+    assert "collaboration | Collaboration | unassessed" in recommendations_output
+    assert {"learning_recommendations", "learning_start", "learning_complete"} <= set(MCP_TOOL_NAMES)
+
+    from agentpack.learning.service import get_learning_recommendations
+    from agentpack.learning.sessions import read_learning_sessions
+
+    topic = get_learning_recommendations(tmp_path).topics[0]
+    start_output = _learning_start_impl(tmp_path, topic.topic_id)
+    session = read_learning_sessions(tmp_path)[-1]
+    assert session.session_id in start_output
+    proof = {
+        "kind": "artifact",
+        "answer": "The API remains additive and the focused check passes.",
+        "rubric_results": [
+            {"criterion": point, "rating": "met", "evidence": "Covered"}
+            for point in session.expected_points
+        ],
+        "artifact_paths": ["src/api.py"],
+        "verification_evidence": [
+            {"command": "python -m compileall src/api.py", "exit_code": 0, "summary": "compiled", "executed_at": ""}
+        ],
+        "self_assessment": "mastered",
+        "evaluator": "codex",
+        "evaluated_at": "",
+    }
+
+    completion_output = _learning_complete_impl(tmp_path, session.session_id, proof)
+
+    assert "score: 100" in completion_output
+    assert "duplicate: false" in completion_output

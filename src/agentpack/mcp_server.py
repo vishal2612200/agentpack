@@ -38,6 +38,9 @@ Tools exposed:
     get_handoff         — inspect one handoff by memorable name
     accept_handoff      — atomically claim, apply, and resume a handoff
     release_handoff     — release the current session's claim
+    learning_recommendations — return the next competency-backed learning queue
+    learning_start      — start a coached learning session
+    learning_complete   — record structured proof for a learning session
 """
 from __future__ import annotations
 
@@ -95,6 +98,9 @@ MCP_TOOL_NAMES = (
     "get_handoff",
     "accept_handoff",
     "release_handoff",
+    "learning_recommendations",
+    "learning_start",
+    "learning_complete",
 )
 
 
@@ -1062,6 +1068,53 @@ def _explain_route_impl(root: Path, task: str, output_format: StructuredFormat =
     )
 
 
+def _learning_recommendations_impl(root: Path, request: str = "", scope: str = "local") -> str:
+    from agentpack.learning.recommender import record_recommendation_impressions
+    from agentpack.learning.service import get_learning_recommendations
+
+    recommendations = get_learning_recommendations(root, request=request, scope=scope)
+    recommendations = record_recommendation_impressions(recommendations)
+    return to_llm(
+        root,
+        recommendations.model_dump(mode="json"),
+        requested="toon",
+        root_name="learning_recommendations",
+    )
+
+
+def _learning_start_impl(root: Path, topic_id: str, project_id: str = "", mode: str = "") -> str:
+    from agentpack.learning.service import coaching_prompt, start_learning_session
+
+    session, duplicate = start_learning_session(
+        root,
+        topic_id,
+        project_id_value=project_id,
+        mode=mode,
+    )
+    return to_llm(
+        root,
+        {
+            "session": session.model_dump(mode="json"),
+            "coaching_prompt": coaching_prompt(session),
+            "duplicate": duplicate,
+        },
+        requested="toon",
+        root_name="learning_session",
+    )
+
+
+def _learning_complete_impl(root: Path, session_id: str, proof: dict[str, Any]) -> str:
+    from agentpack.learning.service import complete_learning_session_with_proof
+
+    session, duplicate = complete_learning_session_with_proof(root, session_id, proof)
+    return to_llm(
+        root,
+        {"session": session.model_dump(mode="json"), "duplicate": duplicate},
+        requested="toon",
+        root_name="learning_completion",
+    )
+
+
 def serve() -> None:
     try:
         from mcp.server.fastmcp import FastMCP
@@ -1083,6 +1136,21 @@ def serve() -> None:
         CLI doctor can only verify registration/config; this tool verifies the active host path.
         """
         return _readiness_impl(_repo_root(), format)
+
+    @mcp.tool()
+    def learning_recommendations(request: str = "", scope: str = "local") -> str:
+        """Return up to three competency-backed topics from local or global project evidence."""
+        return _learning_recommendations_impl(_repo_root(), request=request, scope=scope)
+
+    @mcp.tool()
+    def learning_start(topic_id: str, project_id: str = "", mode: str = "") -> str:
+        """Start one coached topic and return its question, rubric, evidence, and coaching prompt."""
+        return _learning_start_impl(_repo_root(), topic_id, project_id=project_id, mode=mode)
+
+    @mcp.tool()
+    def learning_complete(session_id: str, proof: dict[str, Any]) -> str:
+        """Validate and record host-evaluated structured proof for a learning session."""
+        return _learning_complete_impl(_repo_root(), session_id, proof)
 
     @mcp.tool()
     def start_task(task: str, mode: str = "balanced", budget: int = 0, max_tokens: int = 20000, thread_id: str = "") -> str:

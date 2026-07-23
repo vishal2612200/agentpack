@@ -43,7 +43,17 @@ from agentpack.dashboard.project_overview import (
     record_project_status_event,
     select_project_workspaces,
 )
-from agentpack.learning.recommender import recommend_learning_topics
+from agentpack.learning.service import (
+    LearningProjectNotFoundError,
+    LearningProjectReadOnlyError,
+    coaching_prompt,
+    complete_learning_session_with_proof,
+    get_learning_profile,
+    get_learning_recommendations,
+    set_learning_profile_mutation,
+    start_learning_session,
+)
+from agentpack.learning.sessions import LearningProofConflictError
 from agentpack.session.events import record_event
 from agentpack.session.identity import repository_path
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
@@ -63,6 +73,9 @@ from agentpack.dashboard.contracts import (
     DashboardV2Error,
     DashboardV2Handoff,
     DashboardV2HandoffOperationRequest,
+    LearningProfileUpdateRequest,
+    LearningSessionCompleteRequest,
+    LearningSessionStartRequest,
     ProjectEventRequest,
     ProjectProfileUpdateRequest,
 )
@@ -274,11 +287,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if scope not in {"local", "global"}:
                 self._send_json({"error": "scope must be local or global"}, status=HTTPStatus.BAD_REQUEST)
                 return
-            recommendations = recommend_learning_topics(
-                self.server.state.root,
-                global_scope=scope == "global",
-            )
+            recommendations = get_learning_recommendations(self.server.state.root, scope=scope)
             self._send_json(recommendations.model_dump(mode="json"))
+            return
+        if parsed.path == "/api/learning/profile":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            profile, warnings = get_learning_profile()
+            self._send_json({"profile": profile.model_dump(mode="json"), "warnings": warnings})
             return
         if parsed.path == "/api/project/overview":
             if not self._authorized(parsed):
@@ -402,6 +419,94 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_v2_auth_error()
             else:
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+            return
+        if parsed.path == "/api/learning/profile":
+            request = self._read_v2_model(LearningProfileUpdateRequest)
+            if request is None:
+                return
+            assert isinstance(request, LearningProfileUpdateRequest)
+            try:
+                with self.server.state.lock:
+                    profile, duplicate = set_learning_profile_mutation(
+                        self.server.state.root,
+                        mutation_id=request.mutation_id,
+                        role=request.role,
+                        target_level=request.target_level,
+                    )
+            except (OSError, ValueError) as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                {
+                    "profile": profile.model_dump(mode="json"),
+                    "mutation_id": request.mutation_id,
+                    "duplicate": duplicate,
+                }
+            )
+            return
+        if parsed.path == "/api/learning/sessions/start":
+            request = self._read_v2_model(LearningSessionStartRequest)
+            if request is None:
+                return
+            assert isinstance(request, LearningSessionStartRequest)
+            try:
+                with self.server.state.lock:
+                    session, duplicate = start_learning_session(
+                        self.server.state.root,
+                        request.topic_id,
+                        project_id_value=request.project_id,
+                        mode=request.mode,
+                        mutation_id=request.mutation_id,
+                    )
+            except LearningProjectReadOnlyError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except LearningProjectNotFoundError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                {
+                    "session": session.model_dump(mode="json"),
+                    "coaching_prompt": coaching_prompt(session),
+                    "duplicate": duplicate,
+                    "mutation_id": request.mutation_id,
+                }
+            )
+            return
+        if parsed.path == "/api/learning/sessions/complete":
+            request = self._read_v2_model(LearningSessionCompleteRequest)
+            if request is None:
+                return
+            assert isinstance(request, LearningSessionCompleteRequest)
+            try:
+                with self.server.state.lock:
+                    session, duplicate = complete_learning_session_with_proof(
+                        self.server.state.root,
+                        request.session_id,
+                        request.proof,
+                    )
+            except LearningProjectReadOnlyError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.FORBIDDEN)
+                return
+            except LearningProjectNotFoundError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.NOT_FOUND)
+                return
+            except LearningProofConflictError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            self._send_json(
+                {
+                    "session": session.model_dump(mode="json"),
+                    "duplicate": duplicate,
+                    "mutation_id": request.mutation_id,
+                }
+            )
             return
         if parsed.path == "/api/project/profile":
             request = self._read_v2_model(ProjectProfileUpdateRequest)

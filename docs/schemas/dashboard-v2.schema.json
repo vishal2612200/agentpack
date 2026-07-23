@@ -271,11 +271,13 @@
         "generated_at",
         "topics",
         "warnings",
-        "mastery_summary"
+        "mastery_summary",
+        "profile",
+        "competencies"
       ],
       "properties": {
         "schema_version": {
-          "const": 1
+          "const": 2
         },
         "recommendation_id": {
           "type": "string",
@@ -305,6 +307,17 @@
         },
         "mastery_summary": {
           "$ref": "#/$defs/learningMasterySummary"
+        },
+        "profile": {
+          "$ref": "#/$defs/learnerProfile"
+        },
+        "competencies": {
+          "type": "array",
+          "minItems": 7,
+          "maxItems": 7,
+          "items": {
+            "$ref": "#/$defs/competencySummary"
+          }
         }
       }
     },
@@ -327,6 +340,11 @@
         "prompt",
         "questions",
         "mastery_status",
+        "competency_id",
+        "competency_status",
+        "target_level",
+        "proof_requirement",
+        "required_artifact",
         "start_command"
       ],
       "properties": {
@@ -337,8 +355,8 @@
         "lane": {
           "enum": [
             "now",
-            "system",
-            "weak_spot"
+            "weak_spot",
+            "breadth"
           ]
         },
         "project": {
@@ -399,6 +417,24 @@
             "needs_practice",
             "unassessed"
           ]
+        },
+        "competency_id": {
+          "$ref": "#/$defs/competencyId"
+        },
+        "competency_status": {
+          "$ref": "#/$defs/competencyStatus"
+        },
+        "target_level": {
+          "$ref": "#/$defs/targetLevel"
+        },
+        "proof_requirement": {
+          "enum": [
+            "reasoning",
+            "artifact"
+          ]
+        },
+        "required_artifact": {
+          "type": "string"
         },
         "start_command": {
           "type": "string"
@@ -524,6 +560,294 @@
         "unassessed": {
           "type": "integer",
           "minimum": 0
+        }
+      }
+    },
+    "competencyId": {
+      "enum": [
+        "product_reasoning",
+        "implementation",
+        "quality",
+        "systems",
+        "production",
+        "security",
+        "collaboration"
+      ]
+    },
+    "competencyStatus": {
+      "enum": [
+        "mastered",
+        "developing",
+        "needs_practice",
+        "unassessed"
+      ]
+    },
+    "targetLevel": {
+      "enum": [
+        "unspecified",
+        "junior",
+        "mid",
+        "senior",
+        "staff"
+      ]
+    },
+    "learnerProfile": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "schema_version",
+        "role",
+        "target_level",
+        "updated_at"
+      ],
+      "properties": {
+        "schema_version": {
+          "const": 1
+        },
+        "role": {
+          "enum": [
+            "frontend",
+            "backend",
+            "mobile",
+            "platform",
+            "general"
+          ]
+        },
+        "target_level": {
+          "$ref": "#/$defs/targetLevel"
+        },
+        "updated_at": {
+          "type": "string"
+        }
+      }
+    },
+    "competencySummary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "competency_id",
+        "name",
+        "status",
+        "passing_proofs",
+        "verified_artifacts",
+        "latest_evidence",
+        "latest_score",
+        "role_emphasis"
+      ],
+      "properties": {
+        "competency_id": {
+          "$ref": "#/$defs/competencyId"
+        },
+        "name": {
+          "type": "string"
+        },
+        "status": {
+          "$ref": "#/$defs/competencyStatus"
+        },
+        "passing_proofs": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "verified_artifacts": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "latest_evidence": {
+          "type": "string"
+        },
+        "latest_score": {
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "role_emphasis": {
+          "type": "boolean"
+        }
+      }
+    },
+    "rubricResult": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "criterion",
+        "rating",
+        "evidence"
+      ],
+      "properties": {
+        "criterion": {
+          "type": "string"
+        },
+        "rating": {
+          "enum": [
+            "missing",
+            "partial",
+            "met"
+          ]
+        },
+        "evidence": {
+          "type": "string"
+        }
+      }
+    },
+    "verificationEvidence": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "command",
+        "exit_code",
+        "summary",
+        "executed_at"
+      ],
+      "properties": {
+        "command": {
+          "type": "string"
+        },
+        "exit_code": {
+          "type": "integer"
+        },
+        "summary": {
+          "type": "string"
+        },
+        "executed_at": {
+          "type": "string"
+        }
+      }
+    },
+    "learningProof": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "answer",
+        "rubric_results",
+        "artifact_paths",
+        "verification_evidence",
+        "self_assessment",
+        "evaluator",
+        "evaluated_at"
+      ],
+      "properties": {
+        "kind": {
+          "enum": [
+            "reasoning",
+            "artifact"
+          ]
+        },
+        "answer": {
+          "type": "string"
+        },
+        "rubric_results": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/rubricResult"
+          }
+        },
+        "artifact_paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "verification_evidence": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/verificationEvidence"
+          }
+        },
+        "self_assessment": {
+          "enum": [
+            "",
+            "mastered",
+            "developing",
+            "needs-practice"
+          ]
+        },
+        "evaluator": {
+          "type": "string"
+        },
+        "evaluated_at": {
+          "type": "string"
+        }
+      }
+    },
+    "learningSession": {
+      "type": "object",
+      "additionalProperties": true,
+      "required": [
+        "session_id",
+        "topic_id",
+        "project_id",
+        "project_name",
+        "task_id",
+        "task",
+        "question",
+        "expected_points",
+        "evidence_files",
+        "competency_id",
+        "target_level",
+        "proof_requirement",
+        "required_artifact",
+        "status"
+      ],
+      "properties": {
+        "session_id": {
+          "type": "string"
+        },
+        "topic_id": {
+          "type": "string"
+        },
+        "project_id": {
+          "type": "string"
+        },
+        "project_name": {
+          "type": "string"
+        },
+        "task_id": {
+          "type": "string"
+        },
+        "task": {
+          "type": "string"
+        },
+        "question": {
+          "type": "string"
+        },
+        "expected_points": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "evidence_files": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "competency_id": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/competencyId"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "target_level": {
+          "$ref": "#/$defs/targetLevel"
+        },
+        "proof_requirement": {
+          "enum": [
+            "reasoning",
+            "artifact"
+          ]
+        },
+        "required_artifact": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string"
         }
       }
     },

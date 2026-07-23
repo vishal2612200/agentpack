@@ -90,8 +90,11 @@ agentpack learn --global --json
 agentpack learn "quiz me on last task" --json
 agentpack learn "interview me on this PR"
 agentpack learn --json
+agentpack learn --profile --json
+agentpack learn --profile --role backend --level mid --json
 agentpack learn --topic <topic-id> --json
-agentpack learn --complete <session-id> --score 85 --self-assessment mastered --json
+agentpack learn --complete <session-id> --proof-file proof.json --json
+cat proof.json | agentpack learn --complete <session-id> --proof-file - --json
 agentpack learn feedback helpful --target card:1
 agentpack learn feedback not-helpful --note "too generic"
 ```
@@ -104,10 +107,14 @@ boost for those missed paths. Explicit feedback writes
 when `[learning].inject_agent_lessons = true`. Quoted learning requests switch
 the output into Task Coach mode (`quiz`, `interview`, `failure`, `review`, or
 `system-design`) and can use recent `task_memory` events from
-`.agentpack/session-events.jsonl`. Queued questions are unassessed; only scored
-results can become `developing`, `needs_practice`, or `mastered`. Learning runs
-and feedback also refresh `.agentpack/observer-brief.md` for local advisory
-relationships.
+`.agentpack/session-events.jsonl`. Changed files and task concepts are observed
+exposure, not mastery. Queued questions remain unassessed. AgentPack derives a
+rubric score from structured host-agent proof; one proof is never enough for
+mastery. Mastery requires two passing proofs from distinct project/task pairs,
+including one verified artifact proof. Legacy `--score` completion remains
+accepted with a deprecation warning and can produce at most `developing`.
+Learning runs and feedback also refresh `.agentpack/observer-brief.md` for local
+advisory relationships.
 
 ### `agentpack retrieve`
 
@@ -700,15 +707,17 @@ agentpack work "fix auth" --run --acceptance "login works" --acceptance "expired
 ### `agentpack learn`
 
 Create the existing local learning artifacts and rank the next three
-evidence-backed topics from work memory, system relationships, and assessed
-mastery. The CLI stays deterministic; Codex or Claude teaches and scores the
-selected topic.
+evidence-backed topics across current relevance, assessed weakness, and
+engineering breadth. The CLI stays deterministic; Codex or Claude coaches the
+session, evaluates every rubric point, and submits proof. AgentPack validates
+and stores evidence but does not call a hosted model.
 
 ```bash
 agentpack learn
 agentpack learn --global --json
+agentpack learn --profile --role backend --level mid --json
 agentpack learn --topic <topic-id> --project <project-id> --json
-agentpack learn --complete <session-id> --score 85 --self-assessment mastered --json
+agentpack learn --complete <session-id> --proof-file proof.json --json
 agentpack learn --today
 agentpack learn --since HEAD~1
 agentpack learn --output .agentpack/review.md
@@ -738,7 +747,8 @@ Default outputs:
 - `.agentpack/learning-dashboard.html` with `--dashboard`
 - `.agentpack/team-lessons.md` with `--team-export`
 - `.agentpack/learning-feedback.jsonl` with `--feedback`
-- `.agentpack/learning-sessions.jsonl` for append-only coaching sessions and scored updates
+- `.agentpack/learning-sessions.jsonl` for append-only coaching sessions, private answers, and proof updates
+- `$AGENTPACK_HOME/learner-profile.json` for the private global role and target level
 
 The command reads the current session task file, changed files, and bounded redacted
 diffs. It does not call a hosted service by default. The human-facing summary
@@ -763,8 +773,11 @@ LearningReport-compatible JSON fields on stdout. This keeps hosted model,
 company LLM gateway, or custom rules-engine integration behind an explicit local
 command boundary. `--dashboard` writes a static HTML learning dashboard for
 IDE/browser review. Queued sessions remain unassessed and do not appear as weak
-spots until a score demonstrates a gap. `--team-export` writes a shareable lessons file that omits
-personal skill history. `--ci` prints a quality report and exits non-zero when
+spots until proof demonstrates a gap. Artifact proof is accepted only for an
+existing file inside the owning project and requires successful command evidence;
+AgentPack stores content hashes but does not execute or independently judge the
+commands. `--team-export` writes a shareable lessons file that omits personal
+skill history, answers, and proof. `--ci` prints a quality report and exits non-zero when
 learning is too generic or lacks changed-file evidence. `--skills` and
 `--drills` turn the local skill map into a quick progress view and
 next-practice list.
@@ -1320,6 +1333,9 @@ Register in Claude Code settings (`~/.claude/settings.json`):
 | `get_delta_context(max_files)` | Return the latest selected-file delta plus top current selected files. Useful for cheap prompt-time refresh checks. |
 | `validate_toon(content, path, require_format, schema, allow_json, return_canonical)` | Validate TOON or review-stage JSON fallback. With `return_canonical=true`, includes canonical TOON in the response when validation succeeds. |
 | `get_stats()` | Return latest pack stats, savings, selection quality, excluded files, and benchmark-style signals. |
+| `learning_recommendations(request, scope)` | Return the schema-v2 next-topic queue, learner profile, and seven derived competency summaries. |
+| `learning_start(topic_id, project_id, mode)` | Start a project-owned coached session and return its question, expected points, evidence, and host coaching prompt. |
+| `learning_complete(session_id, proof)` | Validate and record structured host-evaluated proof; canonical retries are idempotent. |
 
 **Live MCP exposure:** CLI `doctor` verifies MCP registration and local runtime readiness. It cannot prove the current agent host actually exposes AgentPack tools; call `readiness()` from that host. If it returns JSON, live exposure is confirmed.
 

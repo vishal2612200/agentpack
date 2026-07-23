@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import shlex
+import sys
 from datetime import datetime
 from pathlib import Path
 
@@ -28,8 +29,6 @@ from agentpack.learning.provider import (
 )
 from agentpack.learning.quality import score_learning_report
 from agentpack.learning.recommender import (
-    find_recommended_topic,
-    learning_project_roots,
     recommend_learning_topics,
     record_recommendation_impressions,
 )
@@ -46,12 +45,14 @@ from agentpack.learning.renderers import (
     render_recommendations_markdown,
     render_team_lessons_markdown,
 )
-from agentpack.learning.sessions import (
-    append_learning_session,
-    complete_learning_session,
-    find_learning_session,
-    record_learning_sessions,
-    session_from_recommendation,
+from agentpack.learning.sessions import record_learning_sessions
+from agentpack.learning.service import (
+    coaching_prompt,
+    complete_learning_session_legacy,
+    complete_learning_session_with_proof,
+    get_learning_profile,
+    set_learning_profile,
+    start_learning_session,
 )
 from agentpack.learning.skill_map import (
     apply_skill_feedback,
@@ -85,12 +86,16 @@ def register(app: typer.Typer) -> None:
         project_id: str = typer.Option("", "--project", help="Owning project ID for a global recommendation."),
         coach_mode: str = typer.Option("", "--mode", help="Override the recommended coaching mode."),
         complete_session: str = typer.Option("", "--complete", help="Complete a learning session by session ID."),
+        proof_file: str = typer.Option("", "--proof-file", help="Structured proof JSON path, or '-' for stdin."),
         score: int | None = typer.Option(None, "--score", help="Coach score from 0 to 100 for --complete."),
         self_assessment: str = typer.Option(
             "",
             "--self-assessment",
             help="Developer confirmation for --complete: mastered|needs-practice.",
         ),
+        profile: bool = typer.Option(False, "--profile", help="Show or update the private learner profile."),
+        role: str = typer.Option("", "--role", help="Learner role for --profile."),
+        target_level: str = typer.Option("", "--level", help="Target level for --profile."),
         since: str | None = typer.Option(None, "--since", help="Git ref to compare against, e.g. HEAD~1 or main."),
         today: bool = typer.Option(False, "--today", help="Use today's work scope label for the report."),
         output: str = typer.Option("", "--output", "-o", help="Markdown output path."),
@@ -177,16 +182,41 @@ def register(app: typer.Typer) -> None:
         _register_project_safe(root)
         cfg = load_config(root)
         request_parts = list(request or [])
+        if profile:
+            if (
+                request_parts
+                or topic_id
+                or complete_session
+                or project_id
+                or coach_mode
+                or global_scope
+                or proof_file
+                or score is not None
+                or self_assessment
+            ):
+                _usage_error("--profile cannot be combined with learning requests, topics, sessions, or --global")
+            _show_or_update_profile(
+                root,
+                role=role,
+                target_level=target_level,
+                json_output=json_output,
+            )
+            return
+        if role or target_level:
+            _usage_error("--role and --level require --profile")
         if topic_id and complete_session:
             _usage_error("--topic and --complete cannot be used together")
         if complete_session:
             if request_parts or project_id or coach_mode or global_scope:
                 _usage_error("--complete cannot be combined with a learning request, --project, --mode, or --global")
-            if score is None or not self_assessment:
-                _usage_error("--complete requires --score and --self-assessment")
+            if proof_file and (score is not None or self_assessment):
+                _usage_error("--proof-file cannot be combined with --score or --self-assessment")
+            if not proof_file and (score is None or not self_assessment):
+                _usage_error("--complete requires --proof-file, or deprecated --score and --self-assessment")
             _complete_recommended_session(
                 root,
                 complete_session,
+                proof_file=proof_file,
                 score=score,
                 self_assessment=self_assessment,
                 note=feedback_note,
@@ -194,8 +224,8 @@ def register(app: typer.Typer) -> None:
             )
             return
         if topic_id:
-            if request_parts or score is not None or self_assessment:
-                _usage_error("--topic cannot be combined with a learning request, --score, or --self-assessment")
+            if request_parts or score is not None or self_assessment or proof_file:
+                _usage_error("--topic cannot be combined with a learning request or completion proof")
             _start_recommended_session(
                 root,
                 topic_id,
@@ -204,8 +234,8 @@ def register(app: typer.Typer) -> None:
                 json_output=json_output,
             )
             return
-        if project_id or coach_mode or score is not None or self_assessment:
-            _usage_error("--project and --mode require --topic; --score and --self-assessment require --complete")
+        if project_id or coach_mode or score is not None or self_assessment or proof_file:
+            _usage_error("--project and --mode require --topic; proof options require --complete")
         learning_request = ""
         if request_parts and request_parts[0] == "feedback":
             if len(request_parts) < 2:
@@ -524,48 +554,31 @@ def _start_recommended_session(
     coach_mode: str,
     json_output: bool,
 ) -> None:
-    valid_modes = {"study", "quiz", "interview", "failure", "review", "system-design"}
-    if coach_mode and coach_mode not in valid_modes:
-        _usage_error("--mode must be study, quiz, interview, failure, review, or system-design")
     try:
-        target, topic, recommendation_id = find_recommended_topic(
+        session, _duplicate = start_learning_session(
             root,
             topic_id,
             project_id_value=project_id,
+            mode=coach_mode,
         )
     except ValueError as exc:
         _usage_error(str(exc))
         return
-    session = session_from_recommendation(topic, recommendation_id=recommendation_id, mode=coach_mode)
-    if not append_learning_session(target, session):
-        console.print(f"[red]Could not write learning session in {target}[/]")
-        raise typer.Exit(1)
-    _record_learning_event_safe(
-        target,
-        "learning_session_started",
-        {
-            "session_id": session.session_id,
-            "topic_id": session.topic_id,
-            "recommendation_id": recommendation_id,
-            "project_id": topic.project.project_id,
-            "mode": session.mode,
-        },
-    )
     if json_output:
-        typer.echo(json.dumps(session.model_dump(mode="json"), indent=2, sort_keys=True))
+        payload = session.model_dump(mode="json")
+        payload["coaching_prompt"] = coaching_prompt(session)
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
-    console.print(f"[green]✓[/] Started [bold]{session.topic}[/] in {topic.project.name}")
+    console.print(f"[green]✓[/] Started [bold]{session.topic}[/] in {session.project_name}")
     console.print(f"Session: [bold]{session.session_id}[/]")
-    console.print(session.question or topic.exercise)
+    console.print(session.question)
     complete = [
         "agentpack",
         "learn",
         "--complete",
         session.session_id,
-        "--score",
-        "<0-100>",
-        "--self-assessment",
-        "<mastered|needs-practice>",
+        "--proof-file",
+        "<proof.json|->",
     ]
     console.print(f"Complete: [bold]{shlex.join(complete)}[/]")
 
@@ -574,31 +587,35 @@ def _complete_recommended_session(
     root: Path,
     session_id: str,
     *,
-    score: int,
+    proof_file: str,
+    score: int | None,
     self_assessment: str,
     note: str,
     json_output: bool,
 ) -> None:
-    owner = next(
-        (candidate for candidate in learning_project_roots(root) if find_learning_session(candidate, session_id)),
-        None,
-    )
-    if owner is None:
-        _usage_error(f"Learning session not found: {session_id}")
-        return
     try:
-        session = complete_learning_session(
-            owner,
-            session_id,
-            score=score,
-            self_assessment=self_assessment,
-            note=note,
-        )
-    except ValueError as exc:
+        if proof_file:
+            proof = _read_proof_file(root, proof_file)
+            session, duplicate = complete_learning_session_with_proof(root, session_id, proof)
+        else:
+            typer.echo(
+                "Warning: --score/--self-assessment completion is deprecated; use --proof-file. Legacy evidence cannot mark a competency mastered.",
+                err=True,
+            )
+            assert score is not None
+            session = complete_learning_session_legacy(
+                root,
+                session_id,
+                score=score,
+                self_assessment=self_assessment,
+                note=note,
+            )
+            duplicate = False
+    except (OSError, json.JSONDecodeError, ValueError) as exc:
         _usage_error(str(exc))
         return
     _record_learning_event_safe(
-        owner,
+        Path(session.project_root) if session.project_root else root,
         "learning_session_completed",
         {
             "session_id": session.session_id,
@@ -610,9 +627,57 @@ def _complete_recommended_session(
         },
     )
     if json_output:
-        typer.echo(json.dumps(session.model_dump(mode="json"), indent=2, sort_keys=True))
+        payload = session.model_dump(mode="json")
+        payload["duplicate"] = duplicate
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
-    console.print(f"[green]✓[/] Recorded {session.topic}: score {session.score}, mastery [bold]{session.mastery_status}[/]")
+    suffix = " (already recorded)" if duplicate else ""
+    console.print(f"[green]✓[/] Recorded {session.topic}: score {session.score}, status [bold]{session.mastery_status}[/]{suffix}")
+
+
+def _show_or_update_profile(
+    root: Path,
+    *,
+    role: str,
+    target_level: str,
+    json_output: bool,
+) -> None:
+    try:
+        if role or target_level:
+            profile = set_learning_profile(root, role=role, target_level=target_level)
+            warnings: list[str] = []
+        else:
+            profile, warnings = get_learning_profile()
+    except (OSError, ValueError) as exc:
+        _usage_error(str(exc))
+        return
+    if json_output:
+        typer.echo(
+            json.dumps(
+                {"profile": profile.model_dump(mode="json"), "warnings": warnings},
+                indent=2,
+                sort_keys=True,
+            )
+        )
+        return
+    console.print(f"Role: [bold]{profile.role}[/]")
+    console.print(f"Target level: [bold]{profile.target_level}[/]")
+    for warning in warnings:
+        console.print(f"[yellow]{warning}[/]")
+
+
+def _read_proof_file(root: Path, value: str) -> dict:
+    if value == "-":
+        raw = sys.stdin.read()
+    else:
+        path = Path(value).expanduser()
+        if not path.is_absolute():
+            path = root / path
+        raw = path.read_text(encoding="utf-8")
+    payload = json.loads(raw)
+    if not isinstance(payload, dict):
+        raise ValueError("proof file must contain a JSON object")
+    return payload
 
 
 def _record_learning_event_safe(root: Path, event_type: str, payload: dict) -> None:

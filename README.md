@@ -93,9 +93,10 @@ agentpack doctor
 ```
 
 `learn` turns the same local work, project, and assessment memory into up to
-three evidence-backed topics: what matters now, how the system fits together,
-and a scored weak spot when one exists. `--global` explicitly ranks topics
-across registered AgentPack projects; the coding-agent host teaches the chosen
+three evidence-backed topics: what matters now, an assessed weak spot when one
+exists, and an underrepresented engineering competency. `--global` explicitly
+ranks topics across registered AgentPack projects while competency progress is
+derived globally; the coding-agent host teaches and evaluates the chosen
 topic and records the developer's result locally.
 
 ### Prepare with project evidence
@@ -329,14 +330,17 @@ activate it inside a repository:
 
 ```bash
 pipx install agentpack-cli
-agentpack quickstart
-agentpack start "fix auth token expiry"
-agentpack next
+agentpack work "fix auth token expiry"
+agentpack learn --json
+agentpack finish
+agentpack doctor
 ```
 
-`quickstart` initializes the local project layer, `start` records the active
-task, and `next` asks AgentPack for the current safe action. MCP-capable agents
-can use the same local state directly after integration setup.
+`work` initializes the local project layer and prepares the task context,
+`learn` presents the next evidence-backed topics, `finish` records validation
+and task memory, and `doctor` checks the installation and integration surface.
+MCP-capable agents can use the same local state directly after integration
+setup.
 
 The activation path creates local project state and connects the detected agent
 integration. From there, the agent can pull current context, inspect focused

@@ -172,7 +172,11 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             assert "Observed:" in status_dialog.inner_text()
             status_dialog.get_by_role("button", name="Close dialog").click()
 
-            assert page.evaluate("Boolean(localStorage.getItem('agentpack.dashboard.last-known.v1'))")
+            cache_key = page.evaluate(
+                "Object.keys(localStorage).find((key) => "
+                "key.startsWith('agentpack.dashboard.last-known.v1.')) || ''"
+            )
+            assert cache_key
             page.route("**/api/dashboard/v2?detail=home", lambda route: route.abort())
             page.reload(wait_until="domcontentloaded")
             page.get_by_text("Last known", exact=False).first.wait_for()
@@ -182,13 +186,14 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             page.locator(".runtime-status-trigger.live").wait_for()
 
             page.evaluate(
-                "localStorage.setItem('agentpack.dashboard.last-known.v1', "
-                "JSON.stringify({schema_version: 1, cached_at: 'invalid', status: {}}))"
+                "(key) => localStorage.setItem(key, "
+                "JSON.stringify({schema_version: 1, cached_at: 'invalid', status: {}}))",
+                cache_key,
             )
             page.route("**/api/dashboard/v2?detail=home", lambda route: route.abort())
             page.reload(wait_until="domcontentloaded")
             page.get_by_role("heading", name="Dashboard failed to load", exact=True).wait_for()
-            assert page.evaluate("localStorage.getItem('agentpack.dashboard.last-known.v1')") is None
+            assert page.evaluate("(key) => localStorage.getItem(key)", cache_key) is None
             page.unroute("**/api/dashboard/v2?detail=home")
             page.get_by_role("button", name="Retry", exact=True).click()
             page.locator(".runtime-status-trigger.live").wait_for()
@@ -288,6 +293,15 @@ def test_dashboard_learning_recommendations_scope_and_copy(tmp_path: Path, monke
                 route.continue_()
 
             page.route("**/api/learning/recommendations?scope=local", handle_local_recommendations)
+            competency_ids = [
+                "product_reasoning",
+                "implementation",
+                "quality",
+                "systems",
+                "production",
+                "security",
+                "collaboration",
+            ]
             page.route(
                 "**/api/learning/recommendations?scope=global",
                 lambda route: route.fulfill(
@@ -295,13 +309,27 @@ def test_dashboard_learning_recommendations_scope_and_copy(tmp_path: Path, monke
                     content_type="application/json",
                     body=json.dumps(
                         {
-                            "schema_version": 1,
+                            "schema_version": 2,
                             "recommendation_id": "recommendation-empty",
                             "scope": "global",
                             "generated_at": "2026-07-19T10:00:00+00:00",
                             "topics": [],
                             "warnings": ["insufficient_history: fewer than three evidence-backed topics are available"],
-                            "mastery_summary": {"mastered": 0, "developing": 0, "needs_practice": 0, "unassessed": 0},
+                            "mastery_summary": {"mastered": 0, "developing": 0, "needs_practice": 0, "unassessed": 7},
+                            "profile": {"schema_version": 1, "role": "general", "target_level": "unspecified", "updated_at": ""},
+                            "competencies": [
+                                {
+                                    "competency_id": competency_id,
+                                    "name": competency_id.replace("_", " ").title(),
+                                    "status": "unassessed",
+                                    "passing_proofs": 0,
+                                    "verified_artifacts": 0,
+                                    "latest_evidence": "",
+                                    "latest_score": None,
+                                    "role_emphasis": False,
+                                }
+                                for competency_id in competency_ids
+                            ],
                         }
                     ),
                 ),
@@ -318,9 +346,19 @@ def test_dashboard_learning_recommendations_scope_and_copy(tmp_path: Path, monke
             topics = page.locator(".learning-topic-row")
             topics.first.wait_for()
             assert 1 <= topics.count() <= 3
+            assert page.locator(".competency-row").count() == 8
             command = topics.first.locator("code").inner_text()
             topics.first.get_by_role("button", name="Copy command", exact=False).click()
             assert page.evaluate("navigator.clipboard.readText()") == command
+            with page.expect_response(lambda response: response.url.endswith("/api/learning/sessions/start") and response.status == 200):
+                topics.first.get_by_role("button", name="Start", exact=True).click()
+            page.get_by_text("Active Learning Session", exact=True).wait_for()
+            page.get_by_role("button", name="Copy coaching prompt", exact=True).click()
+            assert "Evaluate every expected point" in page.evaluate("navigator.clipboard.readText()")
+
+            with page.expect_response(lambda response: response.url.endswith("/api/learning/profile") and response.request.method == "POST"):
+                page.get_by_label("Learner role").select_option("backend")
+            assert page.get_by_label("Learner role").input_value() == "backend"
 
             with page.expect_response(lambda response: "scope=global" in response.url and response.status == 200):
                 scope.get_by_role("button", name="All projects", exact=True).click()
@@ -330,6 +368,11 @@ def test_dashboard_learning_recommendations_scope_and_copy(tmp_path: Path, monke
             with page.expect_response(lambda response: "scope=local" in response.url and response.status == 200):
                 scope.get_by_role("button", name="This project", exact=True).click()
             topics.first.wait_for()
+            before_focus = local_requests["count"]
+            with page.expect_response(lambda response: "scope=local" in response.url and response.status == 200):
+                page.dispatch_event("body", "focus")
+                page.evaluate("window.dispatchEvent(new Event('focus'))")
+            assert local_requests["count"] > before_focus
 
             screenshot_dir = os.environ.get("AGENTPACK_DASHBOARD_SCREENSHOT_DIR", "").strip()
             if screenshot_dir:

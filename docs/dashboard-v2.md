@@ -38,7 +38,11 @@ All endpoints are loopback-only by default and require the dashboard token in
 | `POST` | `/api/dashboard/v2/actions/inspect` | Explain an action before execution |
 | `POST` | `/api/dashboard/v2/actions/run` | Run an approved action through the existing PTY runner |
 | `GET` | `/api/dashboard/v2/agents` | Public handoffs and detected agent sessions |
-| `GET` | `/api/learning/recommendations?scope=local\|global` | Read-only next-topic and mastery contract; dashboard reads do not record recommendation impressions |
+| `GET` | `/api/learning/profile` | Private global learner role and target level |
+| `POST` | `/api/learning/profile` | Authenticated learner profile update with a mutation ID |
+| `GET` | `/api/learning/recommendations?scope=local\|global` | Read-only schema-v2 queue, profile, and seven competency summaries; dashboard reads do not record recommendation impressions |
+| `POST` | `/api/learning/sessions/start` | Start a project-owned session and return its question, evidence, and host coaching prompt |
+| `POST` | `/api/learning/sessions/complete` | Validate and record structured host-evaluated proof; canonical retries are idempotent |
 | `GET` | `/api/project/overview?workspace=all\|current\|ID` | Profile, roadmap, initiatives, risks, decisions, health, metrics, worktrees, and recent changes |
 | `GET` | `/api/project/timeline?workspace=...&kind=...&limit=50` | Unified project activity; `limit` is capped at 200 |
 | `GET` | `/api/project/brief?mode=summary\|engineering` | Deterministic redacted Markdown; no repository file is written |
@@ -59,6 +63,13 @@ Every derived project record carries `source`, `confidence`, `updated_at`,
 bounded `evidence`, `workspace_id`, and `warnings`. Missing validation,
 architecture, release, context, or knowledge evidence remains `unknown`.
 Delivery progress comes only from declared milestones.
+
+The Knowledge view uses the same learning service as CLI and MCP. It shows the
+global role/level profile, all seven competencies, the `now`, `weak_spot`, and
+`breadth` queue, and an active session. Start and completion reject unregistered,
+inaccessible, or read-only owning projects before appending a session row. The
+browser refreshes recommendation and competency state when focus returns after
+host-agent coaching.
 
 Profile writes require both a unique `mutation_id` and the current 64-character
 `expected_revision`. The revision is the SHA-256 hash of the config contents.
