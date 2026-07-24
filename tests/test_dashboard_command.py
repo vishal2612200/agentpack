@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from http.server import BaseHTTPRequestHandler
 from pathlib import Path
 
 import pytest
@@ -9,9 +10,19 @@ from typer.testing import CliRunner
 from agentpack.cli import app
 from agentpack.dashboard.app_shell import render_dashboard_shell
 from agentpack.dashboard.server import DashboardServerState
+from agentpack.dashboard.server import DashboardRequestHandler
 
 
 runner = CliRunner()
+
+
+def test_dashboard_handler_ignores_client_disconnect(monkeypatch) -> None:
+    def disconnect(_handler) -> None:
+        raise BrokenPipeError
+
+    monkeypatch.setattr(BaseHTTPRequestHandler, "handle", disconnect)
+
+    DashboardRequestHandler.handle(object.__new__(DashboardRequestHandler))
 
 
 def test_dashboard_serves_project_dashboard(tmp_path, monkeypatch) -> None:

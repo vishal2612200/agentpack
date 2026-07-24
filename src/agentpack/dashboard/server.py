@@ -258,6 +258,14 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
     def log_message(self, _format: str, *_args: object) -> None:
         return
 
+    def handle(self) -> None:
+        # Browsers can cancel requests during refresh or navigation; do not log
+        # that normal socket shutdown as an uncaught server exception.
+        try:
+            super().handle()
+        except BrokenPipeError:
+            return
+
     def do_GET(self) -> None:
         parsed = urllib.parse.urlparse(self.path)
         if parsed.path in {"", "/"}:
