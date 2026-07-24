@@ -1,3 +1,3 @@
 """AgentPack — task-aware context packing for AI coding agents."""
 
-__version__ = "0.4.1"
+__version__ = "0.4.2"

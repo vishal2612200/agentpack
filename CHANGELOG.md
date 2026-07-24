@@ -8,6 +8,23 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ## [Unreleased]
 
+## [0.4.2] — 2026-07-24
+
+### Added
+- Added the complete engineer learning loop (`6f4018b4`, #101), including competency profiles, structured proofs, mastery tracking, CLI/MCP parity, dashboard Knowledge surfaces, skill guidance, and supporting documentation.
+
+### Changed
+- Synced the release-era documentation and onboarding surfaces (`f98f65ff`, #98), including the complete `0.4.1` release notes and current `work`, `learn`, `finish`, and `doctor` guidance.
+
+### Fixed
+- Aligned source and packaged Codex skill metadata with the repository's AGPL-3.0-only license (`d1945e71`, #99).
+- Raised the MCP dependency floor beyond the websocket validation advisory (`0fff5d08`, #100).
+- Restored dashboard startup when the default port is occupied and removed repeated Git lookups while normalizing legacy events (`06083c5e`, #102).
+
+### Validation
+- Release metadata is synchronized across Python, npm, lockfiles, and Codex plugin manifests.
+- Main-branch commits since `v0.4.1` are represented above.
+
 ## [0.4.1] — 2026-07-21
 
 ### Added
