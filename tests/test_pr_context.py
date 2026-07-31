@@ -5,6 +5,9 @@ import subprocess
 from pathlib import Path
 
 from agentpack.application.pr_context import build_pr_context, resolve_pr_context
+from agentpack.architecture.service import build_snapshot_for_ref
+from agentpack.core.scanner import file_hash
+from agentpack.learning.episodes import record_episode
 from agentpack.mcp_server import _get_pr_context_impl
 
 
@@ -55,6 +58,47 @@ def test_local_pr_context_and_mcp_output_require_explicit_fallback(tmp_path) -> 
     assert context.head_sha == head_sha
     assert payload["ok"] is True
     assert payload["pr_context"]["head_sha"] == head_sha
+
+
+def test_pr_context_uses_architecture_node_identity_for_memory(tmp_path) -> None:
+    _init_repo(tmp_path)
+    source = tmp_path / "src" / "service.py"
+    _write(source, "def greet():\n    return 'hello'\n")
+    base_sha = _commit_all(tmp_path, "base")
+    _write(source, "def greet():\n    return 'updated'\n")
+    head_sha = _commit_all(tmp_path, "head")
+    snapshot = build_snapshot_for_ref(tmp_path, head_sha)
+    entity = next(
+        item
+        for item in snapshot.entities
+        if item.entity_type == "symbol" and item.locator.path == "src/service.py" and item.display_name == "greet"
+    )
+    node_key = str(entity.metadata["node_key"])
+    record_episode(
+        tmp_path,
+        task="old wording only",
+        selected_files=["src/service.py"],
+        changed_files=["src/service.py"],
+        passed=True,
+        touched_nodes=[
+            {
+                "node_key": node_key,
+                "path": "src/service.py",
+                "source_hash": file_hash(source),
+            }
+        ],
+    )
+
+    context = build_pr_context(
+        tmp_path,
+        base_ref=base_sha,
+        head_ref=head_sha,
+        source="local-fallback",
+        focus="new wording only",
+    )
+
+    assert context.memory_retrieval_chain["constraints"]["episode_gate"] == "current node identity"
+    assert context.memory_retrieval_chain["compatible_episodes"][0]["matched_node_keys"] == [node_key]
 
 
 def _init_repo(root: Path) -> None:

@@ -105,44 +105,67 @@ def episodic_memory_matches(
     max_boost: float = 12.0,
     limit: int = 500,
     eligible_paths: set[str] | None = None,
+    eligible_node_keys: set[str] | None = None,
+    eligible_episode_ids: set[str] | None = None,
+    explicit_procedures_only: bool = False,
 ) -> list[dict[str, Any]]:
     task_terms = _terms(task)
-    if not task_terms:
+    node_keys = {str(key) for key in eligible_node_keys or set() if key}
+    episode_ids = {str(value) for value in eligible_episode_ids or set() if value}
+    if not task_terms and not node_keys:
         return []
     matches: list[dict[str, Any]] = []
     eligible = {normalize_repo_path(path) for path in eligible_paths or [] if path}
     for record in _read_jsonl(root / output_path, limit=limit):
+        episode_id = str(record.get("episode_id") or "")
+        if episode_ids and episode_id not in episode_ids:
+            continue
+        matched_nodes = _matching_current_nodes(root, record, node_keys)
+        if node_keys and not matched_nodes:
+            continue
         episode_terms = _terms(str(record.get("task") or ""))
         for concept in record.get("concepts") or []:
             if isinstance(concept, str):
                 episode_terms |= _terms(concept)
         overlap = task_terms & episode_terms
-        if not overlap:
+        if not overlap and not matched_nodes:
             continue
         failed = record.get("passed") is False
-        weight = 0.0 if failed else min(max_boost, 4.0 + len(overlap) * 2.0)
-        confidence = min(0.95, 0.55 + len(overlap) * 0.06)
-        procedures = matching_procedures(root, task, record, output_path=procedures_path)
+        location_match = bool(matched_nodes)
+        weight = 0.0 if failed else min(max_boost, (6.0 if location_match else 4.0) + len(overlap) * 2.0)
+        confidence = min(0.98, (0.8 if location_match else 0.55) + len(overlap) * 0.06)
+        procedures = matching_procedures(
+            root,
+            task,
+            record,
+            output_path=procedures_path,
+            explicit_only=explicit_procedures_only,
+        )
         if procedures and not failed:
             weight = min(max_boost, weight + 2.0)
             confidence = min(0.98, confidence + 0.1)
         path_hashes = record.get("path_hashes") if isinstance(record.get("path_hashes"), dict) else {}
         for path in record.get("changed_files") or []:
-            if isinstance(path, str) and (not eligible or normalize_repo_path(path) in eligible) and _path_is_current(root, path, path_hashes):
+            normalized_path = normalize_repo_path(path) if isinstance(path, str) else ""
+            if node_keys and normalized_path not in {node["path"] for node in matched_nodes}:
+                continue
+            if isinstance(path, str) and (not eligible or normalized_path in eligible) and _path_is_current(root, path, path_hashes):
                 matches.append(
                     {
-                        "path": normalize_repo_path(path),
+                        "path": normalized_path,
                         "boost": weight,
-                        "episode_id": str(record.get("episode_id") or ""),
+                        "episode_id": episode_id,
                         "task_id": str(record.get("task_id") or ""),
                         "confidence": confidence,
                         "negative_guidance": failed,
+                        "matched_node_keys": [node["node_key"] for node in matched_nodes],
+                        "retrieval_source": "node_identity" if location_match else "task_terms",
                         "visible_reason": (
                             (
-                                f"failed episode: avoid repeating the prior approach; overlap={', '.join(sorted(overlap)[:5])}; "
+                                f"failed episode: avoid repeating the prior approach; {_memory_match_reason(overlap, matched_nodes)}; "
                                 "source hash still current"
                                 if failed
-                                else f"episodic memory similar task; overlap={', '.join(sorted(overlap)[:5])}; source hash still current"
+                                else f"episodic memory match; {_memory_match_reason(overlap, matched_nodes)}; source hash still current"
                             )
                         ),
                         "node_ids": _node_ids_for_path(record, path),
@@ -150,6 +173,39 @@ def episodic_memory_matches(
                     }
                 )
     return matches
+
+
+def _matching_current_nodes(root: Path, record: dict[str, Any], eligible_node_keys: set[str]) -> list[dict[str, str]]:
+    if not eligible_node_keys:
+        return []
+    matches: list[dict[str, str]] = []
+    for node in record.get("touched_nodes") or []:
+        if not isinstance(node, dict):
+            continue
+        node_key = str(node.get("node_key") or node.get("node_id") or "")
+        path = normalize_repo_path(str(node.get("path") or ""))
+        if node_key not in eligible_node_keys or not path or not _node_is_current(root, path, str(node.get("source_hash") or "")):
+            continue
+        matches.append({"node_key": node_key, "path": path})
+    return matches
+
+
+def _node_is_current(root: Path, path: str, expected_hash: str) -> bool:
+    if not expected_hash:
+        return True
+    abs_path = root / path
+    if not abs_path.exists() or not abs_path.is_file():
+        return False
+    try:
+        return file_hash(abs_path) == expected_hash
+    except OSError:
+        return False
+
+
+def _memory_match_reason(overlap: set[str], matched_nodes: list[dict[str, str]]) -> str:
+    if matched_nodes:
+        return "node=" + ", ".join(node["node_key"] for node in matched_nodes[:3])
+    return "overlap=" + ", ".join(sorted(overlap)[:5])
 
 
 def _read_jsonl(path: Path, *, limit: int) -> list[dict[str, Any]]:

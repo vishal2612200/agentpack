@@ -22,6 +22,7 @@ from agentpack.architecture.models import (
     ArchitectureEvidence,
     ArchitectureLocator,
 )
+from agentpack.core.node_identity import symbol_node_key
 from agentpack.core.models import FileInfo
 
 
@@ -29,7 +30,7 @@ CONFIDENCE_ORDER = {"unavailable": 0, "file_level": 1, "best_effort": 2, "struct
 CONFIG_LANGUAGES = {"json", "yaml", "toml", "xml", "terraform", "dockerfile"}
 FACTS_CACHE_VERSION = 2
 MANIFEST_CACHE_VERSION = 2
-SEMANTIC_SCHEMA_VERSION = 6
+SEMANTIC_SCHEMA_VERSION = 7
 
 
 @dataclass
@@ -230,6 +231,10 @@ def build_semantic_graph(
                     "domain": domain_name,
                     "path": file_info.path,
                     "symbol_kind": fact.kind,
+                    "node_key": symbol_node_key(
+                        file_info.path,
+                        {"name": fact.name, "kind": fact.kind, "signature": fact.signature, "body": fact.body},
+                    ),
                     "lexical_scope": lexical_scope,
                     "declaration_ordinal": declaration_ordinal,
                 },
