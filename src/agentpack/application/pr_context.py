@@ -10,7 +10,7 @@ from pydantic import BaseModel, Field
 
 from agentpack.analysis.tests import find_related_tests
 from agentpack.architecture.models import ArchitectureCheckResult, ArchitectureDiff
-from agentpack.architecture.service import build_diff, run_check
+from agentpack.architecture.service import build_diff, build_snapshot_for_ref, run_check
 from agentpack.learning.graph_memory import retrieve_memory_chain
 
 
@@ -113,12 +113,20 @@ def build_pr_context(
         }
     )
     relevant_tests = sorted({test for item in changed_files for test in item.related_tests})
+    head_snapshot = build_snapshot_for_ref(root, head_sha)
+    entity_node_keys = {
+        entity.entity_key: str(entity.metadata.get("node_key") or "")
+        for entity in head_snapshot.entities
+        if entity.metadata.get("node_key")
+    }
     memory_retrieval_chain = retrieve_memory_chain(
         root,
         task=focus,
         live_paths=[*(item.path for item in changed_files), *relevant_tests],
         live_entity_keys=affected_entity_keys,
-        architecture_edges=[*architecture_diff.added_edges, *architecture_diff.removed_edges],
+        architecture_edges=head_snapshot.edges,
+        entity_node_keys=entity_node_keys,
+        current_source_hashes=head_snapshot.file_hashes,
     )
     warnings = list(invariant_results.warnings)
     unavailable = sorted(

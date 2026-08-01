@@ -102,6 +102,7 @@ def matching_procedures(
     episode: dict[str, Any],
     *,
     output_path: str = PROCEDURES_PATH,
+    explicit_only: bool = False,
 ) -> list[dict[str, Any]]:
     task_terms = _terms(task)
     episode_terms = _terms(str(episode.get("task") or ""))
@@ -115,7 +116,7 @@ def matching_procedures(
         trigger_terms = _terms(" ".join(str(item) for item in procedure.get("triggers") or []))
         explicit = bool(procedure_id and procedure_id in explicit_ids)
         overlap = task_terms & (trigger_terms | episode_terms)
-        if not explicit and not overlap:
+        if not explicit and (explicit_only or not overlap):
             continue
         confidence = 0.75 if explicit else min(0.7, 0.45 + len(overlap) * 0.05)
         matches.append(

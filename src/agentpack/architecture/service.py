@@ -28,7 +28,7 @@ from agentpack.core.git import current_sha, dirty_files
 from agentpack.core.ignore import load_spec
 from agentpack.core.scanner import LANGUAGE_MAP, scan
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 _CONFIDENCE_ORDER = {
     "unavailable": 0,
     "file_level": 1,
