@@ -463,6 +463,15 @@ def extract_semantic_facts(
                 return text(child)
         return ""
 
+    def go_receiver_name(node: Node) -> str:
+        receiver = node.child_by_field_name("receiver")
+        if receiver is None:
+            return ""
+        for child in descendants(receiver):
+            if child.type == "type_identifier":
+                return text(child).lstrip("*")
+        return ""
+
     def containing_symbol(node: Node) -> str | None:
         parent = node.parent
         while parent is not None:
@@ -485,6 +494,10 @@ def extract_semantic_facts(
         name = name_for(node)
         if not name:
             continue
+        if language == "go" and node.type == "method_declaration":
+            receiver_name = go_receiver_name(node)
+            if receiver_name:
+                name = f"{receiver_name}.{name}"
         parent = node.parent
         scope_parts: list[str] = []
         while parent is not None:
@@ -495,6 +508,8 @@ def extract_semantic_facts(
         qualified = ".".join([*reversed(scope_parts), name])
         start, end = line_range(node)
         kind = "class" if "class" in node.type or "interface" in node.type or node.type in {"struct_item", "trait_item", "impl_item"} else "function"
+        if language == "go" and node.type == "method_declaration":
+            kind = "method"
         if scope_parts and kind == "function":
             kind = "method"
         if name.lower().startswith(("test", "it", "describe")):

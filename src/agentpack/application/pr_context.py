@@ -126,6 +126,7 @@ def build_pr_context(
         live_entity_keys=affected_entity_keys,
         architecture_edges=head_snapshot.edges,
         entity_node_keys=entity_node_keys,
+        current_source_hashes=head_snapshot.file_hashes,
     )
     warnings = list(invariant_results.warnings)
     unavailable = sorted(

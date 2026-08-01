@@ -20,6 +20,7 @@ def retrieve_memory_chain(
     live_entity_keys: Iterable[str] = (),
     architecture_edges: Iterable[Any] = (),
     entity_node_keys: dict[str, str] | None = None,
+    current_source_hashes: dict[str, str] | None = None,
     max_boost: float = 12.0,
 ) -> dict[str, Any]:
     """Retrieve location-matched history before task-text/path fallback."""
@@ -39,6 +40,7 @@ def retrieve_memory_chain(
         eligible_node_keys=set(node_keys) or None,
         eligible_episode_ids=edge_episode_ids or None,
         explicit_procedures_only=bool(node_keys),
+        current_source_hashes=current_source_hashes,
     )
     procedures = _procedures(root, episodes, memory_edges)
     boosts = {
