@@ -1136,6 +1136,8 @@ function MapView({
   const [impactError, setImpactError] = useState("");
   const [architectureMap, setArchitectureMap] = useState<ArchitecturePRMapPayload | null>(null);
   const [architectureMapError, setArchitectureMapError] = useState("");
+  const [architectureBaseRef, setArchitectureBaseRef] = useState("origin/main");
+  const [architectureHeadRef, setArchitectureHeadRef] = useState("HEAD");
   const mapRootRef = useRef<HTMLDivElement | null>(null);
   const automaticTableFallback = useRef(false);
   const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
@@ -1187,10 +1189,10 @@ function MapView({
       .catch((error: unknown) => setImpactError(error instanceof Error ? error.message : "Impact data is unavailable"));
   }, [snapshot.generated_at]);
   useEffect(() => {
-    loadArchitecturePRMap(new URLSearchParams({ base: "HEAD~1", head: "HEAD", limit: "250" }))
+    loadArchitecturePRMap(new URLSearchParams({ base: architectureBaseRef, head: architectureHeadRef, limit: "250" }))
       .then((value) => { setArchitectureMap(value); setArchitectureMapError(""); })
       .catch((error: unknown) => setArchitectureMapError(error instanceof Error ? error.message : "Architecture PR map unavailable"));
-  }, [snapshot.generated_at]);
+  }, [architectureBaseRef, architectureHeadRef, snapshot.generated_at]);
   const toggleFullscreen = async () => {
     const element = mapRootRef.current;
     if (!element) return;
@@ -1257,7 +1259,16 @@ function MapView({
         </label>
       ) : null}
 
-      <ArchitecturePRPanel payload={architectureMap} error={architectureMapError} />
+      <ArchitecturePRPanel
+        payload={architectureMap}
+        error={architectureMapError}
+        baseRef={architectureBaseRef}
+        headRef={architectureHeadRef}
+        onLoad={(base, head) => {
+          setArchitectureBaseRef(base);
+          setArchitectureHeadRef(head);
+        }}
+      />
 
       <div className="map-layout">
         <section className="map-stage" aria-label="AgentPack context map">
@@ -1382,7 +1393,21 @@ function MapView({
   );
 }
 
-function ArchitecturePRPanel({ payload, error }: { payload: ArchitecturePRMapPayload | null; error: string }) {
+function ArchitecturePRPanel({
+  payload,
+  error,
+  baseRef,
+  headRef,
+  onLoad
+}: {
+  payload: ArchitecturePRMapPayload | null;
+  error: string;
+  baseRef: string;
+  headRef: string;
+  onLoad: (baseRef: string, headRef: string) => void;
+}) {
+  const [baseInput, setBaseInput] = useState(baseRef);
+  const [headInput, setHeadInput] = useState(headRef);
   const [district, setDistrict] = useState("");
   const [kind, setKind] = useState("");
   const [confidence, setConfidence] = useState("");
@@ -1391,13 +1416,21 @@ function ArchitecturePRPanel({ payload, error }: { payload: ArchitecturePRMapPay
     (!district || node.domain === district)
     && (!kind || node.entity_type === kind)
     && (!confidence || node.confidence_tier === confidence)
-    && (!changedOnly || ["added", "removed", "changed", "alias", "ambiguous"].includes(node.status))
+    && (!changedOnly || ["added", "removed", "changed", "alias", "ambiguous", "context"].includes(node.status))
   ));
   const nodeIds = new Set(nodes.map((node) => node.id));
   const edges = (payload?.edges || []).filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
-  const policyWarnings = payload?.policies?.warnings || [];
+  const policyWarnings = [
+    ...(payload?.policies?.violations || []).filter((violation) => violation.blocking !== true),
+    ...(payload?.policies?.warnings || [])
+  ];
   return (
     <Panel title="PR architecture map" icon={GitBranch}>
+      <form className="inline-actions" onSubmit={(event) => { event.preventDefault(); if (baseInput.trim() && headInput.trim()) onLoad(baseInput.trim(), headInput.trim()); }}>
+        <label>Base ref <input value={baseInput} onChange={(event) => setBaseInput(event.target.value)} aria-label="Architecture map base ref" /></label>
+        <label>Head ref <input value={headInput} onChange={(event) => setHeadInput(event.target.value)} aria-label="Architecture map head ref" /></label>
+        <button type="submit" className="secondary-action">Load refs</button>
+      </form>
       {error ? <p className="empty">{error}</p> : payload ? (
         <>
           <div className="inline-actions">

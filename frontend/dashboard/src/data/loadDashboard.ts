@@ -70,7 +70,12 @@ export interface ArchitecturePRMapPayload {
     evidence: Array<Record<string, unknown>>;
   }>;
   summary: Record<string, number>;
-  policies: { violations?: Array<Record<string, unknown>>; warnings?: string[]; budget?: Record<string, unknown> };
+  policies: {
+    violations?: Array<Record<string, unknown>>;
+    warnings?: string[];
+    metrics?: Record<string, unknown>;
+    budget?: Record<string, unknown>;
+  };
 }
 
 export interface ProjectProfileMutation {

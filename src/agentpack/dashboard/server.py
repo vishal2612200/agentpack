@@ -373,7 +373,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
                 return
             query = urllib.parse.parse_qs(parsed.query)
-            base_ref = query.get("base", ["HEAD~1"])[0]
+            base_ref = query.get("base", ["origin/main"])[0]
             head_ref = query.get("head", ["HEAD"])[0]
             try:
                 payload = build_pr_map(

@@ -33,6 +33,7 @@ def test_verified_ci_artifact_requires_matching_head(tmp_path) -> None:
 
     assert load_verified_ci_artifact(output, head_sha="head") is not None
     assert load_verified_ci_artifact(output, head_sha="other") is None
+    assert json.loads((output / "architecture-receipt.json").read_text(encoding="utf-8"))["git_sha"] == "head"
 
 
 def test_baseline_command_writes_source_free_metrics(tmp_path, monkeypatch) -> None:
@@ -64,6 +65,26 @@ def test_pr_map_contains_changed_nodes_and_policy_projection(tmp_path) -> None:
     assert payload["head_sha"] == head
     assert payload["summary"]["changed"] >= 1
     assert "policies" in payload
+    assert "diff" not in payload["policies"]
+
+
+def test_pr_map_keeps_unchanged_endpoint_for_added_road(tmp_path) -> None:
+    _init_repo(tmp_path)
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "lib.py").write_text("def helper():\n    return 1\n", encoding="utf-8")
+    (tmp_path / "src" / "app.py").write_text("def run():\n    return 1\n", encoding="utf-8")
+    base = _commit(tmp_path, "base")
+    (tmp_path / "src" / "app.py").write_text(
+        "from .lib import helper\n\ndef run():\n    return helper()\n",
+        encoding="utf-8",
+    )
+    head = _commit(tmp_path, "add dependency")
+
+    payload = build_pr_map(tmp_path, base_ref=base, head_ref=head)
+
+    context_nodes = {node["id"] for node in payload["nodes"] if node["status"] == "context"}
+    assert context_nodes
+    assert any(edge["target"] in context_nodes for edge in payload["edges"] if edge["status"] == "added")
 
 
 def _init_repo(root) -> None:

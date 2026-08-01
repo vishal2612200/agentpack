@@ -31,7 +31,13 @@ def write_ci_artifacts(*, diff_path: Path, check_path: Path, output_dir: Path) -
                 "check_sha256": _sha256(check_output),
                 "blocking_violations": blocking,
                 "advisory_violations": len(violations) - blocking,
-                "git_sha": str(check.get("git_sha") or diff.get("git_sha") or ""),
+                "git_sha": str(
+                    check.get("head_sha")
+                    or diff.get("head_sha")
+                    or check.get("git_sha")
+                    or diff.get("git_sha")
+                    or ""
+                ),
             }
         ),
         encoding="utf-8",
