@@ -147,6 +147,7 @@ def build_pr_context(
         architecture_edges=head_snapshot.edges,
         entity_node_keys=entity_node_keys,
         node_aliases=node_aliases,
+        current_source_hashes=head_snapshot.file_hashes,
     )
     ci_artifact: dict[str, object] = {}
     artifact_warnings: list[str] = []

@@ -184,3 +184,30 @@ def test_graph_memory_rejects_stale_matched_node(tmp_path) -> None:
 
     assert chain["compatible_episodes"] == []
     assert chain["candidate_boosts"] == {}
+
+
+def test_graph_memory_validates_against_reviewed_source_hashes(tmp_path) -> None:
+    source = tmp_path / "src" / "auth.py"
+    source.parent.mkdir(parents=True)
+    source.write_text("VALUE = 1\n", encoding="utf-8")
+    reviewed_hash = file_hash(source)
+    record_episode(
+        tmp_path,
+        task="auth incident",
+        selected_files=["src/auth.py"],
+        changed_files=["src/auth.py"],
+        passed=True,
+        touched_nodes=[{"node_key": "node:auth-send", "path": "src/auth.py", "source_hash": reviewed_hash}],
+    )
+    source.write_text("VALUE = 2\n", encoding="utf-8")
+
+    chain = retrieve_memory_chain(
+        tmp_path,
+        task="auth incident",
+        live_paths=["src/auth.py"],
+        live_entity_keys=["entity:auth"],
+        entity_node_keys={"entity:auth": "node:auth-send"},
+        current_source_hashes={"src/auth.py": reviewed_hash},
+    )
+
+    assert len(chain["compatible_episodes"]) == 1

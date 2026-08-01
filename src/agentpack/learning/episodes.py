@@ -115,6 +115,7 @@ def episodic_memory_matches(
     node_aliases: dict[str, dict[str, str]] | None = None,
     eligible_episode_ids: set[str] | None = None,
     explicit_procedures_only: bool = False,
+    current_source_hashes: dict[str, str] | None = None,
 ) -> list[dict[str, Any]]:
     task_terms = _terms(task)
     node_keys = {str(key) for key in eligible_node_keys or set() if key}
@@ -127,7 +128,7 @@ def episodic_memory_matches(
         episode_id = str(record.get("episode_id") or "")
         if episode_ids and episode_id not in episode_ids:
             continue
-        matched_nodes = _matching_current_nodes(root, record, node_keys, node_aliases or {})
+        matched_nodes = _matching_current_nodes(root, record, node_keys, node_aliases or {}, current_source_hashes)
         if node_keys and not matched_nodes:
             continue
         episode_terms = _terms(str(record.get("task") or ""))
@@ -164,7 +165,7 @@ def episodic_memory_matches(
             if node_keys and normalized_path not in {node["path"] for node in matched_nodes} and normalized_path not in alias_paths:
                 continue
             current_path = normalize_repo_path(str(alias_paths.get(normalized_path) or normalized_path))
-            if isinstance(path, str) and (not eligible or current_path in eligible) and _path_is_current(root, current_path, path_hashes, historical_path=normalized_path):
+            if isinstance(path, str) and (not eligible or current_path in eligible) and _path_is_current(root, current_path, path_hashes, current_source_hashes, historical_path=normalized_path):
                 matches.append(
                     {
                         "path": current_path,
@@ -198,6 +199,7 @@ def _matching_current_nodes(
     record: dict[str, Any],
     eligible_node_keys: set[str],
     node_aliases: dict[str, dict[str, str]],
+    current_source_hashes: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     if not eligible_node_keys:
         return []
@@ -209,7 +211,7 @@ def _matching_current_nodes(
         alias = node_aliases.get(historical_node_key, {})
         node_key = str(alias.get("node_key") or historical_node_key)
         path = normalize_repo_path(str(alias.get("path") or node.get("path") or ""))
-        if node_key not in eligible_node_keys or not path or not _node_is_current(root, path, str(node.get("source_hash") or "")):
+        if node_key not in eligible_node_keys or not path or not _node_is_current(root, path, str(node.get("source_hash") or ""), current_source_hashes):
             continue
         matches.append({
             "node_key": node_key,
@@ -219,9 +221,11 @@ def _matching_current_nodes(
     return matches
 
 
-def _node_is_current(root: Path, path: str, expected_hash: str) -> bool:
+def _node_is_current(root: Path, path: str, expected_hash: str, current_source_hashes: dict[str, str] | None = None) -> bool:
     if not expected_hash:
         return True
+    if current_source_hashes is not None:
+        return current_source_hashes.get(normalize_repo_path(path)) == expected_hash
     abs_path = root / path
     if not abs_path.exists() or not abs_path.is_file():
         return False
@@ -251,7 +255,6 @@ def _is_stale(record: dict[str, Any]) -> bool:
 def _redact_provenance(value: dict[str, Any]) -> dict[str, str]:
     allowed = {"source", "actor", "command", "reviewer", "run_id"}
     return {str(key): str(item)[:160] for key, item in value.items() if str(key) in allowed and item is not None}
-
 
 def _memory_match_reason(overlap: set[str], matched_nodes: list[dict[str, str]]) -> str:
     if matched_nodes:
@@ -416,19 +419,30 @@ def _path_hashes(root: Path, paths: list[str]) -> dict[str, str]:
     return hashes
 
 
-def _path_is_current(root: Path, path: str, path_hashes: object, *, historical_path: str = "") -> bool:
+def _path_is_current(
+    root: Path,
+    path: str,
+    path_hashes: object,
+    current_source_hashes: dict[str, str] | None = None,
+    *,
+    historical_path: str = "",
+) -> bool:
     if not path:
         return False
-    abs_path = root / path
-    if not abs_path.exists() or not abs_path.is_file():
-        return False
+    if current_source_hashes is None:
+        abs_path = root / path
+        if not abs_path.exists() or not abs_path.is_file():
+            return False
     if not isinstance(path_hashes, dict):
         return True
-    expected = path_hashes.get(path)
+    normalized_path = normalize_repo_path(path)
+    expected = path_hashes.get(path) or path_hashes.get(normalized_path)
     if (not isinstance(expected, str) or not expected) and historical_path:
         expected = path_hashes.get(historical_path)
     if not isinstance(expected, str) or not expected:
         return True
+    if current_source_hashes is not None:
+        return current_source_hashes.get(normalized_path) == expected
     try:
         return file_hash(abs_path) == expected
     except OSError:
