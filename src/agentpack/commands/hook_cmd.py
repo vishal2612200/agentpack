@@ -241,7 +241,7 @@ def _review_preflight_note(
         return ""
     if has_mcp:
         refresh = (
-            f'If the AgentPack MCP tool is visible, call agentpack_pack_context(task="{task}") before PR diff/code review; '
+            f'If the AgentPack MCP tool is visible, call agentpack_get_pr_context(focus="{task}") before PR diff/code review; '
             f"otherwise run `{_refresh_command(thread_id)}` and use direct repo evidence."
         )
     else:

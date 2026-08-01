@@ -289,10 +289,16 @@ def _build_review_preflight(
             focus=review_context,
         )
         shared_pr_context_payload = shared_pr_context.model_dump(mode="json")
-    except Exception:
-        # Existing review preflight remains usable when a shallow checkout or
-        # test fixture cannot materialize architecture snapshots.
-        shared_pr_context_payload = None
+    except Exception as exc:
+        # Preserve direct source review, but make missing architecture evidence
+        # explicit so agents cannot accidentally present unsupported claims.
+        degraded = f"architecture review context degraded: {type(exc).__name__}: {str(exc)[:240]}"
+        warnings.append(degraded)
+        shared_pr_context_payload = {
+            "context_status": "degraded",
+            "warnings": [degraded],
+            "architecture_claims_allowed": False,
+        }
 
     return {
         "generated_at": _now_iso(),

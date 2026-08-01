@@ -12,6 +12,7 @@ from agentpack.learning.procedures import matching_procedures, record_memory_edg
 
 EPISODIC_CASES_PATH = ".agentpack/episodic-cases.jsonl"
 EPISODE_SCHEMA_VERSION = 2
+MEMORY_MAX_AGE_DAYS = 180
 
 
 def record_episode(
@@ -28,6 +29,8 @@ def record_episode(
     task_id: str = "",
     touched_nodes: list[dict[str, Any]] | None = None,
     procedure_ids: list[str] | None = None,
+    validation_status: str = "",
+    provenance: dict[str, Any] | None = None,
     final_git_sha: str = "",
     diff_hash: str = "",
     output_path: str = EPISODIC_CASES_PATH,
@@ -56,11 +59,14 @@ def record_episode(
         "procedure_ids": _bounded_strings(procedure_ids or [], limit=20),
         "checks": checks or [],
         "passed": passed,
+        "outcome": "success" if passed is True else "failure" if passed is False else "unknown",
+        "validation_status": validation_status or ("validated" if passed is True else "failed" if passed is False else "unvalidated"),
         "failure_class": failure_class,
         "failure_source": failure_source,
         "context_hash": context_hash,
         "final_git_sha": final_git_sha,
         "diff_hash": diff_hash,
+        "provenance": _redact_provenance(provenance or {}),
         "confidence": 1.0 if passed else 0.4 if passed is False else 0.6,
         "visible_reason": "completed task episode with source hashes and touched nodes",
     }
@@ -106,6 +112,7 @@ def episodic_memory_matches(
     limit: int = 500,
     eligible_paths: set[str] | None = None,
     eligible_node_keys: set[str] | None = None,
+    node_aliases: dict[str, dict[str, str]] | None = None,
     eligible_episode_ids: set[str] | None = None,
     explicit_procedures_only: bool = False,
     current_source_hashes: dict[str, str] | None = None,
@@ -121,7 +128,7 @@ def episodic_memory_matches(
         episode_id = str(record.get("episode_id") or "")
         if episode_ids and episode_id not in episode_ids:
             continue
-        matched_nodes = _matching_current_nodes(root, record, node_keys, current_source_hashes)
+        matched_nodes = _matching_current_nodes(root, record, node_keys, node_aliases or {}, current_source_hashes)
         if node_keys and not matched_nodes:
             continue
         episode_terms = _terms(str(record.get("task") or ""))
@@ -131,9 +138,15 @@ def episodic_memory_matches(
         overlap = task_terms & episode_terms
         if not overlap and not matched_nodes:
             continue
-        failed = record.get("passed") is False
+        failed = record.get("passed") is False or str(record.get("validation_status") or "") == "failed"
+        validated = _is_validated(record)
+        stale = _is_stale(record)
         location_match = bool(matched_nodes)
         weight = 0.0 if failed else min(max_boost, (6.0 if location_match else 4.0) + len(overlap) * 2.0)
+        if stale:
+            weight *= 0.5
+        if not validated and explicit_procedures_only:
+            weight = 0.0
         confidence = min(0.98, (0.8 if location_match else 0.55) + len(overlap) * 0.06)
         procedures = matching_procedures(
             root,
@@ -142,31 +155,36 @@ def episodic_memory_matches(
             output_path=procedures_path,
             explicit_only=explicit_procedures_only,
         )
-        if procedures and not failed:
+        if procedures and not failed and validated and not stale:
             weight = min(max_boost, weight + 2.0)
             confidence = min(0.98, confidence + 0.1)
         path_hashes = record.get("path_hashes") if isinstance(record.get("path_hashes"), dict) else {}
+        alias_paths = {node.get("alias_path"): node.get("path") for node in matched_nodes if node.get("alias_path")}
         for path in record.get("changed_files") or []:
             normalized_path = normalize_repo_path(path) if isinstance(path, str) else ""
-            if node_keys and normalized_path not in {node["path"] for node in matched_nodes}:
+            if node_keys and normalized_path not in {node["path"] for node in matched_nodes} and normalized_path not in alias_paths:
                 continue
-            if isinstance(path, str) and (not eligible or normalized_path in eligible) and _path_is_current(root, path, path_hashes, current_source_hashes):
+            current_path = normalize_repo_path(str(alias_paths.get(normalized_path) or normalized_path))
+            if isinstance(path, str) and (not eligible or current_path in eligible) and _path_is_current(root, current_path, path_hashes, current_source_hashes, historical_path=normalized_path):
                 matches.append(
                     {
-                        "path": normalized_path,
+                        "path": current_path,
                         "boost": weight,
                         "episode_id": episode_id,
                         "task_id": str(record.get("task_id") or ""),
                         "confidence": confidence,
                         "negative_guidance": failed,
+                        "validated": validated,
+                        "stale": stale,
                         "matched_node_keys": [node["node_key"] for node in matched_nodes],
+                        "alias_paths": [node["alias_path"] for node in matched_nodes if node.get("alias_path")],
                         "retrieval_source": "node_identity" if location_match else "task_terms",
                         "visible_reason": (
                             (
                                 f"failed episode: avoid repeating the prior approach; {_memory_match_reason(overlap, matched_nodes)}; "
                                 "source hash still current"
                                 if failed
-                                else f"episodic memory match; {_memory_match_reason(overlap, matched_nodes)}; source hash still current"
+                                else f"episodic memory similar task match; {_memory_match_reason(overlap, matched_nodes)}; source hash still current"
                             )
                         ),
                         "node_ids": _node_ids_for_path(record, path),
@@ -180,6 +198,7 @@ def _matching_current_nodes(
     root: Path,
     record: dict[str, Any],
     eligible_node_keys: set[str],
+    node_aliases: dict[str, dict[str, str]],
     current_source_hashes: dict[str, str] | None = None,
 ) -> list[dict[str, str]]:
     if not eligible_node_keys:
@@ -188,11 +207,17 @@ def _matching_current_nodes(
     for node in record.get("touched_nodes") or []:
         if not isinstance(node, dict):
             continue
-        node_key = str(node.get("node_key") or node.get("node_id") or "")
-        path = normalize_repo_path(str(node.get("path") or ""))
+        historical_node_key = str(node.get("node_key") or node.get("node_id") or "")
+        alias = node_aliases.get(historical_node_key, {})
+        node_key = str(alias.get("node_key") or historical_node_key)
+        path = normalize_repo_path(str(alias.get("path") or node.get("path") or ""))
         if node_key not in eligible_node_keys or not path or not _node_is_current(root, path, str(node.get("source_hash") or ""), current_source_hashes):
             continue
-        matches.append({"node_key": node_key, "path": path})
+        matches.append({
+            "node_key": node_key,
+            "path": path,
+            "alias_path": normalize_repo_path(str(node.get("path") or "")) if alias else "",
+        })
     return matches
 
 
@@ -209,6 +234,27 @@ def _node_is_current(root: Path, path: str, expected_hash: str, current_source_h
     except OSError:
         return False
 
+
+def _is_validated(record: dict[str, Any]) -> bool:
+    return record.get("passed") is True and str(record.get("validation_status") or "validated") == "validated"
+
+
+def _is_stale(record: dict[str, Any]) -> bool:
+    value = str(record.get("completed_at") or record.get("timestamp") or "")
+    if not value:
+        return False
+    try:
+        timestamp = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if timestamp.tzinfo is None:
+        timestamp = timestamp.replace(tzinfo=timezone.utc)
+    return (datetime.now(timezone.utc) - timestamp).days > MEMORY_MAX_AGE_DAYS
+
+
+def _redact_provenance(value: dict[str, Any]) -> dict[str, str]:
+    allowed = {"source", "actor", "command", "reviewer", "run_id"}
+    return {str(key): str(item)[:160] for key, item in value.items() if str(key) in allowed and item is not None}
 
 def _memory_match_reason(overlap: set[str], matched_nodes: list[dict[str, str]]) -> str:
     if matched_nodes:
@@ -378,6 +424,8 @@ def _path_is_current(
     path: str,
     path_hashes: object,
     current_source_hashes: dict[str, str] | None = None,
+    *,
+    historical_path: str = "",
 ) -> bool:
     if not path:
         return False
@@ -389,6 +437,8 @@ def _path_is_current(
         return True
     normalized_path = normalize_repo_path(path)
     expected = path_hashes.get(path) or path_hashes.get(normalized_path)
+    if (not isinstance(expected, str) or not expected) and historical_path:
+        expected = path_hashes.get(historical_path)
     if not isinstance(expected, str) or not expected:
         return True
     if current_source_hashes is not None:

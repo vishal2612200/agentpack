@@ -260,7 +260,7 @@ def test_architecture_snapshot_command_emits_json(tmp_path, monkeypatch) -> None
     assert result.exit_code == 0, result.output
     payload = json.loads(result.output)
     assert payload["commit_sha"] == sha
-    assert payload["schema_version"] == 7
+    assert payload["schema_version"] == 8
     assert payload["build_stats"]["build_mode"] == "cold"
     assert payload["entities"]
 

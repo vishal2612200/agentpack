@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from typing import Literal
 
 import typer
 from rich.table import Table
 
 from agentpack.architecture.index import SemanticGraphIndex
+from agentpack.architecture.budgets import snapshot_metrics
 from agentpack.architecture.service import build_diff, build_snapshot_for_ref, run_check
 from agentpack.commands._shared import _root, console
 
@@ -29,6 +31,7 @@ def snapshot(
     if json_output:
         payload = result.model_dump(mode="json")
         payload["build_stats"] = result.cache_stats
+        payload["metrics"] = snapshot_metrics(result)
         typer.echo(json.dumps(payload, indent=2, sort_keys=True))
         return
     table = Table(title="Architecture Snapshot", show_header=True)
@@ -73,10 +76,11 @@ def check(
     base: str = typer.Option(..., "--base", help="Base git ref or SHA."),
     head: str = typer.Option(..., "--head", help="Head git ref or SHA."),
     json_output: bool = typer.Option(False, "--json", help="Print JSON."),
+    output_format: Literal["table", "json"] = typer.Option("table", "--format", help="Output format."),
 ) -> None:
     root = _root()
     result = run_check(root, base, head)
-    if json_output:
+    if json_output or output_format == "json":
         typer.echo(json.dumps(result.model_dump(mode="json"), indent=2, sort_keys=True))
     else:
         table = Table(title="Architecture Check", show_header=True)
@@ -93,6 +97,30 @@ def check(
             console.print(f"[yellow]{warning}[/]")
     if any(violation.blocking for violation in result.violations):
         raise typer.Exit(1)
+
+
+@architecture_app.command("baseline")
+def baseline(
+    ref: str = typer.Option("main", "--ref", help="Accepted git ref or SHA."),
+    output: Path = typer.Option(Path(".agentpack/architecture-baseline.json"), "--output"),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON."),
+) -> None:
+    """Record source-free architecture quality metrics for an accepted ref."""
+    root = _root()
+    snapshot = build_snapshot_for_ref(root, ref)
+    payload = {
+        "schema_version": 1,
+        "ref": snapshot.ref,
+        "commit_sha": snapshot.commit_sha,
+        "metrics": snapshot_metrics(snapshot),
+    }
+    destination = output if output.is_absolute() else root / output
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    destination.write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    if json_output:
+        typer.echo(json.dumps(payload, indent=2, sort_keys=True))
+    else:
+        console.print(f"[green]✓[/] Architecture baseline written: {destination}")
 
 
 @architecture_app.command("query")

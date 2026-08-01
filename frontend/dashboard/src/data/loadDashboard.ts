@@ -42,6 +42,42 @@ export interface DashboardPayload {
 export type DashboardImpactPayload = DashboardV2ImpactResponse;
 export type DashboardActionInspectionPayload = DashboardV2ActionInspection;
 
+export interface ArchitecturePRMapPayload {
+  schema_version: number;
+  base_sha: string;
+  head_sha: string;
+  base_ref: string;
+  head_ref: string;
+  districts: string[];
+  nodes: Array<{
+    id: string;
+    label: string;
+    qualified_name: string;
+    entity_type: string;
+    path: string;
+    domain: string;
+    confidence_tier: string;
+    status: string;
+    evidence: Array<Record<string, unknown>>;
+  }>;
+  edges: Array<{
+    id: string;
+    source: string;
+    target: string;
+    type: string;
+    status: string;
+    confidence_tier: string;
+    evidence: Array<Record<string, unknown>>;
+  }>;
+  summary: Record<string, number>;
+  policies: {
+    violations?: Array<Record<string, unknown>>;
+    warnings?: string[];
+    metrics?: Record<string, unknown>;
+    budget?: Record<string, unknown>;
+  };
+}
+
 export interface ProjectProfileMutation {
   mutation_id: string;
   expected_revision: string;
@@ -108,6 +144,12 @@ export async function loadDashboardImpact(params: URLSearchParams = new URLSearc
   const response = await fetchWithDeadline(apiUrl(`/api/dashboard/v2/impact?${params.toString()}`), { headers: authHeaders() }, 15_000);
   if (!response.ok) throw new Error(`Impact API failed: ${response.status}`);
   return await response.json() as DashboardImpactPayload;
+}
+
+export async function loadArchitecturePRMap(params: URLSearchParams = new URLSearchParams()): Promise<ArchitecturePRMapPayload> {
+  const response = await fetchWithDeadline(apiUrl(`/api/architecture/pr-map?${params.toString()}`), { headers: authHeaders() }, 30_000);
+  if (!response.ok) throw new Error(`Architecture PR map API failed: ${response.status}`);
+  return await response.json() as ArchitecturePRMapPayload;
 }
 
 export async function loadLearningRecommendations(scope: LearningScope = "local"): Promise<LearningRecommendationSet> {

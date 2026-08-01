@@ -23,6 +23,7 @@ class PRContext(BaseModel):
     """Stable PR inputs plus derived architecture evidence for one review run."""
 
     source: Literal["github", "local-fallback"]
+    context_status: Literal["complete", "degraded", "unavailable"] = "complete"
     pr_number: int | None = None
     pr_url: str = ""
     focus: str = ""
@@ -36,6 +37,7 @@ class PRContext(BaseModel):
     relevant_tests: list[str] = Field(default_factory=list)
     context_references: list[str] = Field(default_factory=list)
     memory_retrieval_chain: dict[str, object] = Field(default_factory=dict)
+    ci_artifact: dict[str, object] = Field(default_factory=dict)
     warnings: list[str] = Field(default_factory=list)
 
 
@@ -113,12 +115,30 @@ def build_pr_context(
         }
     )
     relevant_tests = sorted({test for item in changed_files for test in item.related_tests})
+    base_snapshot = build_snapshot_for_ref(root, base_sha)
     head_snapshot = build_snapshot_for_ref(root, head_sha)
+    base_entities = {entity.entity_key: entity for entity in base_snapshot.entities}
+    head_entities = {entity.entity_key: entity for entity in head_snapshot.entities}
     entity_node_keys = {
         entity.entity_key: str(entity.metadata.get("node_key") or "")
         for entity in head_snapshot.entities
         if entity.metadata.get("node_key")
     }
+    node_aliases: dict[str, dict[str, str]] = {}
+    for alias in architecture_diff.aliased_entities:
+        if alias.status != "confirmed" or alias.confidence < 0.9:
+            continue
+        before = base_entities.get(alias.before_entity_key)
+        after = head_entities.get(alias.after_entity_key)
+        before_node = str(before.metadata.get("node_key") or "") if before else ""
+        after_node = str(after.metadata.get("node_key") or "") if after else ""
+        if not before_node or not after_node:
+            continue
+        entity_node_keys[alias.before_entity_key] = before_node
+        node_aliases[before_node] = {
+            "node_key": after_node,
+            "path": after.locator.path,
+        }
     memory_retrieval_chain = retrieve_memory_chain(
         root,
         task=focus,
@@ -126,9 +146,23 @@ def build_pr_context(
         live_entity_keys=affected_entity_keys,
         architecture_edges=head_snapshot.edges,
         entity_node_keys=entity_node_keys,
+        node_aliases=node_aliases,
         current_source_hashes=head_snapshot.file_hashes,
     )
+    ci_artifact: dict[str, object] = {}
+    artifact_warnings: list[str] = []
+    try:
+        from agentpack.architecture.ci import load_verified_ci_artifact
+
+        loaded_artifact = load_verified_ci_artifact(root / ".agentpack" / "artifacts", head_sha=head_sha)
+        if loaded_artifact is not None:
+            ci_artifact = loaded_artifact
+        elif (root / ".agentpack" / "artifacts" / "architecture-receipt.json").exists():
+            artifact_warnings.append("local architecture artifact ignored: receipt does not match PR head")
+    except (OSError, ValueError):
+        artifact_warnings.append("local architecture artifact unavailable; rebuilt from immutable refs")
     warnings = list(invariant_results.warnings)
+    warnings.extend(artifact_warnings)
     unavailable = sorted(
         language
         for language, tier in _snapshot_capabilities(root, head_sha).items()
@@ -136,6 +170,15 @@ def build_pr_context(
     )
     if unavailable:
         warnings.append("parser capability unavailable: " + ", ".join(unavailable))
+    context_references = [
+        "architecture_diff",
+        "architecture_invariant_results",
+        "changed_files",
+        "relevant_tests",
+        "memory_retrieval_chain",
+    ]
+    if ci_artifact:
+        context_references.append("verified_ci_artifact")
     return PRContext(
         source=source,
         pr_number=pr_number,
@@ -149,14 +192,9 @@ def build_pr_context(
         affected_entity_keys=affected_entity_keys,
         affected_edge_keys=affected_edge_keys,
         relevant_tests=relevant_tests,
-        context_references=[
-            "architecture_diff",
-            "architecture_invariant_results",
-            "changed_files",
-            "relevant_tests",
-            "memory_retrieval_chain",
-        ],
+        context_references=context_references,
         memory_retrieval_chain=memory_retrieval_chain,
+        ci_artifact=ci_artifact,
         warnings=warnings,
     )
 

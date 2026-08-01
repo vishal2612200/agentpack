@@ -65,6 +65,7 @@ from agentpack.dashboard.v2 import (
     build_dashboard_v2_impact,
     build_dashboard_v2_payload,
 )
+from agentpack.architecture.pr_map import build_pr_map
 from agentpack.dashboard.contracts import (
     DashboardV2ActionInspectionResponse,
     DashboardV2ActionRequest,
@@ -365,6 +366,28 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 confidence=query.get("confidence", [""])[0],
                 limit=_bounded_query_int(query, "limit", 200, 500),
             )
+            self._send_json(payload)
+            return
+        if parsed.path == "/api/architecture/pr-map":
+            if not self._authorized(parsed):
+                self._send_error(HTTPStatus.UNAUTHORIZED, "unauthorized")
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            base_ref = query.get("base", ["origin/main"])[0]
+            head_ref = query.get("head", ["HEAD"])[0]
+            try:
+                payload = build_pr_map(
+                    self.server.state.root,
+                    base_ref=base_ref,
+                    head_ref=head_ref,
+                    entity_type=query.get("entity_type", [""])[0],
+                    confidence=query.get("confidence", [""])[0],
+                    status=query.get("status", [""])[0],
+                    limit=_bounded_query_int(query, "limit", 250, 1000),
+                )
+            except (OSError, ValueError) as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
             self._send_json(payload)
             return
         if parsed.path == "/api/dashboard/v2/agents":

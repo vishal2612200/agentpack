@@ -28,7 +28,7 @@ def test_snapshot_preserves_semantic_edges_comments_and_unresolved_targets(tmp_p
 
     assert {"contains", "calls", "references", "tested_by", "documents"} <= edge_types
     assert {"comment", "document", "unresolved"} <= entity_types
-    assert snapshot.schema_version == 6
+    assert snapshot.schema_version == 8
     assert all(edge.evidence and edge.evidence[0].path for edge in snapshot.edges)
     assert all(entity.source_hash and entity.entity_key for entity in snapshot.entities)
 
