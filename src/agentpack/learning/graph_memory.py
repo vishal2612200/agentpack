@@ -20,6 +20,7 @@ def retrieve_memory_chain(
     live_entity_keys: Iterable[str] = (),
     architecture_edges: Iterable[Any] = (),
     entity_node_keys: dict[str, str] | None = None,
+    node_aliases: dict[str, dict[str, str]] | None = None,
     max_boost: float = 12.0,
 ) -> dict[str, Any]:
     """Retrieve location-matched history before task-text/path fallback."""
@@ -37,6 +38,7 @@ def retrieve_memory_chain(
         max_boost=max_boost,
         eligible_paths=set(paths) if not node_keys else None,
         eligible_node_keys=set(node_keys) or None,
+        node_aliases=node_aliases,
         eligible_episode_ids=edge_episode_ids or None,
         explicit_procedures_only=bool(node_keys),
     )
@@ -131,7 +133,10 @@ def _procedures(root: Path, episodes: list[dict[str, Any]], memory_edges: list[d
     passed_episode_ids = {
         str(episode.get("episode_id") or "")
         for episode in episodes
-        if not episode.get("negative_guidance") and str(episode.get("episode_id") or "")
+        if episode.get("validated") is True
+        and not episode.get("negative_guidance")
+        and not episode.get("stale")
+        and str(episode.get("episode_id") or "")
     }
     linked_ids = {
         str(edge.get("to_id") or "")
@@ -142,7 +147,7 @@ def _procedures(root: Path, episodes: list[dict[str, Any]], memory_edges: list[d
     }
     if not linked_ids:
         for episode in episodes:
-            if episode.get("negative_guidance"):
+            if episode.get("negative_guidance") or episode.get("validated") is not True or episode.get("stale"):
                 continue
             linked_ids.update(
                 str(item.get("procedure_id") or "")

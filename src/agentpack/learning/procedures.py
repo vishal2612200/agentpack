@@ -10,6 +10,7 @@ from agentpack.core.node_identity import hash_text
 
 PROCEDURES_PATH = ".agentpack/procedures.jsonl"
 MEMORY_EDGES_PATH = ".agentpack/memory-edges.jsonl"
+MEMORY_FEEDBACK_PATH = ".agentpack/memory-feedback.jsonl"
 PROCEDURE_SCHEMA_VERSION = 1
 
 
@@ -90,6 +91,28 @@ def record_memory_edge(
         "edge_version": "edge:" + hash_text("|".join([from_id, to_id, edge_type, now]))[:16],
     }
     _append_jsonl(root / output_path, edge)
+
+
+def record_memory_feedback(
+    root: Path,
+    *,
+    memory_id: str,
+    outcome: str,
+    note: str = "",
+    output_path: str = MEMORY_FEEDBACK_PATH,
+) -> dict[str, Any]:
+    """Record bounded feedback without changing retrieval ranking automatically."""
+    allowed = {"used_helpful", "used_noisy", "rejected", "invalidated"}
+    clean_outcome = outcome if outcome in allowed else "rejected"
+    record = {
+        "schema_version": PROCEDURE_SCHEMA_VERSION,
+        "memory_id": _clip(memory_id, 160),
+        "outcome": clean_outcome,
+        "note": _clip(note, 240),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    _append_jsonl(root / output_path, record)
+    return record
 
 
 def load_procedures(root: Path, *, output_path: str = PROCEDURES_PATH, limit: int = 500) -> list[dict[str, Any]]:

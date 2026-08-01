@@ -47,3 +47,16 @@ If any capability is missing, the integration remains `advisory`: useful and lou
 | Codex native stub | no | no | no | no | no |
 
 Only hosts with every required capability can be marked `enforced`. Current entries remain `advisory`.
+# Architecture review contract
+
+All supported hosts use same immutable review context:
+
+```text
+agentpack_get_pr_context(pr="123", focus="review API contract", format="toon")
+```
+
+Codex and Claude can trigger this through native prompt hooks. Cursor,
+Windsurf, Antigravity, and generic integrations expose explicit MCP/command
+triggers. Always verify `base_sha`, `head_sha`, and `context_status` before
+making architecture claims. `degraded` context permits direct source review,
+but unsupported map claims must stay out of findings.

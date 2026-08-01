@@ -109,6 +109,9 @@ class ArchitectureAlias(BaseModel):
     reason: str
     before_path: str
     after_path: str
+    confidence: float = 0.0
+    status: Literal["confirmed", "ambiguous"] = "confirmed"
+    evidence: list[ArchitectureEvidence] = Field(default_factory=list)
 
 
 class ArchitectureSnapshot(BaseModel):
@@ -150,6 +153,9 @@ class ArchitectureInvariant(BaseModel):
     id: str
     kind: Literal["forbid_edge", "require_test", "require_consumer_update"]
     enforcement: Literal["block", "warn"] = "warn"
+    description: str = ""
+    owner: str = ""
+    enabled: bool = True
     edge_types: list[EdgeType] = Field(default_factory=lambda: ["imports"])
     min_confidence: CapabilityTier = "best_effort"
     source: dict[str, Any] = Field(default_factory=dict)
@@ -161,14 +167,23 @@ class ArchitectureViolation(BaseModel):
     kind: str
     enforcement: Literal["block", "warn"]
     requested_enforcement: Literal["block", "warn"] = "warn"
+    description: str = ""
+    owner: str = ""
     message: str
     blocking: bool
+    suppression_reason: str = ""
     entity_keys: list[str] = Field(default_factory=list)
     edge_keys: list[str] = Field(default_factory=list)
     evidence: list[ArchitectureEvidence] = Field(default_factory=list)
 
 
 class ArchitectureCheckResult(BaseModel):
+    schema_version: int = 2
+    base_sha: str = ""
+    head_sha: str = ""
+    policy_mode: Literal["off", "warn", "enforce"] = "warn"
     diff: ArchitectureDiff
     violations: list[ArchitectureViolation] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    metrics: dict[str, Any] = Field(default_factory=dict)
+    budget: dict[str, Any] = Field(default_factory=dict)

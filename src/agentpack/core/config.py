@@ -226,6 +226,9 @@ class ArchitectureInvariantConfig(BaseModel):
     id: str
     kind: Literal["forbid_edge", "require_test", "require_consumer_update"] = "forbid_edge"
     enforcement: Literal["block", "warn"] = "warn"
+    description: str = ""
+    owner: str = ""
+    enabled: bool = True
     edge_types: list[str] = Field(default_factory=lambda: ["imports"])
     min_confidence: Literal["structured", "best_effort", "file_level", "unavailable"] = "best_effort"
     source: ArchitectureSelectorConfig = Field(default_factory=ArchitectureSelectorConfig)
@@ -234,6 +237,12 @@ class ArchitectureInvariantConfig(BaseModel):
 
 class ArchitectureConfig(BaseModel):
     cache_dir: str = ".agentpack/architecture"
+    enabled: bool = True
+    policy_mode: Literal["off", "warn", "enforce"] = "warn"
+    baseline_path: str = ".agentpack/architecture-baseline.json"
+    max_growth_pct: float = Field(default=25.0, ge=0.0, le=10000.0)
+    max_quality_regression_pct: float = Field(default=5.0, ge=0.0, le=100.0)
+    max_build_time_multiplier: float = Field(default=2.0, ge=1.0, le=100.0)
     invariant: list[ArchitectureInvariantConfig] = Field(default_factory=list)
 
 
@@ -408,12 +417,20 @@ ignored_penalty       = -100
 
 [architecture]
 cache_dir = ".agentpack/architecture"
+enabled = false
+policy_mode = "warn"  # off | warn | enforce
+baseline_path = ".agentpack/architecture-baseline.json"
+max_growth_pct = 25.0
+max_quality_regression_pct = 5.0
+max_build_time_multiplier = 2.0
 
 # Example:
 # [[architecture.invariant]]
 # id = "no-public-internal-imports"
+# description = "Public modules must not import internal implementation modules."
+# owner = "platform"
 # kind = "forbid_edge"
-# enforcement = "block"
+# enforcement = "warn"
 # edge_types = ["imports"]
 # min_confidence = "best_effort"
 # source = { path_globs = ["src/public/**"] }

@@ -155,7 +155,13 @@ def test_build_review_preflight_uses_pr_base_and_related_tests(tmp_path, monkeyp
             "related_tests": ["tests/test_foo.py"],
         }
     ]
-    assert preflight["warnings"] == []
+    assert len(preflight["warnings"]) == 1
+    assert preflight["warnings"][0].startswith("architecture review context degraded:")
+    assert preflight["pr_context"] == {
+        "context_status": "degraded",
+        "warnings": preflight["warnings"],
+        "architecture_claims_allowed": False,
+    }
 
 
 def test_parse_review_target_from_url_and_preserves_lens() -> None:

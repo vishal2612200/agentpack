@@ -47,7 +47,7 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
-import { apiUrl, authHeaders, dashboardToken, loadDashboardImpact, loadDashboardPayload, loadLearningProfile, loadLearningRecommendations, loadProjectOverview, startLearningSession, updateLearningProfile, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
+import { apiUrl, authHeaders, dashboardToken, loadArchitecturePRMap, loadDashboardImpact, loadDashboardPayload, loadLearningProfile, loadLearningRecommendations, loadProjectOverview, startLearningSession, updateLearningProfile, type ArchitecturePRMapPayload, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
 import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, LearnerProfile, LearningRecommendationSet, LearningScope, LearningSession, MapBuilding, MapRoad, PresentationMode, ProjectOverview, SemanticGraphSummary } from "./data/schema";
 import { ProjectActivityView } from "./components/dashboard/project/ProjectActivityView";
 import { DashboardCommandPalette, type PaletteTarget } from "./components/dashboard/CommandPalette";
@@ -1134,6 +1134,8 @@ function MapView({
   const [hoverInfo, setHoverInfo] = useState<MapHoverInfo | null>(null);
   const [impactPayload, setImpactPayload] = useState<DashboardImpactPayload | null>(null);
   const [impactError, setImpactError] = useState("");
+  const [architectureMap, setArchitectureMap] = useState<ArchitecturePRMapPayload | null>(null);
+  const [architectureMapError, setArchitectureMapError] = useState("");
   const mapRootRef = useRef<HTMLDivElement | null>(null);
   const automaticTableFallback = useRef(false);
   const selectedBuilding = dashboardMap.buildings.find((building) => building.node_id === selectedId);
@@ -1183,6 +1185,11 @@ function MapView({
     loadDashboardImpact(new URLSearchParams({ limit: "300" }))
       .then((value) => { setImpactPayload(value); onImpactLoaded(value); setImpactError(""); })
       .catch((error: unknown) => setImpactError(error instanceof Error ? error.message : "Impact data is unavailable"));
+  }, [snapshot.generated_at]);
+  useEffect(() => {
+    loadArchitecturePRMap(new URLSearchParams({ base: "HEAD~1", head: "HEAD", limit: "250" }))
+      .then((value) => { setArchitectureMap(value); setArchitectureMapError(""); })
+      .catch((error: unknown) => setArchitectureMapError(error instanceof Error ? error.message : "Architecture PR map unavailable"));
   }, [snapshot.generated_at]);
   const toggleFullscreen = async () => {
     const element = mapRootRef.current;
@@ -1249,6 +1256,8 @@ function MapView({
           <input value={query} onChange={(event) => onQueryChange(event.target.value)} placeholder="Search files, tests, or memory" />
         </label>
       ) : null}
+
+      <ArchitecturePRPanel payload={architectureMap} error={architectureMapError} />
 
       <div className="map-layout">
         <section className="map-stage" aria-label="AgentPack context map">
@@ -1370,6 +1379,50 @@ function MapView({
         ) : null}
       </div>
     </div>
+  );
+}
+
+function ArchitecturePRPanel({ payload, error }: { payload: ArchitecturePRMapPayload | null; error: string }) {
+  const [district, setDistrict] = useState("");
+  const [kind, setKind] = useState("");
+  const [confidence, setConfidence] = useState("");
+  const [changedOnly, setChangedOnly] = useState(true);
+  const nodes = (payload?.nodes || []).filter((node) => (
+    (!district || node.domain === district)
+    && (!kind || node.entity_type === kind)
+    && (!confidence || node.confidence_tier === confidence)
+    && (!changedOnly || ["added", "removed", "changed", "alias", "ambiguous"].includes(node.status))
+  ));
+  const nodeIds = new Set(nodes.map((node) => node.id));
+  const edges = (payload?.edges || []).filter((edge) => nodeIds.has(edge.source) && nodeIds.has(edge.target));
+  const policyWarnings = payload?.policies?.warnings || [];
+  return (
+    <Panel title="PR architecture map" icon={GitBranch}>
+      {error ? <p className="empty">{error}</p> : payload ? (
+        <>
+          <div className="inline-actions">
+            <label>District <select value={district} onChange={(event) => setDistrict(event.target.value)}><option value="">All</option>{payload.districts.map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            <label>Kind <select value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All</option>{Array.from(new Set(payload.nodes.map((item) => item.entity_type))).sort().map((item) => <option key={item} value={item}>{item}</option>)}</select></label>
+            <label>Confidence <select value={confidence} onChange={(event) => setConfidence(event.target.value)}><option value="">All</option><option value="structured">Structured</option><option value="best_effort">Best effort</option><option value="file_level">File level</option></select></label>
+            <label><input type="checkbox" checked={changedOnly} onChange={(event) => setChangedOnly(event.target.checked)} /> Changed only</label>
+          </div>
+          <div className="metric-grid">
+            <Metric label="Base" value={payload.base_sha.slice(0, 8)} tone="neutral" />
+            <Metric label="Head" value={payload.head_sha.slice(0, 8)} tone="neutral" />
+            <Metric label="Nodes" value={nodes.length} tone="good" />
+            <Metric label="Roads" value={edges.length} tone="memory" />
+            <Metric label="Policy warnings" value={policyWarnings.length} tone={policyWarnings.length ? "risk" : "good"} />
+          </div>
+          <div className="table-wrap">
+            <table>
+              <thead><tr><th>District</th><th>Location</th><th>Change</th><th>Confidence</th><th>Roads</th></tr></thead>
+              <tbody>{nodes.slice(0, 80).map((node) => <tr key={node.id}><td>{node.domain}</td><td><strong>{node.label}</strong><small>{node.path}</small></td><td><span className={`badge ${node.status === "removed" || node.status === "ambiguous" ? "risk" : node.status === "added" ? "good" : "memory"}`}>{node.status}</span></td><td>{node.confidence_tier}</td><td>{edges.filter((edge) => edge.source === node.id || edge.target === node.id).length}</td></tr>)}</tbody>
+            </table>
+          </div>
+          {!nodes.length ? <p className="empty">No architecture changes match filters.</p> : null}
+        </>
+      ) : <LoadingState phase="Loading PR architecture map" />}
+    </Panel>
   );
 }
 

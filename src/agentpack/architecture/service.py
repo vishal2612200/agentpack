@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Iterator
 
 from agentpack.application.pack_service import AdapterRegistry
+from agentpack.architecture.budgets import compare_budget, snapshot_metrics
 from agentpack.architecture.models import (
     ArchitectureAlias,
     ArchitectureCheckResult,
@@ -28,7 +29,7 @@ from agentpack.core.git import current_sha, dirty_files
 from agentpack.core.ignore import load_spec
 from agentpack.core.scanner import LANGUAGE_MAP, scan
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 _CONFIDENCE_ORDER = {
     "unavailable": 0,
     "file_level": 1,
@@ -192,7 +193,17 @@ def build_diff(root: Path, base_ref: str, head_ref: str) -> ArchitectureDiff:
 def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = None) -> ArchitectureCheckResult:
     config = cfg or load_config(root)
     diff = build_diff(root, base_ref, head_ref)
+    base = build_snapshot_for_ref(root, base_ref)
     head = build_snapshot_for_ref(root, head_ref)
+    metrics = snapshot_metrics(head)
+    baseline = _load_baseline(root, config, base)
+    budget = compare_budget(
+        metrics,
+        baseline,
+        max_growth_pct=config.architecture.max_growth_pct,
+        max_quality_regression_pct=config.architecture.max_quality_regression_pct,
+        max_build_time_multiplier=config.architecture.max_build_time_multiplier,
+    )
     head_entities = {entity.entity_key: entity for entity in head.entities}
     file_owner_keys = _file_owner_keys(head, head_entities)
     changed_entity_keys = {
@@ -202,7 +213,20 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
     violations: list[ArchitectureViolation] = []
     warnings: list[str] = []
 
+    if not config.architecture.enabled or config.architecture.policy_mode == "off":
+        return ArchitectureCheckResult(
+            base_sha=base.commit_sha,
+            head_sha=head.commit_sha,
+            policy_mode=config.architecture.policy_mode,
+            diff=diff,
+            warnings=list(budget.get("warnings") or []),
+            metrics=metrics,
+            budget=budget,
+        )
+
     for invariant in config.architecture.invariant:
+        if not invariant.enabled:
+            continue
         kind = invariant.kind
         if kind == "forbid_edge":
             for edge in diff.added_edges:
@@ -221,6 +245,8 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                         invariant_id=invariant.id,
                         kind=kind,
                         requested_enforcement=invariant.enforcement,
+                        description=invariant.description,
+                        owner=invariant.owner,
                         message=f"{source.qualified_name} {edge.edge_type} {target.qualified_name}",
                         entity_keys=[source.entity_key, target.entity_key],
                         edge_keys=[edge.edge_key],
@@ -244,6 +270,8 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                         invariant_id=invariant.id,
                         kind=kind,
                         requested_enforcement=invariant.enforcement,
+                        description=invariant.description,
+                        owner=invariant.owner,
                         message=f"{entity.qualified_name} changed without a related test edge",
                         entity_keys=[entity.entity_key],
                         evidence=entity.evidence,
@@ -277,6 +305,8 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
                         invariant_id=invariant.id,
                         kind=kind,
                         requested_enforcement=invariant.enforcement,
+                        description=invariant.description,
+                        owner=invariant.owner,
                         message=f"{entity.qualified_name} changed without a matching consumer update",
                         entity_keys=[entity.entity_key, *sorted(consumers)],
                         evidence=[*entity.evidence, *consumer_evidence],
@@ -285,7 +315,17 @@ def run_check(root: Path, base_ref: str, head_ref: str, cfg: Config | None = Non
         else:
             warnings.append(f"Unsupported invariant kind: {kind}")
 
-    return ArchitectureCheckResult(diff=diff, violations=violations, warnings=warnings)
+    warnings.extend(budget.get("warnings") or [])
+    return ArchitectureCheckResult(
+        base_sha=base.commit_sha,
+        head_sha=head.commit_sha,
+        policy_mode=config.architecture.policy_mode,
+        diff=diff,
+        violations=violations,
+        warnings=warnings,
+        metrics=metrics,
+        budget=budget,
+    )
 
 
 def capability_registry() -> dict[str, str]:
@@ -399,6 +439,8 @@ def _violation(
     invariant_id: str,
     kind: str,
     requested_enforcement: str,
+    description: str,
+    owner: str,
     message: str,
     entity_keys: list[str],
     evidence: list[ArchitectureEvidence],
@@ -406,19 +448,37 @@ def _violation(
 ) -> ArchitectureViolation:
     """Keep blocking architecture policy limited to high-confidence source evidence."""
     blocking = requested_enforcement == "block" and _has_blocking_evidence(evidence)
+    suppression_reason = ""
     if requested_enforcement == "block" and not blocking:
+        suppression_reason = "blocking requires declared or structured evidence"
         message += " (advisory: evidence is not declared or structured)"
     return ArchitectureViolation(
         invariant_id=invariant_id,
         kind=kind,
         enforcement="block" if blocking else "warn",
         requested_enforcement=requested_enforcement,
+        description=description,
+        owner=owner,
         message=message,
         blocking=blocking,
+        suppression_reason=suppression_reason,
         entity_keys=entity_keys,
         edge_keys=edge_keys or [],
         evidence=evidence,
     )
+
+
+def _load_baseline(root: Path, config: Config, fallback: ArchitectureSnapshot) -> dict[str, object]:
+    path = root / config.architecture.baseline_path
+    if path.exists():
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+            metrics = payload.get("metrics") if isinstance(payload, dict) else None
+            if isinstance(metrics, dict):
+                return metrics
+        except (OSError, json.JSONDecodeError):
+            pass
+    return snapshot_metrics(fallback)
 
 
 def _has_blocking_evidence(evidence: list[ArchitectureEvidence]) -> bool:
@@ -580,6 +640,7 @@ def _detect_aliases(
                 reason="git rename detection",
                 before_path=old_path,
                 after_path=new_path,
+                confidence=1.0,
             )
         )
         seen_pairs.add((before.entity_key, after.entity_key))
@@ -601,17 +662,46 @@ def _detect_aliases(
                 reason="unique qualified-name/signature match",
                 before_path=before.locator.path,
                 after_path=after.locator.path,
+                confidence=0.95,
             )
         )
+    # Preserve ambiguous candidates as evidence without allowing retrieval to
+    # follow them. This makes uncertainty visible and prevents accidental
+    # history transfer after a split or duplicate symbol.
+    removed_groups = _group_alias_candidates(removed_entities)
+    added_groups = _group_alias_candidates(added_entities)
+    for identity in sorted(removed_groups.keys() & added_groups.keys()):
+        before_candidates = removed_groups[identity]
+        after_candidates = added_groups[identity]
+        if len(before_candidates) == 1 and len(after_candidates) == 1:
+            continue
+        for before in before_candidates[:10]:
+            for after in after_candidates[:10]:
+                aliases.append(
+                    ArchitectureAlias(
+                        before_entity_key=before.entity_key,
+                        after_entity_key=after.entity_key,
+                        reason="ambiguous qualified-name/signature match",
+                        before_path=before.locator.path,
+                        after_path=after.locator.path,
+                        confidence=0.5,
+                        status="ambiguous",
+                    )
+                )
     return aliases
 
 
 def _unique_alias_candidates(entities: list[ArchitectureEntity]) -> dict[tuple[str, str, str], ArchitectureEntity]:
+    grouped = _group_alias_candidates(entities)
+    return {identity: candidates[0] for identity, candidates in grouped.items() if len(candidates) == 1}
+
+
+def _group_alias_candidates(entities: list[ArchitectureEntity]) -> dict[tuple[str, str, str], list[ArchitectureEntity]]:
     grouped: dict[tuple[str, str, str], list[ArchitectureEntity]] = {}
     for entity in entities:
         identity = (entity.entity_type, entity.qualified_name, entity.normalized_signature)
         grouped.setdefault(identity, []).append(entity)
-    return {identity: candidates[0] for identity, candidates in grouped.items() if len(candidates) == 1}
+    return grouped
 
 
 def _git_renames(root: Path, base_ref: str, head_ref: str) -> dict[str, str]:

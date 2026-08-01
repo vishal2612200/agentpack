@@ -115,3 +115,32 @@ recently_modified     = 20
 churn_high            = 15
 large_unrelated_penalty = -50
 ignored_penalty       = -100
+
+[architecture]
+enabled = true
+policy_mode = "warn"
+cache_dir = ".agentpack/architecture"
+baseline_path = ".agentpack/architecture-baseline.json"
+max_growth_pct = 25.0
+max_quality_regression_pct = 5.0
+max_build_time_multiplier = 2.0
+
+[[architecture.invariant]]
+id = "core-no-dashboard-dependency"
+description = "Architecture and core modules must not depend on dashboard implementation."
+owner = "agentpack-core"
+kind = "forbid_edge"
+enforcement = "warn"
+edge_types = ["imports"]
+min_confidence = "structured"
+source = { path_globs = ["src/agentpack/architecture/**", "src/agentpack/core/**"] }
+target = { path_globs = ["src/agentpack/dashboard/**", "frontend/dashboard/**"] }
+
+[[architecture.invariant]]
+id = "runtime-changes-have-tests"
+description = "Changed AgentPack runtime files should retain a related test edge."
+owner = "agentpack-core"
+kind = "require_test"
+enforcement = "warn"
+min_confidence = "best_effort"
+source = { path_globs = ["src/agentpack/**"] }

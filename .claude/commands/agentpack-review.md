@@ -23,6 +23,12 @@ Review the current PR or checked-out branch using the full AgentPack review work
 agentpack_get_pr_context(pr="$ARGUMENTS", focus="$ARGUMENTS", format="toon")
 ```
 
+`agentpack_get_pr_context` is host-neutral. Codex and Claude hooks may offer it
+automatically when review intent is detected. Cursor, Windsurf, Antigravity, and
+generic hosts must call it explicitly before deep review. The response carries
+verified base/head SHAs and `context_status`; when status is `degraded`, review
+source code directly but do not make architecture claims without citations.
+
 Then refresh task context as needed. If MCP is unavailable, run:
 
 ```bash

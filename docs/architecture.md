@@ -22,6 +22,29 @@ The architecture intentionally keeps hard boundaries:
 - token contracts help agents choose `get_delta_context()` or `get_context()` before reaching for full repacks.
 - observer and learning data are advisory priors, not proof.
 
+## Architecture Version Control
+
+The semantic graph is an immutable, source-evidenced map. Entities represent
+districts, modules, symbols, APIs, tests, and configuration; typed edges
+represent roads between them. `architecture diff` compares two commit
+snapshots. `architecture check --format json` evaluates opt-in policies and
+non-blocking map-quality budgets. Record an accepted baseline with:
+
+```bash
+agentpack architecture baseline --ref main
+```
+
+Policy findings include entity/edge evidence, confidence, owner, and any reason
+blocking was suppressed. Inferred relationships may warn but cannot block.
+Snapshot aliases preserve high-confidence rename/move continuity; ambiguous
+aliases remain visible and are never used to promote memory.
+
+Local review hosts consume the same immutable context through
+`agentpack_get_pr_context`. GitHub Actions build source-free architecture
+artifacts and checks; they do not run or impersonate an LLM. The local
+dashboard exposes `/api/architecture/pr-map` for base/head district, building,
+road, policy, and evidence inspection.
+
 ## Core Model: Compress, Cache, Retrieve
 
 AgentPack works by combining three local techniques:

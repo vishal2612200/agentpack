@@ -169,7 +169,7 @@ class TestRunUserPromptSubmit:
         assert "AgentPack STALE" in ctx
         assert "REVIEW DETECTED" in ctx
         assert "BYPASS REQUIRED" in ctx
-        assert 'agentpack_pack_context(task="review PR 1127 load test changes")' in ctx
+        assert 'agentpack_get_pr_context(focus="review PR 1127 load test changes")' in ctx
         assert "If the AgentPack MCP tool is visible" in ctx
         assert "packed task: fix login" in ctx
         assert "src/old.py" not in ctx

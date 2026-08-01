@@ -30,7 +30,7 @@ CONFIDENCE_ORDER = {"unavailable": 0, "file_level": 1, "best_effort": 2, "struct
 CONFIG_LANGUAGES = {"json", "yaml", "toml", "xml", "terraform", "dockerfile"}
 FACTS_CACHE_VERSION = 2
 MANIFEST_CACHE_VERSION = 2
-SEMANTIC_SCHEMA_VERSION = 7
+SEMANTIC_SCHEMA_VERSION = 8
 
 
 @dataclass
@@ -1358,6 +1358,20 @@ def _owner_entity(path, owner, symbols_by_path, fallback):
 
 
 def _entity(repo, entity_type, qualified, display, signature, language, locator, provenance, tier, source_hash, metadata, evidence):
+    metadata = dict(metadata)
+    stable_material = "|".join(
+        (
+            repo,
+            entity_type,
+            qualified,
+            _normalize(signature),
+            str(metadata.get("symbol_kind") or ""),
+            str(metadata.get("lexical_scope") or ""),
+        )
+    )
+    if entity_type != "symbol":
+        stable_material += "|" + str(metadata.get("path") or locator.path)
+    metadata.setdefault("stable_entity_key", "entity:" + _hash(stable_material)[:20])
     structural = "|".join(
         (
             qualified,
@@ -1368,7 +1382,7 @@ def _entity(repo, entity_type, qualified, display, signature, language, locator,
         )
     )
     key = _hash(f"{repo}|{entity_type}|{structural}")
-    return ArchitectureEntity(entity_key=key, revision_id=_hash(f"{key}|{source_hash}"), entity_type=entity_type, qualified_name=qualified, display_name=display, normalized_signature=_normalize(signature), language=language, locator=locator, provenance=provenance, confidence_tier=tier, source_hash=source_hash, metadata=dict(metadata), evidence=list(evidence))
+    return ArchitectureEntity(entity_key=key, revision_id=_hash(f"{key}|{source_hash}"), entity_type=entity_type, qualified_name=qualified, display_name=display, normalized_signature=_normalize(signature), language=language, locator=locator, provenance=provenance, confidence_tier=tier, source_hash=source_hash, metadata=metadata, evidence=list(evidence))
 
 
 def _edge(source, target, edge_type, tier, path, start_line=None, end_line=None, note="", metadata=None, evidence_source=None):
