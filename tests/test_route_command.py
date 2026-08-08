@@ -105,6 +105,12 @@ def test_skills_feedback_records_outcome(tmp_path, monkeypatch):
     assert data["changed_files"] == ["src/auth.py"]
     assert data["tests_passed"] is True
 
+def test_route_help_documents_core_options() -> None:
+    """`agentpack route --help` must exit 0 and document --task, --json, and --format."""
+    result = CliRunner().invoke(app, ["route", "--help"])
+    assert result.exit_code == 0
+    for flag in ("--task", "--json", "--format"):
+        assert flag in result.output
 
 def test_route_json_returns_stable_keys_and_does_not_write_context(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
