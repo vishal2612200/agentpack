@@ -8,7 +8,7 @@ import tempfile
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
-from typing import Iterator
+from typing import Iterator, Literal
 
 from agentpack.application.pack_service import AdapterRegistry
 from agentpack.architecture.budgets import compare_budget, snapshot_metrics
@@ -55,7 +55,10 @@ def build_snapshot_for_ref(
     *,
     cold: bool = False,
     verify_incremental: bool = False,
+    cache_validation: Literal["full", "manifest"] = "full",
 ) -> ArchitectureSnapshot:
+    if cache_validation not in {"full", "manifest"}:
+        raise ValueError("cache_validation must be 'full' or 'manifest'")
     requested_ref = (ref or "").strip()
     if requested_ref:
         commit_sha = _resolve_ref(root, requested_ref)
@@ -89,6 +92,8 @@ def build_snapshot_for_ref(
     if cached is not None:
         cfg = load_config(root)
         validator = SemanticGraphStore(root / cfg.architecture.cache_dir, schema_version=SCHEMA_VERSION)
+        if cache_validation == "manifest" and _cached_worktree_manifest_is_valid(root, cached, scan_result):
+            return cached
         valid, _reason = validator.validate_cached_snapshot(
             scan_result.packable,
             repo_fingerprint=_repo_fingerprint(root),
@@ -100,6 +105,16 @@ def build_snapshot_for_ref(
     snapshot = _build_snapshot_from_root(root, "WORKTREE", live_sha, scan_result=scan_result, cold=cold, verify_incremental=verify_incremental)
     _save_snapshot_path(cache_path, snapshot)
     return snapshot
+
+
+def _cached_worktree_manifest_is_valid(root: Path, snapshot: ArchitectureSnapshot, scan_result) -> bool:
+    return (
+        snapshot.schema_version == SCHEMA_VERSION
+        and snapshot.ref == "WORKTREE"
+        and snapshot.repo_fingerprint == _repo_fingerprint(root)
+        and snapshot.extractor_profile_hash == _extractor_profile_hash()
+        and snapshot.file_hashes == {item.path: item.hash or "" for item in scan_result.packable}
+    )
 
 
 def build_diff(root: Path, base_ref: str, head_ref: str) -> ArchitectureDiff:

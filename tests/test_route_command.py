@@ -6,6 +6,7 @@ from typer.testing import CliRunner
 
 from agentpack.application.pack_service import PackPlanner, PackRequest
 from agentpack.cli import app
+from agentpack.router.service import _github_pr_paths, classify_task_mode
 
 
 def _write_route_fixture(root):
@@ -497,6 +498,22 @@ def test_route_pr_review_suppresses_noisy_metadata(tmp_path, monkeypatch) -> Non
     omitted = {item["path"]: item for item in data["omitted_files"]}
     assert ".gitignore" in omitted
     assert any("noisy" in reason for reason in omitted[".gitignore"]["why_not_selected"])
+
+
+def test_route_classifier_uses_boundaries_and_explicit_pr_signals() -> None:
+    assert classify_task_mode("Produce prioritized findings").mode == "broad_feature"
+    assert classify_task_mode("Review implementation for correctness").mode == "broad_feature"
+    assert classify_task_mode("Review PR https://github.com/acme/app/pull/123").mode == "pr_review"
+
+
+def test_route_does_not_query_ambient_github_pr(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("agentpack.router.service.shutil.which", lambda name: "/usr/bin/gh")
+
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("ambient GitHub PR lookup")
+
+    monkeypatch.setattr("agentpack.router.service.subprocess.run", unexpected_call)
+    assert _github_pr_paths(tmp_path, "review the current diff") == set()
 
 
 def test_route_pr_review_keeps_changed_workflow_diff_file(tmp_path, monkeypatch) -> None:

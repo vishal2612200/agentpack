@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import hashlib
 from pathlib import Path
+from typing import Any
 
 from agentpack.router.models import SkillInventory
 from agentpack.router.parser import parse_rule_file, parse_skill_file
@@ -151,7 +152,7 @@ def _dedupe_by_path(items: list) -> list:
 
 def _dedupe_skills(items: list) -> list:
     """Collapse identical installed skills while retaining alternate paths."""
-    seen: dict[tuple[str, str], object] = {}
+    seen: dict[tuple[str, str], Any] = {}
     result: list = []
     for item in items:
         content_hash = hashlib.sha256(item.raw_text.encode("utf-8")).hexdigest()

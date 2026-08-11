@@ -20,6 +20,7 @@ from agentpack.core.scanner import scan, scan_incremental
 from agentpack.core.snapshot import build_snapshot, save_snapshot, load_snapshot
 from agentpack.core.diff import diff_snapshots
 from agentpack.core import git
+from agentpack.core.pr_target import is_explicit_pull_request_task, pull_request_target
 from agentpack.core.command_surface import refresh_commands
 from agentpack.core.context_pack import (
     compact_selected_file_payloads,
@@ -229,6 +230,133 @@ class ChangeDetector:
         )
 
 
+_ROUTE_RANKING_CAP = 64
+_ROUTE_STOP_WORDS = {
+    "agentpack", "change", "changes", "code", "file", "files", "fix", "issue",
+    "task", "the", "this", "with", "from", "into", "that", "and", "for",
+}
+
+
+def _route_rank_candidates(
+    packable: list[FileInfo],
+    changes: ChangeSet,
+    task: str,
+    summaries: dict[str, Any],
+    semantic_graph: SemanticGraphIndex | None,
+) -> list[FileInfo]:
+    if len(packable) <= _ROUTE_RANKING_CAP:
+        return packable
+
+    by_path = {item.path: item for item in packable}
+    terms = {
+        term
+        for term in re.findall(r"[a-z0-9_]{3,}", task.lower())
+        if term not in _ROUTE_STOP_WORDS
+    }
+
+    def lexical_score(item: FileInfo) -> tuple[int, int, str]:
+        path_text = item.path.lower().replace("/", " ").replace("_", " ").replace("-", " ")
+        summary = str((summaries.get(item.path) or {}).get("summary") or "").lower()[:600]
+        hits = sum(term in path_text for term in terms) * 4 + sum(term in summary for term in terms)
+        return hits, int(item.path.count("/")), item.path
+
+    def path_overlap(item: FileInfo) -> int:
+        path_text = item.path.lower().replace("/", " ").replace("_", " ").replace("-", " ")
+        return sum(term in path_text for term in terms)
+
+    mandatory = {path for path in changes.all_changed if path in by_path}
+    seeds = set(mandatory)
+    seeds.update(path for path, item in by_path.items() if path_overlap(item) > 0)
+
+    if semantic_graph is not None:
+        for path in sorted(seeds):
+            for row in semantic_graph.neighbors(path, limit=40):
+                target = (row.get("node") or {}).get("locator", {}).get("path")
+                if target in by_path:
+                    seeds.add(target)
+
+    related_tests: set[str] = set()
+    all_paths = set(by_path)
+    for path in sorted(seeds):
+        related_tests.update(find_related_tests(path, all_paths))
+    seeds.update(path for path in related_tests if path in by_path)
+
+    if len(seeds) >= _ROUTE_RANKING_CAP:
+        return [by_path[path] for path in sorted(seeds)]
+
+    remaining = sorted(
+        (item for path, item in by_path.items() if path not in seeds),
+        key=lexical_score,
+        reverse=True,
+    )
+    # ponytail: route keeps mandatory/graph evidence, then bounds expensive full ranking.
+    selected = [by_path[path] for path in sorted(seeds)]
+    selected.extend(remaining[: _ROUTE_RANKING_CAP - len(selected)])
+    return selected
+
+
+def _select_route_files(
+    files: list[FileInfo],
+    scored: list[tuple[FileInfo, float, list[str]]],
+    changed_paths: set[str],
+    summaries: dict[str, Any],
+    *,
+    limit: int = 48,
+) -> tuple[list[SelectedFile], list[Receipt]]:
+    file_by_path = {item.path: item for item in files}
+    ranked = sorted(
+        scored,
+        key=lambda item: (item[0].path in changed_paths, item[1], item[0].path),
+        reverse=True,
+    )
+    selected: list[SelectedFile] = []
+    receipts: list[Receipt] = []
+    for file_info, score, reasons in ranked:
+        if file_info.ignored or file_info.binary or score <= 0:
+            continue
+        if len(selected) >= limit:
+            receipts.append(Receipt(path=file_info.path, action="excluded", reason="route candidate cap"))
+            continue
+        summary_data = summaries.get(file_info.path) or {}
+        selected.append(
+            SelectedFile(
+                path=file_info.path,
+                language=file_info.language,
+                score=score,
+                include_mode="summary",
+                reasons=reasons,
+                summary=str(summary_data.get("summary") or "") or None,
+                source_hash=file_info.hash,
+            )
+        )
+    for path in sorted(changed_paths):
+        if path in file_by_path and path not in {item.path for item in selected}:
+            file_info = file_by_path[path]
+            selected.append(
+                SelectedFile(
+                    path=path,
+                    language=file_info.language,
+                    score=1000.0,
+                    include_mode="summary",
+                    reasons=["changed file retained by route"],
+                    summary=str((summaries.get(path) or {}).get("summary") or "") or None,
+                    source_hash=file_info.hash,
+                )
+            )
+    return selected, receipts
+
+
+def _select_files_for_plan(*, route_profile: bool, **kwargs: Any) -> tuple[list[SelectedFile], list[Receipt]]:
+    if route_profile:
+        return _select_route_files(
+            kwargs["files"],
+            kwargs["scored"],
+            kwargs["changed_paths"],
+            kwargs["summaries"],
+        )
+    return select_files(**kwargs)
+
+
 class FileRanker:
     """Extracts keywords from the task and scores files against them."""
 
@@ -244,17 +372,23 @@ class FileRanker:
         semantic_graph: SemanticGraphIndex | None = None,
         workspace_roots: list[str] | None = None,
         workspace_dependency_edges: dict[str, set[str]] | None = None,
+        route_profile: bool = False,
     ) -> RankResult:
         from agentpack.core import git as _git
+        ranking_packable = (
+            _route_rank_candidates(packable, changes, task, summaries or {}, semantic_graph)
+            if route_profile
+            else packable
+        )
         keyword_plan = build_keyword_plan(
             task,
-            files=packable,
+            files=ranking_packable,
             summaries=summaries or {},
             root=root,
             workspace_roots=workspace_roots,
         )
         keyword_weights = dict(keyword_plan.weights)
-        keyword_weights = enrich_keyword_weights_from_files(keyword_weights, changes.all_changed, packable)
+        keyword_weights = enrich_keyword_weights_from_files(keyword_weights, changes.all_changed, ranking_packable)
         keyword_plan.weights = keyword_weights
         keywords = set(keyword_weights)
         generic_ratio = generic_task_term_ratio(task)
@@ -265,16 +399,16 @@ class FileRanker:
         # telemetry — both are pure functions of the same `task` string, so
         # they always agree, but there is no single source of truth.
         task_classification = classify_task(task)
-        all_paths = {f.path for f in packable}
+        all_paths = {f.path for f in ranking_packable}
 
-        for fi in packable:
+        for fi in ranking_packable:
             tests = find_related_tests(fi.path, all_paths)
             if dep_graph is not None:
                 dep_graph.nodes[fi.path].tests = tests
 
         churn_counts: dict[str, int] = {}
         co_changed_paths: dict[str, int] = {}
-        if root is not None and _git.is_git_repo(root):
+        if root is not None and _git.is_git_repo(root) and not route_profile:
             churn_counts = _git.file_churn_counts(root)
             co_changed_paths = _filter_co_changed_paths(
                 root,
@@ -282,7 +416,7 @@ class FileRanker:
             )
 
         scored = score_files(
-            packable,
+            ranking_packable,
             changed_paths=changes.all_changed,
             staged_paths=changes.git_staged,
             recently_modified=changes.recently_modified,
@@ -324,7 +458,7 @@ class FileRanker:
         scored = boost_api_endpoint_pairs(scored, keyword_plan, weights=cfg.scoring)
         scored = boost_cross_layer_related(scored, keyword_plan, weights=cfg.scoring)
         scored = boost_paired_tests(scored, weights=cfg.scoring)
-        if root is not None:
+        if root is not None and not route_profile:
             scored = _apply_history_penalties(
                 root,
                 scored,
@@ -566,11 +700,16 @@ class PackPlanner:
         phase_times["summarize"] = time.perf_counter() - t0
 
         t0 = time.perf_counter()
-        semantic_snapshot = build_snapshot_for_ref(
-            root,
-            verify_incremental=request.verify_incremental or request.task_source == "benchmark",
-        )
-        semantic_graph = SemanticGraphIndex(semantic_snapshot)
+        use_semantic_graph = request.task_source != "route" or is_explicit_pull_request_task(request.task)
+        if use_semantic_graph:
+            semantic_snapshot = build_snapshot_for_ref(
+                root,
+                cache_validation="manifest" if request.task_source == "route" else "full",
+                verify_incremental=request.verify_incremental or request.task_source == "benchmark",
+            )
+            semantic_graph = SemanticGraphIndex(semantic_snapshot)
+        else:
+            semantic_graph = None
         phase_times["deps"] = time.perf_counter() - t0
 
         t0 = time.perf_counter()
@@ -586,9 +725,14 @@ class PackPlanner:
         }
         phase_times["changes"] = time.perf_counter() - t0
 
+        planning_packable = (
+            _route_rank_candidates(packable, changes, request.task, summaries, semantic_graph)
+            if request.task_source == "route"
+            else packable
+        )
         t0 = time.perf_counter()
         rank_result = FileRanker().rank(
-            packable,
+            planning_packable,
             changes,
             None,
             request.task,
@@ -598,6 +742,7 @@ class PackPlanner:
             semantic_graph=semantic_graph,
             workspace_roots=workspace_roots,
             workspace_dependency_edges=workspace_dependency_edges,
+            route_profile=request.task_source == "route",
         )
         if pr_paths:
             rank_result.scored = _boost_github_pr_paths(rank_result.scored, pr_paths)
@@ -632,7 +777,7 @@ class PackPlanner:
         t0 = time.perf_counter()
         repo_map_budget = _repo_map_budget_for_mode(effective_mode, effective_budget)
         repo_map = build_repo_map(
-            files=packable,
+            files=planning_packable,
             scored=rank_result.scored,
             summaries=summaries,
             dep_graph=None,
@@ -650,7 +795,7 @@ class PackPlanner:
             t0 = time.perf_counter()
             broad_budget = max(500, int(effective_budget * max(0, cfg.context.broad_context_budget_pct) / 100))
             broad_context = build_broad_context(
-                files=packable,
+                files=planning_packable,
                 summaries=summaries,
                 scored=rank_result.scored,
                 intent=context_intent,
@@ -663,8 +808,9 @@ class PackPlanner:
 
         t0 = time.perf_counter()
         omitted_relevant_files: list[OmittedRelevantFile] = []
-        selected, receipts = select_files(
-            files=packable,
+        selected, receipts = _select_files_for_plan(
+            route_profile=request.task_source == "route",
+            files=planning_packable,
             scored=rank_result.scored,
             changed_paths=changes.all_changed,
             summaries=summaries,
@@ -699,16 +845,20 @@ class PackPlanner:
             ),
             omitted_relevant_files=omitted_relevant_files,
         )
-        expanded_scored, call_site_count = enrich_call_site_scores(
-            rank_result.scored,
-            selected,
-            summaries,
-            changes.all_changed,
-        )
+        if request.task_source == "route":
+            expanded_scored, call_site_count = rank_result.scored, 0
+        else:
+            expanded_scored, call_site_count = enrich_call_site_scores(
+                rank_result.scored,
+                selected,
+                summaries,
+                changes.all_changed,
+            )
         if call_site_count:
             omitted_relevant_files = []
-            selected, receipts = select_files(
-                files=packable,
+            selected, receipts = _select_files_for_plan(
+                route_profile=request.task_source == "route",
+                files=planning_packable,
                 scored=expanded_scored,
                 changed_paths=changes.all_changed,
                 summaries=summaries,
@@ -746,7 +896,7 @@ class PackPlanner:
             rank_result.scored = expanded_scored
         selected = compact_selected_file_payloads(
             selected,
-            files=packable,
+            files=planning_packable,
             summaries=summaries,
             scored=rank_result.scored,
             task=request.task,
@@ -764,7 +914,7 @@ class PackPlanner:
             summaries=summaries,
             # Compatibility projection is materialized only for legacy output
             # consumers; internal planning uses semantic_graph.
-            dep_graph=to_dependency_graph(semantic_graph),
+            dep_graph=to_dependency_graph(semantic_graph) if semantic_graph is not None else None,
             semantic_graph=semantic_graph,
             all_changed=changes.all_changed,
             git_staged=changes.git_staged,
@@ -1872,17 +2022,14 @@ def _change_source(root: Path, since: str | None, snapshot_changed: set[str], gi
 
 
 def _is_pr_review_task(task: str) -> bool:
-    lower = task.lower()
-    return any(term in lower for term in ("pr ", "pull request", "review", "diff", "review comment"))
+    return is_explicit_pull_request_task(task)
 
 
 def _github_pr_paths(root: Path, task: str) -> set[str]:
-    if shutil.which("gh") is None:
+    target = pull_request_target(task)
+    if target is None or shutil.which("gh") is None:
         return set()
-    pr_number = _pr_number(task)
-    cmd = ["gh", "pr", "view"]
-    if pr_number:
-        cmd.append(pr_number)
+    cmd = ["gh", "pr", "view", target.number]
     cmd += ["--json", "files", "--jq", ".files[].path"]
     try:
         result = subprocess.run(
@@ -1900,8 +2047,8 @@ def _github_pr_paths(root: Path, task: str) -> set[str]:
 
 
 def _pr_number(task: str) -> str | None:
-    match = re.search(r"(?:pr|pull request)\s*#?\s*(\d+)", task, re.IGNORECASE)
-    return match.group(1) if match else None
+    target = pull_request_target(task)
+    return target.number if target else None
 
 
 def _apply_github_pr_changed_paths(
