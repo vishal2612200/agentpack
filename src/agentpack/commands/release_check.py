@@ -56,6 +56,7 @@ def register(app: typer.Typer) -> None:
         check_registry: bool = typer.Option(False, "--check-registry", help="Fail if this version already exists on PyPI or npm."),
         check_pypi_registry: bool = typer.Option(False, "--check-pypi-registry", help="Fail if this version already exists on PyPI."),
         check_npm_registry: bool = typer.Option(False, "--check-npm-registry", help="Fail if this version already exists on npm."),
+        require_release_evidence: bool = typer.Option(False, "--require-release-evidence", help="Require current deterministic and E2E benchmark evidence."),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
     ) -> None:
         """Run release readiness checks without mutating tracked files."""
@@ -73,6 +74,8 @@ def register(app: typer.Typer) -> None:
         stages.append(_run_stage(root, "version-sync", ["node", "npm/test/version-sync.test.js"]))
         if tag:
             stages.append(_check_tag_version(root, tag))
+        if require_release_evidence:
+            stages.append(_check_release_evidence(root, tag=tag))
         if check_release_branch:
             stages.append(_check_release_branch(root))
         if check_registry or check_pypi_registry:
@@ -115,6 +118,131 @@ def register(app: typer.Typer) -> None:
                     console.print(f"  rerun: [bold]{stage.command}[/]")
         if failed:
             raise typer.Exit(1)
+
+
+def _check_release_evidence(root: Path, *, tag: str | None) -> StageResult:
+    started = time.perf_counter()
+    version = _version_from_tag(tag) if tag else _project_name_version(root)[1]
+    results_root = root / "benchmarks" / "results"
+    public_reports = sorted(results_root.glob("*-public.md"))
+    e2e_reports = sorted(results_root.glob(f"*-v{version}-e2e-ab.md")) if version else []
+    errors: list[str] = []
+
+    public = next((path for path in public_reports if _report_version(path) == version), None)
+    if public is None:
+        errors.append(f"missing tracked deterministic report for version {version}")
+    else:
+        _validate_report_commit(root, public, tag, errors)
+        if not _is_tracked(root, public):
+            errors.append(f"deterministic report is not tracked: {public.relative_to(root)}")
+
+    if len(e2e_reports) != 1:
+        errors.append(f"expected one tracked E2E report named *-v{version}-e2e-ab.md; found {len(e2e_reports)}")
+    else:
+        e2e = e2e_reports[0]
+        if not _is_tracked(root, e2e):
+            errors.append(f"E2E report is not tracked: {e2e.relative_to(root)}")
+        _validate_report_commit(root, e2e, tag, errors)
+        _validate_e2e_report(e2e, version, errors)
+
+    detail = "; ".join(errors)
+    return StageResult(
+        name="release-evidence",
+        command="validate tracked benchmark reports and release ancestry",
+        status="passed" if not errors else "failed",
+        duration_s=time.perf_counter() - started,
+        returncode=0 if not errors else 1,
+        detail=detail,
+    )
+
+
+def _report_version(path: Path) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(r"^- agentpack version(?:/commit)?:\s*([^\s]+)", text, flags=re.MULTILINE)
+    return match.group(1).strip().lstrip("v") if match else ""
+
+
+def _report_metadata(path: Path, key: str) -> str:
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+    match = re.search(rf"^- {re.escape(key)}:\s*(.+)$", text, flags=re.MULTILINE)
+    return match.group(1).strip() if match else ""
+
+
+def _validate_report_commit(root: Path, report: Path, tag: str | None, errors: list[str]) -> None:
+    commit = _report_metadata(report, "tested commit")
+    if not re.fullmatch(r"[0-9a-fA-F]{7,64}", commit):
+        errors.append(f"{report.name}: missing valid tested commit")
+        return
+    target = tag or "HEAD"
+    result = subprocess.run(
+        ["git", "merge-base", "--is-ancestor", commit, target],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        errors.append(f"{report.name}: tested commit {commit} is not an ancestor of {target}")
+
+
+def _is_tracked(root: Path, path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "ls-files", "--error-unmatch", str(path.relative_to(root))],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return result.returncode == 0
+
+
+def _validate_e2e_report(path: Path, version: str, errors: list[str]) -> None:
+    if _report_version(path) != version:
+        errors.append(f"{path.name}: version does not match {version}")
+    required = {
+        "baseline": "no-context",
+        "treatment": "agentpack",
+    }
+    for key, expected in required.items():
+        if _report_metadata(path, key) != expected:
+            errors.append(f"{path.name}: {key} must be {expected}")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        errors.append(f"{path.name}: unreadable report")
+        return
+    categories = [item.strip() for item in _report_metadata(path, "risk categories").split(",") if item.strip()]
+    cases = _parse_int_metadata(path, "cases")
+    trials = _parse_int_metadata(path, "trials per strategy")
+    total_runs = _parse_int_metadata(path, "total runs")
+    if len(categories) < 5:
+        errors.append(f"{path.name}: requires at least five risk categories")
+    if cases < 5:
+        errors.append(f"{path.name}: requires at least five cases")
+    if trials < 3:
+        errors.append(f"{path.name}: requires at least three trials per strategy")
+    if total_runs < 30:
+        errors.append(f"{path.name}: requires at least 30 total runs")
+    trial_rows = re.findall(r"^\| `[^`]+` \| [^|]+ \| (\d+) \| (\d+) \|$", text, flags=re.MULTILINE)
+    if len(trial_rows) < 5 or any(int(base) < 3 or int(treatment) < 3 for base, treatment in trial_rows):
+        errors.append(f"{path.name}: trial matrix requires five cases with three baseline and treatment trials")
+    for metric in ("task success", "expected file touched", "tokens", "token cost", "duration"):
+        if not re.search(rf"^\| {re.escape(metric)} \|", text, flags=re.MULTILINE):
+            errors.append(f"{path.name}: missing metric {metric}")
+    if "agent/model configuration: unspecified" in text:
+        errors.append(f"{path.name}: missing agent/model configuration")
+
+
+def _parse_int_metadata(path: Path, key: str) -> int:
+    value = _report_metadata(path, key)
+    try:
+        return int(value)
+    except ValueError:
+        return 0
 
 
 _DOCS_TESTS = [
