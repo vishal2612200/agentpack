@@ -5,11 +5,13 @@ import json
 import re
 import shutil
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 from agentpack.core import git
+from agentpack.core.pr_target import is_explicit_pull_request_task, pull_request_target
 from agentpack.adapters.detect import detect_agent
 from agentpack.application.pack_service import PackPlanner, PackRequest
 from agentpack.core.config import load_config
@@ -57,6 +59,7 @@ class RouteService:
         return discover_inventory(root, paths)
 
     def route_task(self, root: Path, task: str) -> RouteResult:
+        route_started = time.perf_counter()
         task = _normalize_task(task)
         routing_task = _task_with_recent_issue_context(root, task)
         mode_decision = classify_task_mode(task)
@@ -75,6 +78,7 @@ class RouteService:
             refresh=False,
             task_source="route",
         ))
+        plan.phase_times["route_plan"] = sum(plan.phase_times.values())
         pr_paths = _github_pr_paths(root, task) if task_mode == "pr_review" else set()
         diff_paths = _diff_paths(root) if task_mode == "pr_review" else set()
         priority_paths = plan.all_changed | diff_paths | pr_paths
@@ -149,6 +153,8 @@ class RouteService:
             safety_warnings=safety_warnings,
         )
         result.agent_prompt = build_agent_prompt(result)
+        plan.phase_times["route_total"] = time.perf_counter() - route_started
+        _record_route_phase_metrics(root, task, plan.phase_times)
         return result
 
     def explain_route(self, root: Path, task: str) -> RouteExplanation:
@@ -198,6 +204,23 @@ def _normalize_task(task: str) -> str:
     if not normalized:
         raise ValueError("Task is required.")
     return normalized
+
+
+def _record_route_phase_metrics(root: Path, task: str, phase_times: dict[str, float]) -> None:
+    record = {
+        "ts": time.time(),
+        "task": task,
+        "task_source": "route",
+        "phases": {key: round(value, 3) for key, value in phase_times.items()},
+        "total_s": round(phase_times.get("route_total", sum(phase_times.values())), 3),
+    }
+    try:
+        metrics_path = root / ".agentpack" / "metrics.jsonl"
+        metrics_path.parent.mkdir(parents=True, exist_ok=True)
+        with metrics_path.open("a", encoding="utf-8") as handle:
+            handle.write(json.dumps(record, sort_keys=True) + "\n")
+    except OSError:
+        pass
 
 
 def _task_with_recent_issue_context(root: Path, task: str) -> str:
@@ -420,7 +443,8 @@ def classify_task_mode(task: str) -> TaskModeDecision:
     signals: list[str] = []
     if _looks_agentpack_tooling_task(lower, signals):
         return TaskModeDecision("integration_readiness", _confidence(signals), signals)
-    if _has_any(lower, ("pr ", "pull request", "review", "diff", "review comment"), signals, "pr-review"):
+    if is_explicit_pull_request_task(task):
+        signals.append("pr-review: explicit PR target or wording")
         return TaskModeDecision("pr_review", _confidence(signals), signals)
     if _has_any(lower, ("log", "cloudwatch", "queue", "sqs", "db row", "postgres", "dashboard", "customer.io", "event pipeline", "runtime", "prod", "production"), signals, "runtime"):
         return TaskModeDecision("runtime_debugging", _confidence(signals), signals)
@@ -584,11 +608,19 @@ def _prompt_template() -> list[str]:
 
 
 def _has_any(lower: str, terms: tuple[str, ...], signals: list[str], label: str) -> bool:
-    matched = [term.strip() for term in terms if term in lower]
+    matched = [term.strip() for term in terms if _contains_term(lower, term)]
     if matched:
         signals.extend(f"{label}: {term}" for term in matched[:4])
         return True
     return False
+
+
+def _contains_term(text: str, term: str) -> bool:
+    normalized = re.sub(r"\s+", " ", term.strip().lower())
+    if not normalized:
+        return False
+    normalized_text = re.sub(r"\s+", " ", text.strip().lower())
+    return re.search(rf"(?<!\w){re.escape(normalized)}(?!\w)", normalized_text) is not None
 
 
 def _confidence(signals: list[str]) -> float:
@@ -817,12 +849,12 @@ def _diff_paths(root: Path) -> set[str]:
 
 
 def _github_pr_paths(root: Path, task: str) -> set[str]:
+    target = pull_request_target(task)
+    if target is None:
+        return set()
     if shutil.which("gh") is None:
         return set()
-    pr_number = _pr_number(task)
-    cmd = ["gh", "pr", "view"]
-    if pr_number:
-        cmd.append(pr_number)
+    cmd = ["gh", "pr", "view", target.ref]
     cmd += ["--json", "files", "--jq", ".files[].path"]
     try:
         result = subprocess.run(
@@ -840,8 +872,8 @@ def _github_pr_paths(root: Path, task: str) -> set[str]:
 
 
 def _pr_number(task: str) -> str | None:
-    match = re.search(r"(?:pr|pull request)\s*#?\s*(\d+)", task, re.IGNORECASE)
-    return match.group(1) if match else None
+    target = pull_request_target(task)
+    return target.number if target else None
 
 
 def _routing_notes(task_mode: str, pr_paths: set[str] | None = None) -> list[str]:

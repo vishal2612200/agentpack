@@ -397,14 +397,18 @@ def semantic_graph_summary(
         }
         for entity in visible_entities[: safe_limit * 2]
     ]
+    def entity_name(entity_key: str) -> str:
+        entity = entity_by_key.get(entity_key)
+        return entity.qualified_name if entity is not None else entity_key
+
     edges = [
         {
             "edge_key": edge.edge_key,
             "relationship": edge.edge_type,
             "source": edge.source_entity_key,
             "target": edge.target_entity_key,
-            "source_name": entity_by_key.get(edge.source_entity_key).qualified_name if entity_by_key.get(edge.source_entity_key) else edge.source_entity_key,
-            "target_name": entity_by_key.get(edge.target_entity_key).qualified_name if entity_by_key.get(edge.target_entity_key) else edge.target_entity_key,
+            "source_name": entity_name(edge.source_entity_key),
+            "target_name": entity_name(edge.target_entity_key),
             "confidence_tier": edge.confidence_tier,
             "evidence": [evidence.model_dump(mode="json") for evidence in edge.evidence],
         }
@@ -497,7 +501,8 @@ def _context_health(meta: dict[str, Any] | None, freshness: Any) -> ContextHealt
     if saving_pct == 0.0 and raw_tokens > 0 and packed_tokens > 0:
         saving_pct = round((1 - packed_tokens / raw_tokens) * 100, 1)
 
-    freshness_data = meta.get("freshness") if isinstance(meta.get("freshness"), dict) else {}
+    freshness_value = meta.get("freshness")
+    freshness_data: dict[str, Any] = dict(freshness_value) if isinstance(freshness_value, dict) else {}
     return ContextHealth(
         status=status,
         generated_at=str(meta.get("generated_at") or ""),

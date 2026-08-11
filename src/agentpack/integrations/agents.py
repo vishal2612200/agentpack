@@ -8,7 +8,7 @@ from pathlib import Path
 
 from agentpack import __version__
 from agentpack.core.command_surface import refresh_commands
-from agentpack.integrations.git_hooks import git_hooks_dir
+from agentpack.integrations.git_hooks import git_hooks_dir, inspect_git_hook
 from agentpack.installers.antigravity import AntigravityInstaller
 from agentpack.installers.claude import ClaudeInstaller
 from agentpack.installers.codex import CodexInstaller
@@ -229,9 +229,20 @@ def _check_git_hooks(root: Path, agent: str) -> list[AgentCheck]:
                 content = path.read_text(encoding="utf-8")
             except OSError:
                 content = ""
-            if "agentpack:auto-repack" in content:
-                checks.append(AgentCheck(agent, f".git/hooks/{event}", True, "auto-repack hook present"))
+            status = inspect_git_hook(content, agent)
+            if status.state == "valid":
+                checks.append(AgentCheck(agent, f".git/hooks/{event}", True, status.detail))
                 continue
+            checks.append(
+                AgentCheck(
+                    agent,
+                    f".git/hooks/{event}",
+                    False,
+                    status.detail,
+                    f"agentpack repair --agent {agent}",
+                )
+            )
+            continue
         checks.append(AgentCheck(agent, f".git/hooks/{event}", False, "missing auto-repack hook", f"agentpack repair --agent {agent}"))
     return checks
 

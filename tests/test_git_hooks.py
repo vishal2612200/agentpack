@@ -2,7 +2,14 @@ import stat
 import subprocess
 from pathlib import Path
 
-from agentpack.integrations.git_hooks import _AGENTPACK_MARKER, _HOOK_EVENTS, install_git_hooks, remove_git_hooks
+from agentpack.integrations.git_hooks import (
+    _AGENTPACK_END_MARKER,
+    _AGENTPACK_MARKER,
+    _HOOK_EVENTS,
+    inspect_git_hook,
+    install_git_hooks,
+    remove_git_hooks,
+)
 
 
 def _make_git_repo(tmp_path: Path) -> Path:
@@ -61,6 +68,61 @@ class TestInstallGitHooks:
         hook = root / ".git" / "hooks" / "post-commit"
         assert "--agent codex" in hook.read_text()
         assert "agentpack.cli" in hook.read_text()
+
+    def test_repairs_legacy_trailing_fragment(self, tmp_path):
+        root = _make_git_repo(tmp_path)
+        hook = root / ".git" / "hooks" / "post-checkout"
+        hook.write_text("#!/bin/sh\n# agentpack:auto-repack\npython -m agentpack.cli hook --event GitAutoRepack\nent auto\n")
+        hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+
+        install_git_hooks(root, agent="codex")
+        content = hook.read_text()
+        assert _AGENTPACK_MARKER in content
+        assert _AGENTPACK_END_MARKER in content
+        assert "ent auto" not in content
+        assert inspect_git_hook(content, "codex").state == "valid"
+
+    def test_preserves_mixed_hook_content_when_repairing(self, tmp_path):
+        root = _make_git_repo(tmp_path)
+        hook = root / ".git" / "hooks" / "post-commit"
+        hook.write_text("#!/bin/sh\necho before\n# agentpack:auto-repack\nent auto\necho after\n")
+        hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+
+        install_git_hooks(root, agent="codex")
+        content = hook.read_text()
+        assert "echo before" in content
+        assert "echo after" in content
+        assert "ent auto" not in content
+        assert inspect_git_hook(content, "codex").state == "valid"
+
+    def test_repairs_incomplete_managed_block_without_stale_command(self, tmp_path):
+        root = _make_git_repo(tmp_path)
+        hook = root / ".git" / "hooks" / "post-commit"
+        hook.write_text(
+            "#!/bin/sh\necho before\n# agentpack:auto-repack:start\n"
+            "python -m agentpack.cli hook --event GitAutoRepack --agent old\n"
+            "echo after\n"
+        )
+        hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+
+        install_git_hooks(root, agent="codex")
+
+        content = hook.read_text()
+        assert content.count("GitAutoRepack") == 1
+        assert "--agent old" not in content
+        assert "echo before" in content
+        assert "echo after" in content
+        assert inspect_git_hook(content, "codex").state == "valid"
+
+    def test_duplicate_blocks_are_normalized(self, tmp_path):
+        root = _make_git_repo(tmp_path)
+        install_git_hooks(root, agent="codex")
+        hook = root / ".git" / "hooks" / "post-commit"
+        hook.write_text(hook.read_text() + hook.read_text())
+
+        assert inspect_git_hook(hook.read_text(), "codex").state == "duplicate"
+        install_git_hooks(root, agent="codex")
+        assert inspect_git_hook(hook.read_text(), "codex").state == "valid"
 
     def test_uses_common_hooks_directory_from_linked_worktree(self, tmp_path):
         root = tmp_path / "repo"

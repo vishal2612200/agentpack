@@ -105,6 +105,23 @@ jobs:
           sys.exit(1)
           PY
 
+  # Blocking release evidence gate. Reports are prepared manually before tagging;
+  # this job validates them and reruns deterministic repository benchmarks only.
+  release-evidence:
+    needs: [check-release-branch, check-changelog, check-version-sync, check-pypi-version-available]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install release dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate current release evidence and deterministic gate
+        run: python -m agentpack.cli release-check --profile full --skip-build --tag "${GITHUB_REF_NAME}" --require-release-evidence
+
   test:
     needs: [check-release-branch, check-changelog, check-version-sync, check-pypi-version-available]
     runs-on: ubuntu-latest
@@ -120,6 +137,17 @@ jobs:
         run: pip install -e ".[dev]"
       - name: Run tests with coverage
         run: pytest tests/ -v --cov --cov-report=term-missing -m "not slow"
+      - name: Enforce core and analysis coverage gate
+        run: pytest tests/ -q --cov=agentpack.core --cov=agentpack.analysis --cov-report=term-missing --cov-fail-under=80 -m "not slow"
+      - name: Enforce critical surface coverage gate
+        run: >-
+          pytest tests/test_route_command.py tests/test_router_discovery.py tests/test_router_parser.py
+          tests/test_router_prompt_builder.py tests/test_router_scoring.py tests/test_git_hooks.py
+          tests/test_doctor.py tests/test_release_check.py tests/test_benchmark.py
+          tests/test_mcp_server.py tests/test_dashboard_collectors.py -q
+          --cov=agentpack.router --cov=agentpack.integrations.git_hooks
+          --cov=agentpack.commands.release_check --cov=agentpack.dashboard.collectors
+          --cov-report=term-missing --cov-fail-under=80
       - name: Lint
         run: ruff check src/ tests/
       - name: Type check
@@ -138,8 +166,21 @@ jobs:
       - name: Run tree-sitter backend tests
         run: pytest tests/test_tree_sitter_backend.py -q
 
+  route-performance:
+    needs: [check-release-branch, check-changelog, check-version-sync, check-pypi-version-available]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
+        with:
+          python-version: "3.12"
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+      - name: Verify warm route performance
+        run: pytest tests/test_route_performance.py -q -m slow
+
   build:
-    needs: [test, tree-sitter-floor]
+    needs: [test, tree-sitter-floor, release-evidence, route-performance]
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5

@@ -4,8 +4,9 @@ import json
 
 from typer.testing import CliRunner
 
-from agentpack.application.pack_service import PackPlanner, PackRequest
+from agentpack.application.pack_service import PackPlanner, PackRequest, _github_pr_paths as _pack_github_pr_paths
 from agentpack.cli import app
+from agentpack.router.service import _github_pr_paths, classify_task_mode
 
 
 def _write_route_fixture(root):
@@ -497,6 +498,45 @@ def test_route_pr_review_suppresses_noisy_metadata(tmp_path, monkeypatch) -> Non
     omitted = {item["path"]: item for item in data["omitted_files"]}
     assert ".gitignore" in omitted
     assert any("noisy" in reason for reason in omitted[".gitignore"]["why_not_selected"])
+
+
+def test_route_classifier_uses_boundaries_and_explicit_pr_signals() -> None:
+    assert classify_task_mode("Produce prioritized findings").mode == "broad_feature"
+    assert classify_task_mode("Review implementation for correctness").mode == "broad_feature"
+    assert classify_task_mode("Review PR https://github.com/acme/app/pull/123").mode == "pr_review"
+
+
+def test_route_does_not_query_ambient_github_pr(tmp_path, monkeypatch) -> None:
+    monkeypatch.setattr("agentpack.router.service.shutil.which", lambda name: "/usr/bin/gh")
+
+    def unexpected_call(*args, **kwargs):
+        raise AssertionError("ambient GitHub PR lookup")
+
+    monkeypatch.setattr("agentpack.router.service.subprocess.run", unexpected_call)
+    assert _github_pr_paths(tmp_path, "review the current diff") == set()
+
+
+def test_github_pr_url_preserves_repository_for_route_and_pack(tmp_path, monkeypatch) -> None:
+    seen: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = "src/app.py\n"
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        seen.append(command)
+        return Result()
+
+    monkeypatch.setattr("agentpack.router.service.shutil.which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr("agentpack.router.service.subprocess.run", fake_run)
+    monkeypatch.setattr("agentpack.application.pack_service.shutil.which", lambda name: "/usr/bin/gh")
+    monkeypatch.setattr("agentpack.application.pack_service.subprocess.run", fake_run)
+
+    task = "review https://github.com/acme/example/pull/123 for routing"
+    assert _github_pr_paths(tmp_path, task) == {"src/app.py"}
+    assert _pack_github_pr_paths(tmp_path, task) == {"src/app.py"}
+    assert [command[3] for command in seen] == ["https://github.com/acme/example/pull/123"] * 2
 
 
 def test_route_pr_review_keeps_changed_workflow_diff_file(tmp_path, monkeypatch) -> None:

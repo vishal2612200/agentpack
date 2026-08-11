@@ -345,8 +345,8 @@ def register(app: typer.Typer) -> None:
                 if check.ok:
                     console.print(f"    [green]✓[/] {check.label}: {check.detail}")
                     continue
-                fix = f" — run: {check.fix}" if check.fix else ""
-                console.print(f"    [red]✗[/] {check.label}: {check.detail}{fix}")
+                fix_hint = f" — run: {check.fix}" if check.fix else ""
+                console.print(f"    [red]✗[/] {check.label}: {check.detail}{fix_hint}")
                 _print_action(
                     indent="    ",
                     what_failed=f"{selected} {check.label}: {check.detail}",

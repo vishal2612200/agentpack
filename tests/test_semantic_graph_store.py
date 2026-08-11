@@ -5,6 +5,7 @@ import subprocess
 from pathlib import Path
 
 import agentpack.architecture.semantic_graph as semantic_graph_module
+import agentpack.architecture.store as semantic_store_module
 from agentpack.architecture.service import build_snapshot_for_ref
 
 
@@ -59,6 +60,23 @@ def test_incremental_materialization_reuses_unaffected_records(tmp_path: Path, m
 
     cold = build_snapshot_for_ref(tmp_path, cold=True, verify_incremental=False)
     assert second.model_dump(mode="json") == cold.model_dump(mode="json")
+
+
+def test_manifest_route_validation_skips_record_deserialization_on_warm_cache(tmp_path: Path, monkeypatch) -> None:
+    _write(tmp_path, "src/provider.py", "def lookup(value):\n    return value\n")
+    first = build_snapshot_for_ref(tmp_path)
+    calls = 0
+
+    def fail_full_validation(*args, **kwargs):
+        nonlocal calls
+        calls += 1
+        raise AssertionError("warm manifest validation should not deserialize semantic records")
+
+    monkeypatch.setattr(semantic_store_module.SemanticGraphStore, "validate_cached_snapshot", fail_full_validation)
+    second = build_snapshot_for_ref(tmp_path, cache_validation="manifest")
+
+    assert second.model_dump(mode="json") == first.model_dump(mode="json")
+    assert calls == 0
 
 
 def test_provider_change_invalidates_importers_but_not_unrelated_files(tmp_path: Path) -> None:

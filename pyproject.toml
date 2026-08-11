@@ -82,9 +82,26 @@ python_version = "3.10"
 files = [
   "src/agentpack/core/e2e_benchmark.py",
   "src/agentpack/core/modes.py",
+  "src/agentpack/core/pr_target.py",
+  "src/agentpack/router/service.py",
   "src/agentpack/router/models.py",
+  "src/agentpack/router/discovery.py",
+  "src/agentpack/router/parser.py",
+  "src/agentpack/router/prompt_builder.py",
+  "src/agentpack/router/scoring.py",
+  "src/agentpack/router/skills_index.py",
+  "src/agentpack/integrations/agents.py",
+  "src/agentpack/integrations/git_hooks.py",
+  "src/agentpack/commands/doctor.py",
+  "src/agentpack/commands/release_check.py",
+  "src/agentpack/commands/benchmark_e2e.py",
+  "src/agentpack/mcp_server.py",
+  "src/agentpack/dashboard/collectors.py",
   "src/agentpack/analysis/",
 ]
+
+# Check listed critical modules without pulling legacy untyped imports into scope.
+follow_imports = "skip"
 
 # Optional parsers and the Python 3.10 TOML fallback are intentionally absent
 # from the default development install used by the CI type-check step.
@@ -94,12 +111,12 @@ ignore_missing_imports = true
 
 [tool.coverage.run]
 source = [
-  "src/agentpack/core",
-  "src/agentpack/analysis",
+  "src/agentpack",
 ]
 
 [tool.coverage.report]
-fail_under = 80
+# Whole-package report is descriptive; CI enforces scoped 80% gates.
+fail_under = 0
 show_missing = true
 
 [build-system]
