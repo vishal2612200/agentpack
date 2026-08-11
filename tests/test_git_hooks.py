@@ -95,6 +95,25 @@ class TestInstallGitHooks:
         assert "ent auto" not in content
         assert inspect_git_hook(content, "codex").state == "valid"
 
+    def test_repairs_incomplete_managed_block_without_stale_command(self, tmp_path):
+        root = _make_git_repo(tmp_path)
+        hook = root / ".git" / "hooks" / "post-commit"
+        hook.write_text(
+            "#!/bin/sh\necho before\n# agentpack:auto-repack:start\n"
+            "python -m agentpack.cli hook --event GitAutoRepack --agent old\n"
+            "echo after\n"
+        )
+        hook.chmod(hook.stat().st_mode | stat.S_IXUSR)
+
+        install_git_hooks(root, agent="codex")
+
+        content = hook.read_text()
+        assert content.count("GitAutoRepack") == 1
+        assert "--agent old" not in content
+        assert "echo before" in content
+        assert "echo after" in content
+        assert inspect_git_hook(content, "codex").state == "valid"
+
     def test_duplicate_blocks_are_normalized(self, tmp_path):
         root = _make_git_repo(tmp_path)
         install_git_hooks(root, agent="codex")

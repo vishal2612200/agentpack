@@ -2029,7 +2029,7 @@ def _github_pr_paths(root: Path, task: str) -> set[str]:
     target = pull_request_target(task)
     if target is None or shutil.which("gh") is None:
         return set()
-    cmd = ["gh", "pr", "view", target.number]
+    cmd = ["gh", "pr", "view", target.ref]
     cmd += ["--json", "files", "--jq", ".files[].path"]
     try:
         result = subprocess.run(

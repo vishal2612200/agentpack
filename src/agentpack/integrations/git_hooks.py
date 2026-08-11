@@ -96,7 +96,12 @@ def _replace_managed_content(content: str, snippet: str) -> str:
             if not inserted:
                 output.append(snippet)
                 inserted = True
-            index = (end + 1) if end is not None else index + 1
+            if end is not None:
+                index = end + 1
+            else:
+                index += 1
+                while index < len(lines) and _looks_agentpack_command(lines[index]):
+                    index += 1
             continue
         if stripped == _LEGACY_MARKER:
             if not inserted:
