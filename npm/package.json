@@ -1,6 +1,6 @@
 {
   "name": "@vishal2612200/agentpack",
-  "version": "0.4.1",
+  "version": "0.4.3",
   "description": "Local context engine for AI coding agents. Ranks relevant repo files and builds compact task-focused context packs for Claude Code, Codex, Cursor, Windsurf, MCP, and CI workflows.",
   "license": "AGPL-3.0-only",
   "homepage": "https://github.com/vishal2612200/agentpack#readme",

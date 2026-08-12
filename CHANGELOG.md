@@ -8,6 +8,25 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ## [Unreleased]
 
+## [0.4.3] — 2026-08-12
+
+### Added
+- Added core-first architecture map controls and deterministic route-performance coverage.
+- Added release evidence validation and blocking tag-workflow quality gates.
+
+### Changed
+- Bounded warm route planning, tightened explicit PR-target routing, and split E2E benchmark commands into a focused module.
+- Expanded README installation guidance for pipx, pip, and the npm wrapper.
+
+### Fixed
+- Repaired malformed and stale managed Git hooks while preserving unrelated hook commands.
+- Fixed dashboard startup and client-disconnect handling, and restored graph identity retrieval for memory episodes.
+- Updated cryptography to 50.0.0 and PostCSS to 8.5.23 in tracked lockfiles.
+
+### Validation
+- PR #107 remediation and security follow-up #109 passed repository CI gates required for merge.
+- Release metadata is synchronized across Python, npm, and Codex plugin manifests.
+
 ## [0.4.1] — 2026-07-21
 
 ### Added
