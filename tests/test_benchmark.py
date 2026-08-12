@@ -184,7 +184,7 @@ def test_ensure_git_commit_fetches_missing_shallow_commit(monkeypatch, tmp_path:
 
     _ensure_git_commit(tmp_path, "abc123")
 
-    assert ["git", "fetch", "--quiet", "--depth", "1", "origin", "abc123"] in calls
+    assert ["git", "fetch", "--quiet", "--depth", "2", "origin", "abc123"] in calls
 
 def test_precision_recall_perfect() -> None:
     r = _make_result(["a.py", "b.py"], ["a.py", "b.py"])

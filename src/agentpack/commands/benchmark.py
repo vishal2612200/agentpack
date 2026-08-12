@@ -643,7 +643,9 @@ def _git_commit_exists(cwd: Path, commit: str) -> bool:
 def _ensure_git_commit(cwd: Path, commit: str) -> None:
     if _git_commit_exists(cwd, commit):
         return
-    _run_git(cwd, ["fetch", "--quiet", "--depth", "1", "origin", commit])
+    # Release cases score the parent of each pinned commit; depth one fetches
+    # the commit object but can leave its parent tree unavailable.
+    _run_git(cwd, ["fetch", "--quiet", "--depth", "2", "origin", commit])
     if not _git_commit_exists(cwd, commit):
         raise RuntimeError(f"Unable to fetch public benchmark commit {commit}")
 
