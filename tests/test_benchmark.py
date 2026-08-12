@@ -184,7 +184,7 @@ def test_ensure_git_commit_fetches_missing_shallow_commit(monkeypatch, tmp_path:
 
     _ensure_git_commit(tmp_path, "abc123")
 
-    assert ["git", "fetch", "--quiet", "--depth", "1", "origin", "abc123"] in calls
+    assert ["git", "fetch", "--quiet", "--depth", "2", "origin", "abc123"] in calls
 
 def test_precision_recall_perfect() -> None:
     r = _make_result(["a.py", "b.py"], ["a.py", "b.py"])
@@ -4346,7 +4346,7 @@ def test_run_public_repo_suite_uses_parent_checkout(tmp_path: Path, monkeypatch)
     observed_roots: list[Path] = []
 
     def run_git(cwd: Path, args: list[str]) -> None:
-        if args[0] == "clone":
+        if args[0] == "init":
             Path(args[-1]).mkdir(parents=True)
 
     def run_case(root: Path, case: BenchmarkCase) -> CaseResult:
@@ -4371,11 +4371,10 @@ def test_run_public_repo_suite_uses_parent_checkout(tmp_path: Path, monkeypatch)
         (tmp_path / "cache", "parent123"),
     ]
     git_stdout.assert_called_once_with(tmp_path / "cache", ["rev-parse", "abc123^"])
-    assert any(
-        call.args[1][:4] == ["clone", "--quiet", "--shared", "--no-checkout"]
-        for call in mocked_run_git.call_args_list
-    )
-    assert any(call.args[1] == ["checkout", "--force", "--quiet", "parent123"] for call in mocked_run_git.call_args_list)
+    assert any(call.args[1][0:2] == ["init", "--quiet"] for call in mocked_run_git.call_args_list)
+    assert any(call.args[1] == ["remote", "add", "origin", str(tmp_path / "cache")] for call in mocked_run_git.call_args_list)
+    assert any(call.args[1] == ["fetch", "--quiet", "--depth", "1", "origin", "parent123"] for call in mocked_run_git.call_args_list)
+    assert any(call.args[1] == ["checkout", "--force", "--quiet", "FETCH_HEAD"] for call in mocked_run_git.call_args_list)
     assert any(call.args[1] == ["reset", "--hard", "--quiet", "parent123"] for call in mocked_run_git.call_args_list)
     assert any(call.args[1] == ["clean", "-ffd", "--quiet"] for call in mocked_run_git.call_args_list)
     assert observed_roots and all(not root.exists() for root in observed_roots)
@@ -4397,14 +4396,14 @@ def test_run_public_repo_suite_checkout_error_names_case(tmp_path: Path) -> None
     )
     checkout_error = subprocess.CalledProcessError(
         1,
-        ["git", "checkout", "--force", "--quiet", "parent123"],
+        ["git", "checkout", "--force", "--quiet", "FETCH_HEAD"],
         stderr="pathspec parent123 did not match any file(s) known to git",
     )
 
     with patch("agentpack.commands.benchmark._ensure_public_repo_clone", return_value=tmp_path / "cache"), \
          patch("agentpack.commands.benchmark._ensure_git_commit"), \
          patch("agentpack.commands.benchmark._git_stdout", return_value="parent123"), \
-         patch("agentpack.commands.benchmark._run_git", side_effect=[None, checkout_error]):
+        patch("agentpack.commands.benchmark._run_git", side_effect=[None, None, None, checkout_error]):
         with pytest.raises(RuntimeError) as excinfo:
             _run_public_repo_suite(tmp_path, [spec], cache_dir=tmp_path / "cache")
 
@@ -4412,7 +4411,7 @@ def test_run_public_repo_suite_checkout_error_names_case(tmp_path: Path) -> None
     assert "repo=vite" in message
     assert "commit=abc123" in message
     assert "parent=parent123" in message
-    assert "git checkout --force --quiet parent123" in message
+    assert "git checkout --force --quiet FETCH_HEAD" in message
     assert "pathspec parent123" in message
 
 

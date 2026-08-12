@@ -325,11 +325,34 @@ E2E outcome report is published yet; progress is tracked in the
 
 ## Get Started
 
-AgentPack requires Python 3.10 or newer. Install the CLI with `pipx`, then
-activate it inside a repository:
+AgentPack requires Python 3.10 or newer. Install the CLI with `pipx` (recommended)
+or `pip`. JavaScript teams can use the npm wrapper, which installs the matching
+Python CLI automatically and requires Node.js 18+.
+
+Recommended Python install:
 
 ```bash
 pipx install agentpack-cli
+agentpack --version
+```
+
+Alternative Python install:
+
+```bash
+python3 -m pip install --user agentpack-cli
+agentpack --version
+```
+
+npm install:
+
+```bash
+npm install --global @vishal2612200/agentpack
+agentpack --version
+```
+
+Activate AgentPack inside a repository:
+
+```bash
 agentpack work "fix auth token expiry"
 agentpack learn --json
 agentpack finish
@@ -372,7 +395,7 @@ guide.
 
 ## Status
 
-Alpha: `0.4.1`.
+Alpha: `0.4.3`.
 
 Python and JavaScript/TypeScript currently have the strongest support. APIs may
 change before 1.0. Platform targets are macOS, Linux, and Windows PowerShell

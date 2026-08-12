@@ -643,7 +643,9 @@ def _git_commit_exists(cwd: Path, commit: str) -> bool:
 def _ensure_git_commit(cwd: Path, commit: str) -> None:
     if _git_commit_exists(cwd, commit):
         return
-    _run_git(cwd, ["fetch", "--quiet", "--depth", "1", "origin", commit])
+    # Release cases score the parent of each pinned commit; depth one fetches
+    # the commit object but can leave its parent tree unavailable.
+    _run_git(cwd, ["fetch", "--quiet", "--depth", "2", "origin", commit])
     if not _git_commit_exists(cwd, commit):
         raise RuntimeError(f"Unable to fetch public benchmark commit {commit}")
 
@@ -796,11 +798,10 @@ def _run_public_repo_suite(
                 ) as case_dir:
                     work_root = Path(case_dir) / "repo"
                     try:
-                        _run_git(
-                            source_repo.parent,
-                            ["clone", "--quiet", "--shared", "--no-checkout", str(source_repo), str(work_root)],
-                        )
-                        _run_git(work_root, ["checkout", "--force", "--quiet", parent])
+                        _run_git(None, ["init", "--quiet", str(work_root)])
+                        _run_git(work_root, ["remote", "add", "origin", str(source_repo)])
+                        _run_git(work_root, ["fetch", "--quiet", "--depth", "1", "origin", parent])
+                        _run_git(work_root, ["checkout", "--force", "--quiet", "FETCH_HEAD"])
                         _run_git(work_root, ["reset", "--hard", "--quiet", parent])
                         _run_git(work_root, ["clean", "-ffd", "--quiet"])
                     except subprocess.CalledProcessError as exc:

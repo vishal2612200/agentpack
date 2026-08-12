@@ -28,7 +28,7 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ![AgentPack route demo](https://raw.githubusercontent.com/vishal2612200/agentpack/main/docs/assets/agentpack-route-demo.svg)
 
-> **Status: alpha (v0.4.1).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
+> **Status: alpha (v0.4.3).** Works, tested, and used in real sessions. Python and JavaScript/TypeScript are the best-supported languages. Current benchmarks are useful regression checks, not broad proof that AgentPack improves coding-agent success. API may change before 1.0.
 >
 > **Platform note:** macOS, Linux, and Windows are supported. Windows support targets PowerShell plus Git for Windows.
 >
@@ -36,11 +36,10 @@ npx @vishal2612200/agentpack route --task "fix auth token expiry"
 
 ## Latest Update
 
-`0.4.1` adds the unified work/learn/finish loop, typed Dashboard v2 workspace
-views, evidence-backed project health and decision briefs, and read-only
-last-known recovery scoped to the served project. It also adds cited PR comment
-resolution, structured handoff/resume flows, skill review evaluations, and
-worktree-safe project mutations.
+`0.4.3` adds bounded route planning, explicit PR-target handling, managed Git
+hook repair, release evidence gates, and patched Python/npm dependency locks.
+It also includes the core-first architecture map controls, dashboard runtime
+fixes, graph identity fixes, and expanded installation guidance.
 
 ```bash
 npx @vishal2612200/agentpack work "fix auth token expiry"
