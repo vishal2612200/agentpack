@@ -798,11 +798,10 @@ def _run_public_repo_suite(
                 ) as case_dir:
                     work_root = Path(case_dir) / "repo"
                     try:
-                        _run_git(
-                            source_repo.parent,
-                            ["clone", "--quiet", "--shared", "--no-checkout", str(source_repo), str(work_root)],
-                        )
-                        _run_git(work_root, ["checkout", "--force", "--quiet", parent])
+                        _run_git(None, ["init", "--quiet", str(work_root)])
+                        _run_git(work_root, ["remote", "add", "origin", str(source_repo)])
+                        _run_git(work_root, ["fetch", "--quiet", "--depth", "1", "origin", parent])
+                        _run_git(work_root, ["checkout", "--force", "--quiet", "FETCH_HEAD"])
                         _run_git(work_root, ["reset", "--hard", "--quiet", parent])
                         _run_git(work_root, ["clean", "-ffd", "--quiet"])
                     except subprocess.CalledProcessError as exc:
