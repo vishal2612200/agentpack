@@ -34,7 +34,7 @@ def test_e2e_report_output_contains_reproducible_metadata(tmp_path: Path, monkey
                     "model": "test-model",
                 })
     results.write_text("\n".join(json.dumps(row) for row in rows) + "\n", encoding="utf-8")
-    output = tmp_path / "benchmarks" / "results" / "2026-08-11-v0.4.1-e2e-ab.md"
+    output = tmp_path / "benchmarks" / "results" / "2026-08-12-v0.4.3-e2e-ab.md"
 
     result = CliRunner().invoke(
         app,
@@ -43,7 +43,7 @@ def test_e2e_report_output_contains_reproducible_metadata(tmp_path: Path, monkey
 
     assert result.exit_code == 0, result.output
     report = output.read_text(encoding="utf-8")
-    assert "- agentpack version: 0.4.1" in report
+    assert "- agentpack version: 0.4.3" in report
     assert "- total runs: 30" in report
     assert "## Trial matrix" in report
     assert "| task success |" in report

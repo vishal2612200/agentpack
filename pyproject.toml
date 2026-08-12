@@ -65,7 +65,7 @@ dev = [
   "pytest-cov",
   "jsonschema>=4.20.0",
   "Pillow>=10.0.0",
-  "ruff",
+  "ruff>=0.15.0,<0.16.0",
   "mypy",
   "tomli>=2.0.0; python_version < '3.11'"
 ]
@@ -103,10 +103,10 @@ files = [
 # Check listed critical modules without pulling legacy untyped imports into scope.
 follow_imports = "skip"
 
-# Optional parsers and the Python 3.10 TOML fallback are intentionally absent
-# from the default development install used by the CI type-check step.
+# Optional integrations and parsers are intentionally absent from the default
+# development install used by the CI type-check step.
 [[tool.mypy.overrides]]
-module = ["tomllib", "tomli", "tree_sitter", "tree_sitter_language_pack"]
+module = ["mcp", "mcp.*", "tomllib", "tomli", "tree_sitter", "tree_sitter_language_pack"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

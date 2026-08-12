@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 
 from typer.testing import CliRunner
 
@@ -110,8 +111,9 @@ def test_route_help_documents_core_options() -> None:
     """`agentpack route --help` must exit 0 and document --task, --json, and --format."""
     result = CliRunner().invoke(app, ["route", "--help"])
     assert result.exit_code == 0
+    output = re.sub(r"\x1b\[[0-9;]*m", "", result.output)
     for flag in ("--task", "--json", "--format"):
-        assert flag in result.output
+        assert flag in output
 
 def test_route_json_returns_stable_keys_and_does_not_write_context(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
