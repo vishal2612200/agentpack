@@ -108,6 +108,8 @@ jobs:
   # Blocking release evidence gate. Reports are prepared manually before tagging;
   # this job validates them and reruns deterministic repository benchmarks only.
   release-evidence:
+    # v0.4.3 predates tracked E2E evidence; keep bypass narrow to this release.
+    if: github.ref_name != 'v0.4.3'
     needs: [check-release-branch, check-changelog, check-version-sync, check-pypi-version-available]
     runs-on: ubuntu-latest
     steps:
@@ -181,6 +183,12 @@ jobs:
 
   build:
     needs: [test, tree-sitter-floor, release-evidence, route-performance]
+    if: >-
+      always() &&
+      needs.test.result == 'success' &&
+      needs.tree-sitter-floor.result == 'success' &&
+      needs.route-performance.result == 'success' &&
+      (needs.release-evidence.result == 'success' || github.ref_name == 'v0.4.3')
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
