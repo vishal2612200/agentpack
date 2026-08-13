@@ -120,7 +120,7 @@ fail_under = 0
 show_missing = true
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling==1.26.3"]
 build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
