@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import shutil
 from pathlib import Path
 
 import typer
@@ -107,6 +108,12 @@ def _print_global_template_results(results: dict[str, str], *, dry_run: bool = F
             console.print(f"{prefix}~/.git-templates/hooks/{name} {action}.[/]")
 
 
+def _print_pipx_install_help() -> None:
+    console.print("Install pipx with your OS package manager, then retry: [bold]pipx ensurepath && pipx install agentpack-cli[/]")
+    console.print("Examples: [bold]brew install pipx[/], [bold]sudo apt install pipx[/], [bold]sudo dnf install pipx[/], [bold]sudo pacman -S python-pipx[/].")
+    console.print("Avoid global [bold]pip3 install[/] on system-managed Python; PEP 668 may block it.")
+
+
 def _print_repo_hook_results(results: dict[str, str]) -> None:
     if not results:
         console.print("[dim]No local .git/hooks directory found in the current repo.[/]")
@@ -167,8 +174,13 @@ def register(app: typer.Typer) -> None:
 
         if pipx and not dry_run:
             console.print("[bold]Installing agentpack globally via pipx...[/]")
+            pipx_binary = shutil.which("pipx")
+            if pipx_binary is None:
+                console.print("[red]pipx command not found.[/]")
+                _print_pipx_install_help()
+                raise typer.Exit(1)
             result = sp.run(
-                ["pipx", "install", "agentpack-cli", "--force"],
+                [pipx_binary, "install", "agentpack-cli", "--force"],
                 capture_output=True,
                 text=True,
             )
@@ -177,9 +189,7 @@ def register(app: typer.Typer) -> None:
             else:
                 console.print("[red]pipx install failed.[/]")
                 console.print(result.stderr[:300])
-                console.print("Install pipx with your OS package manager, then retry: [bold]pipx ensurepath && pipx install agentpack-cli[/]")
-                console.print("Examples: [bold]brew install pipx[/], [bold]sudo apt install pipx[/], [bold]sudo dnf install pipx[/], [bold]sudo pacman -S python-pipx[/].")
-                console.print("Avoid global [bold]pip3 install[/] on system-managed Python; PEP 668 may block it.")
+                _print_pipx_install_help()
                 raise typer.Exit(1)
         elif pipx and dry_run:
             console.print("[dim]Would run: pipx install agentpack-cli[/]")
