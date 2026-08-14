@@ -1203,3 +1203,27 @@ def test_generated_agent_artifacts_are_quiet_without_direct_need():
     reasons = {fi.path: reasons for fi, _score, reasons in scored}
     assert scores[source.path] > scores[artifact.path]
     assert "generated agent artifact dampening" in reasons[artifact.path]
+
+
+def test_android_build_artifacts_are_quiet_without_direct_need():
+    artifact = _fi("android/app/.cxx/Debug/generated.cpp", language="cpp")
+    source = _fi("android/app/src/main.cpp", language="cpp")
+    source.content = "int main() { return 0; }\n"
+
+    scored = score_files(
+        [artifact, source],
+        changed_paths=set(),
+        staged_paths=set(),
+        recently_modified=[],
+        dep_graph={},
+        keywords=build_keyword_plan("fix Android build pipeline"),
+        summaries={
+            artifact.path: {"ranking_keywords": ["android", "build", "pipeline"]},
+            source.path: {"defines": ["main"], "ranking_keywords": ["android", "build", "pipeline"]},
+        },
+    )
+
+    scores = {file_info.path: score for file_info, score, _reasons in scored}
+    reasons = {file_info.path: reasons for file_info, _score, reasons in scored}
+    assert scores[source.path] > scores[artifact.path]
+    assert "generated Android build artifact dampening" in reasons[artifact.path]

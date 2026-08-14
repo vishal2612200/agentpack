@@ -34,6 +34,15 @@ def test_generated_output_dirs_ignored():
     assert is_ignored(spec, "temp/cache.json")
 
 
+def test_android_build_artifact_dirs_ignored():
+    spec = spec_from_text(DEFAULT_AGENTIGNORE)
+
+    assert is_ignored(spec, "android/app/.cxx/Debug/noise.cpp")
+    assert is_ignored(spec, "android/.gradle/8.0/file.bin")
+    assert is_ignored(spec, "android/app/build/intermediates/classes.jar")
+    assert is_ignored(spec, "android/app/build/outputs/apk/debug/app.apk")
+
+
 def test_snapshot_file_ignored():
     spec = spec_from_text(DEFAULT_AGENTIGNORE)
     assert is_ignored(spec, "tests/render/output.snap")

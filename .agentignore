@@ -17,6 +17,10 @@ coverage/
 
 # generated/noisy
 generated/
+.cxx/
+.gradle/
+intermediates/
+outputs/
 *.generated.*
 *.min.js
 *.map
