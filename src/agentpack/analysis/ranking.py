@@ -291,6 +291,7 @@ _GENERATED_AGENT_ARTIFACT_PREFIXES = (
     ".agentpack/",
     ".agent/",
 )
+_GENERATED_BUILD_ARTIFACT_SEGMENTS = frozenset({".cxx", ".gradle", "intermediates", "outputs"})
 
 
 def _add_keyword_weight(weights: dict[str, float], keyword: str, weight: float) -> None:
@@ -1335,6 +1336,16 @@ def _generated_agent_artifact_score(score: float, *, changed: bool) -> float:
     return min(score * 0.25, 80.0)
 
 
+def _is_generated_build_artifact(path: str) -> bool:
+    return bool(_GENERATED_BUILD_ARTIFACT_SEGMENTS.intersection(Path(path).parts))
+
+
+def _generated_build_artifact_score(score: float, *, changed: bool) -> float:
+    if changed:
+        return min(score, 160.0)
+    return min(score * 0.25, 80.0)
+
+
 def _keyword_only_false_positive(path: str, reasons: list[str], content_hits: int) -> bool:
     if _is_test_file(path):
         return False
@@ -1780,6 +1791,10 @@ def score_files(
         if _is_generated_agent_artifact(fi.path):
             score = _generated_agent_artifact_score(score, changed=fi.path in changed_paths)
             reasons.append("generated agent artifact dampening")
+
+        if _is_generated_build_artifact(fi.path):
+            score = _generated_build_artifact_score(score, changed=fi.path in changed_paths)
+            reasons.append("generated Android build artifact dampening")
 
         results.append((fi, score, reasons))
 

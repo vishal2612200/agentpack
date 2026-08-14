@@ -27,6 +27,21 @@ def test_scan_excludes_ignored(tmp_path):
     assert not any("node_modules" in p for p in packable_paths)
 
 
+def test_scan_excludes_android_build_artifacts(tmp_path):
+    source = tmp_path / "android" / "app" / "src" / "main.cpp"
+    artifact = tmp_path / "android" / "app" / ".cxx" / "Debug" / "noise.cpp"
+    source.parent.mkdir(parents=True)
+    artifact.parent.mkdir(parents=True)
+    source.write_text("int main() { return 0; }", encoding="utf-8")
+    artifact.write_text("generated build output", encoding="utf-8")
+
+    result = scan(tmp_path, _spec())
+    packable_paths = {file_info.path for file_info in result.packable}
+
+    assert "android/app/src/main.cpp" in packable_paths
+    assert "android/app/.cxx/Debug/noise.cpp" not in packable_paths
+
+
 def test_scan_excludes_agentpack_antigravity_skill(tmp_path):
     (tmp_path / ".agent" / "skills" / "agentpack").mkdir(parents=True)
     (tmp_path / ".agent" / "skills" / "agentpack" / "SKILL.md").write_text("# generated context")

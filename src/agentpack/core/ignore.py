@@ -34,6 +34,10 @@ target/
 
 # generated/noisy
 generated/
+.cxx/
+.gradle/
+intermediates/
+outputs/
 .serverless/
 tmp/
 temp/

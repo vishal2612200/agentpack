@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import agentpack.integrations.global_install as gi
+import agentpack.commands.install as install_command
 from typer.testing import CliRunner
 
 from agentpack.cli import app
@@ -29,6 +30,21 @@ def test_global_install_generic_is_supported_noop(tmp_path, monkeypatch) -> None
 
     assert result.exit_code == 0, result.output
     assert "generic has no agent-specific hooks" in result.output
+
+
+def test_global_install_reports_missing_pipx_without_traceback(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(install_command.shutil, "which", lambda name: None if name == "pipx" else None)
+
+    result = CliRunner().invoke(
+        app,
+        ["global-install", "--agent", "generic", "--no-shell-hook", "--no-git-template"],
+    )
+
+    assert result.exit_code == 1
+    assert "pipx command not found" in result.output
+    assert "Install pipx with your OS package manager" in result.output
+    assert "Traceback" not in result.output
 
 
 def test_global_repair_hooks_repairs_templates_and_repo_hooks(tmp_path, monkeypatch) -> None:
