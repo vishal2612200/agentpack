@@ -17,6 +17,7 @@ from agentpack.application.pack_service import PackPlanner, PackRequest
 from agentpack.core.config import load_config
 from agentpack.observer.priors import observer_notes_for_task, observer_route_priors
 from agentpack.session.events import read_events
+from agentpack.session.identity import resolve_identity
 from agentpack.session.references import extract_issue_references, merge_issue_references
 from agentpack.router.discovery import discover_inventory, inventory_for_route
 from agentpack.router.models import (
@@ -51,6 +52,9 @@ class PromptQualityDecision:
 
 
 class RouteService:
+    def __init__(self) -> None:
+        self._route_details: dict[tuple[str, str, tuple[str, ...]], tuple[RouteResult, SkillInventory, list[Any]]] = {}
+
     def inventory(self, root: Path, *, use_index: bool = True) -> SkillInventory:
         cfg = load_config(root)
         paths = cfg.skills.paths
@@ -155,24 +159,24 @@ class RouteService:
         result.agent_prompt = build_agent_prompt(result)
         plan.phase_times["route_total"] = time.perf_counter() - route_started
         _record_route_phase_metrics(root, task, plan.phase_times)
+        cache_key = _route_cache_key(root, task)
+        self._route_details[cache_key] = (result, inventory, _all_scores)
+        if len(self._route_details) > 4:
+            self._route_details.pop(next(iter(self._route_details)))
         return result
 
     def explain_route(self, root: Path, task: str) -> RouteExplanation:
         task = _normalize_task(task)
-        result = self.route_task(root, task)
-        cfg = load_config(root)
-        selected_paths = [item["path"] for item in result.selected_files]
-        inventory = self.inventory(root)
-        _selected, _warnings, all_scores = score_skills(
-            inventory.skills,
-            task=task,
-            selected_paths=selected_paths,
-            selected_files=result.selected_files,
-            max_selected=max(len(inventory.skills), cfg.skills.max_selected),
-            allow_external=True,
-            always_recommend=cfg.skills.always_recommend,
-            historical_success=_load_skill_success(root),
-        )
+        cache_key = _route_cache_key(root, task)
+        details = self._route_details.get(cache_key)
+        if details is None:
+            result = self.route_task(root, task)
+            details = self._route_details[cache_key]
+        else:
+            result = details[0]
+        _result, _inventory, all_scores = details
+        if not all_scores:
+            all_scores = []
         all_scores = _strip_skill_bodies(all_scores)
         return RouteExplanation(**result.model_dump(), skill_scores=all_scores)
 
@@ -206,6 +210,14 @@ def _normalize_task(task: str) -> str:
     return normalized
 
 
+def _route_cache_key(root: Path, task: str) -> tuple[str, str, tuple[str, ...]]:
+    return (
+        str(root.resolve()),
+        f"{git.current_sha(root) or 'worktree'}:{task}",
+        tuple(sorted(git.dirty_files(root) | git.untracked_files(root))),
+    )
+
+
 def _record_route_phase_metrics(root: Path, task: str, phase_times: dict[str, float]) -> None:
     record = {
         "ts": time.time(),
@@ -227,16 +239,51 @@ def _task_with_recent_issue_context(root: Path, task: str) -> str:
     if extract_issue_references(task):
         return task
     cfg = load_config(root)
-    events = read_events(root, output_path=cfg.runtime.session_events_output, limit=50)
+    identity = resolve_identity(root, task=task)
+    events = read_events(root, output_path=cfg.runtime.session_events_output, limit=100)
     refs = merge_issue_references(
         ref
         for event in events
+        if _event_matches_route_identity(event, identity, task)
         for ref in (event.get("issue_references") or [])
         if isinstance(ref, str)
     )
     if not refs:
         return task
     return f"{task} issue references {' '.join(refs[-5:])}"
+
+
+def _event_matches_route_identity(event: dict[str, Any], identity: dict[str, Any], task: str) -> bool:
+    for key in ("project_id", "workspace_id"):
+        expected = str(identity.get(key) or "")
+        observed = str(event.get(key) or "")
+        if expected and observed and expected != observed:
+            return False
+    expected_session = str(identity.get("session_id") or "")
+    observed_session = str(event.get("session_id") or "")
+    if expected_session and observed_session and expected_session != observed_session:
+        return False
+    expected_task = str(identity.get("task_id") or "")
+    observed_task = str(event.get("task_id") or "")
+    expected_logical = str(identity.get("logical_task_id") or "")
+    observed_logical = str(event.get("logical_task_id") or "")
+    if (
+        (expected_task and observed_task and expected_task == observed_task)
+        or (expected_logical and observed_logical and expected_logical == observed_logical)
+    ):
+        return True
+    event_task = str(event.get("task") or event.get("payload", {}).get("task") or "")
+    current_terms = _route_task_terms(task)
+    prior_terms = _route_task_terms(event_task)
+    return bool(current_terms and prior_terms and len(current_terms & prior_terms) >= 1)
+
+
+def _route_task_terms(value: str) -> set[str]:
+    return {
+        term
+        for term in re.findall(r"[a-z0-9_]{4,}", value.lower())
+        if term not in {"continue", "current", "issue", "task", "with", "from", "this", "that"}
+    }
 
 
 def _selected_file_dict(item) -> dict:

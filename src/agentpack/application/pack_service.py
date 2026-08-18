@@ -212,7 +212,10 @@ class ChangeDetector:
                 git_changed = git.changed_files_since(root, since)
             else:
                 git_changed = git.changed_files(root)
-            git_staged = git_changed
+            # `changed_files` is the union of index and worktree diffs. Keep
+            # staged state separate because ranking uses it as a stronger
+            # signal than ordinary dirty files.
+            git_staged = git.staged_files(root)
             recently_modified = git.recently_modified_files(root)
         packable_paths = {fi.path for fi in packable}
         previous_paths = set((previous_snap or {}).get("files", {}))
@@ -231,6 +234,7 @@ class ChangeDetector:
 
 
 _ROUTE_RANKING_CAP = 64
+_ROUTE_RANKING_MAX = 300
 _ROUTE_STOP_WORDS = {
     "agentpack", "change", "changes", "code", "file", "files", "fix", "issue",
     "task", "the", "this", "with", "from", "into", "that", "and", "for",
@@ -244,7 +248,9 @@ def _route_rank_candidates(
     summaries: dict[str, Any],
     semantic_graph: SemanticGraphIndex | None,
 ) -> list[FileInfo]:
-    if len(packable) <= _ROUTE_RANKING_CAP:
+    mandatory_count = max(1, len(changes.all_changed))
+    candidate_cap = min(_ROUTE_RANKING_MAX, max(_ROUTE_RANKING_CAP, 32 + mandatory_count * 4))
+    if len(packable) <= candidate_cap:
         return packable
 
     by_path = {item.path: item for item in packable}
@@ -281,7 +287,7 @@ def _route_rank_candidates(
         related_tests.update(find_related_tests(path, all_paths))
     seeds.update(path for path in related_tests if path in by_path)
 
-    if len(seeds) >= _ROUTE_RANKING_CAP:
+    if len(seeds) >= candidate_cap:
         return [by_path[path] for path in sorted(seeds)]
 
     remaining = sorted(
@@ -291,7 +297,7 @@ def _route_rank_candidates(
     )
     # ponytail: route keeps mandatory/graph evidence, then bounds expensive full ranking.
     selected = [by_path[path] for path in sorted(seeds)]
-    selected.extend(remaining[: _ROUTE_RANKING_CAP - len(selected)])
+    selected.extend(remaining[: candidate_cap - len(selected)])
     return selected
 
 
@@ -301,8 +307,10 @@ def _select_route_files(
     changed_paths: set[str],
     summaries: dict[str, Any],
     *,
-    limit: int = 48,
+    limit: int | None = None,
 ) -> tuple[list[SelectedFile], list[Receipt]]:
+    if limit is None:
+        limit = max(48, min(120, 32 + max(1, len(changed_paths)) * 4))
     file_by_path = {item.path: item for item in files}
     ranked = sorted(
         scored,
@@ -1618,7 +1626,11 @@ def _apply_ranking_feedback_boosts(
     memory_setting = os.environ.get("AGENTPACK_MEMORY_FEEDBACK") or getattr(cfg.context, "memory_feedback", "auto")
     if str(memory_setting).strip().lower() == "off":
         return scored
-    boosts = ranking_feedback_boosts(root, task)
+    boosts = ranking_feedback_boosts(
+        root,
+        task,
+        eligible_paths={fi.path for fi, _score, _reasons in scored},
+    )
     episodic_reasons: dict[str, str] = {}
     try:
         from agentpack.learning.episodes import episodic_memory_matches

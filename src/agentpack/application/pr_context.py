@@ -53,6 +53,8 @@ def resolve_pr_context(
     allow_local_fallback: bool = False,
 ) -> PRContext:
     """Resolve a GitHub PR to immutable local commits, or use explicit local fallback."""
+    if pr in (None, "") and not allow_local_fallback:
+        raise PRContextError("An explicit PR number or URL is required; pass allow_local_fallback=True for local commits.")
     metadata = _github_pr_metadata(root, pr)
     if metadata is None:
         if not allow_local_fallback:
@@ -201,9 +203,10 @@ def build_pr_context(
 
 def _local_fallback_context(root: Path, *, focus: str) -> PRContext:
     head_sha = _resolve_commit(root, "HEAD")
-    base_sha = _git(root, ["git", "rev-parse", "HEAD~1"])
+    base_ref = _local_base_ref(root)
+    base_sha = _git(root, ["git", "merge-base", "HEAD", base_ref])
     if not base_sha:
-        raise PRContextError("Local fallback requires at least two commits.")
+        raise PRContextError(f"Could not find a merge-base between HEAD and local base {base_ref}.")
     return build_pr_context(
         root,
         base_ref=base_sha,
@@ -214,6 +217,8 @@ def _local_fallback_context(root: Path, *, focus: str) -> PRContext:
 
 
 def _github_pr_metadata(root: Path, pr: str | int | None) -> dict[str, object] | None:
+    if pr in (None, ""):
+        return None
     args = [
         "gh",
         "pr",
@@ -232,6 +237,21 @@ def _github_pr_metadata(root: Path, pr: str | int | None) -> dict[str, object] |
         return None
     required = ("number", "baseRefName", "baseRefOid", "headRefOid")
     return payload if isinstance(payload, dict) and all(payload.get(key) for key in required) else None
+
+
+def _local_base_ref(root: Path) -> str:
+    for candidate in ("refs/remotes/origin/main", "refs/remotes/origin/master", "main", "master"):
+        if _git(root, ["git", "rev-parse", "--verify", f"{candidate}^{{commit}}"]):
+            branch = _git(root, ["git", "rev-parse", "--abbrev-ref", "HEAD"])
+            if candidate.rsplit("/", 1)[-1] == (branch or "").strip() and candidate in {"main", "master"}:
+                parent = _git(root, ["git", "rev-parse", "--verify", "HEAD^"])
+                if parent:
+                    return parent
+            return candidate
+    raise PRContextError(
+        "Local fallback requires an explicit PR target or a local main/master ref; "
+        "HEAD~1 is not a trusted review base."
+    )
 
 
 def _fetch_pr_refs(root: Path, *, number: int, base_name: str, head_ref: str, base_ref: str) -> None:

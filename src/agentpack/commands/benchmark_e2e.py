@@ -12,11 +12,13 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 import typer
 from rich import box
 from rich.table import Table
 
+from agentpack import __version__
 from agentpack.application.pack_service import PackRequest
 from agentpack.commands._shared import console, _root
 from agentpack.core import git
@@ -74,6 +76,10 @@ class E2EResult:
     agent_command: str = ""
     validation_command: str = ""
     model: str = ""
+    run_id: str = ""
+    tested_commit: str = ""
+    case_fingerprint: str = ""
+    setup_returncode: int = 0
 
 def benchmark_e2e_init(
     output: str = typer.Option("", "--output", help="Output TOML path. Default: .agentpack/e2e_cases.toml."),
@@ -158,6 +164,8 @@ def benchmark_e2e(
 
     out_path = Path(output) if output else root / ".agentpack" / "e2e_results.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
+    run_id = "e2e-" + uuid4().hex
+    tested_commit = git.current_sha(root) or "unknown"
     results: list[E2EResult] = []
 
     for case in parsed_cases:
@@ -172,10 +180,28 @@ def benchmark_e2e(
                     input_cost_per_mtok=input_cost_per_mtok,
                     output_cost_per_mtok=output_cost_per_mtok,
                     keep_workdir=keep_workdirs,
+                    run_id=run_id,
+                    tested_commit=tested_commit,
                 )
                 results.append(result)
-                with out_path.open("a", encoding="utf-8") as fh:
-                    fh.write(json.dumps(result.__dict__) + "\n")
+
+    manifest = {
+        "record_type": "manifest",
+        "schema_version": 1,
+        "run_id": run_id,
+        "tested_commit": tested_commit,
+        "agentpack_version": __version__,
+        "strategies": wanted_strategies,
+        "trials": trials,
+        "cases": sorted({result.case for result in results}),
+        "risk_categories": sorted({result.risk_category for result in results}),
+    }
+    temporary = out_path.with_name(f".{out_path.name}.{run_id}.tmp")
+    temporary.write_text(
+        "\n".join([json.dumps(manifest, sort_keys=True), *(json.dumps(result.__dict__, sort_keys=True) for result in results)]) + "\n",
+        encoding="utf-8",
+    )
+    os.replace(temporary, out_path)
 
     _print_e2e_summary(results, out_path)
 
@@ -229,7 +255,11 @@ def _load_e2e_result_records(path: Path) -> list[dict[str, Any]]:
         if not line:
             continue
         try:
-            rows.append(json.loads(line))
+            row = json.loads(line)
+            if isinstance(row, dict) and row.get("record_type") == "manifest":
+                continue
+            if isinstance(row, dict):
+                rows.append(row)
         except json.JSONDecodeError:
             continue
     return rows
@@ -356,6 +386,9 @@ def _e2e_ab_markdown(
     })
     agent_configs = sorted({str(row.get("agent_command")) for row in records if row.get("agent_command")})
     models = sorted({str(row.get("model")) for row in records if row.get("model")})
+    run_ids = sorted({str(row.get("run_id")) for row in records if row.get("run_id")})
+    record_commits = sorted({str(row.get("tested_commit")) for row in records if row.get("tested_commit")})
+    reported_commit = record_commits[0] if len(record_commits) == 1 else tested_commit
     trials = min(len(base_records), len(treatment_records)) // max(len(case_names), 1)
     case_rows = [
         (case_name, next((str(row.get("risk_category")) for row in records if row.get("case") == case_name), "uncategorized"),
@@ -367,7 +400,8 @@ def _e2e_ab_markdown(
         f"# AgentPack E2E A/B: {baseline} vs {treatment}",
         "",
         f"- agentpack version: {version or 'unspecified'}",
-        f"- tested commit: {tested_commit or 'unspecified'}",
+        f"- tested commit: {reported_commit or 'unspecified'}",
+        f"- run id: {', '.join(run_ids) if run_ids else 'unspecified'}",
         f"- baseline: {baseline}",
         f"- treatment: {treatment}",
         f"- cases: {len(case_names)}",
@@ -376,6 +410,23 @@ def _e2e_ab_markdown(
         f"- total runs: {len(records)}",
         f"- agent/model configuration: {', '.join(agent_configs) if agent_configs else 'unspecified'}; model={', '.join(models) if models else 'unspecified'}",
         f"- source: `{source}`",
+        "",
+        "<!-- agentpack-e2e-manifest: "
+        + json.dumps(
+            {
+                "schema_version": 1,
+                "run_ids": run_ids,
+                "tested_commits": record_commits or ([tested_commit] if tested_commit else []),
+                "baseline": baseline,
+                "treatment": treatment,
+                "cases": sorted(case_names),
+                "risk_categories": categories,
+                "trials_per_strategy": trials,
+                "total_runs": len(records),
+            },
+            sort_keys=True,
+        )
+        + " -->",
         "",
         "| Metric | Baseline | AgentPack | Saved / lift |",
         "|---|---:|---:|---:|",
@@ -445,14 +496,24 @@ def _run_e2e_case(
     keep_workdir: bool,
     input_cost_per_mtok: float = 0.0,
     output_cost_per_mtok: float = 0.0,
+    run_id: str = "",
+    tested_commit: str = "",
 ) -> E2EResult:
     start = time.perf_counter()
     work_root = Path(tempfile.mkdtemp(prefix=f"agentpack-e2e-{case.name}-{strategy}-"))
     repo = work_root / "repo"
     shutil.copytree(case.repo, repo, ignore=shutil.ignore_patterns(".git", ".agentpack", "__pycache__", ".pytest_cache"))
     _init_e2e_git(repo)
+    setup_returncode = 0
+    setup_output = ""
     if case.setup_command:
-        subprocess.run(case.setup_command, cwd=repo, shell=True, capture_output=True, text=True, timeout=timeout)
+        try:
+            setup = subprocess.run(case.setup_command, cwd=repo, shell=True, capture_output=True, text=True, timeout=timeout)
+            setup_returncode = setup.returncode
+            setup_output = "\n".join((setup.stdout, setup.stderr)).strip()
+        except subprocess.TimeoutExpired as exc:
+            setup_returncode = 124
+            setup_output = f"setup timed out after {exc.timeout} seconds"
     protected_hashes = _hash_protected_paths(repo, case.protected_paths)
 
     prompt = _e2e_prompt(case, strategy, repo)
@@ -461,19 +522,25 @@ def _run_e2e_case(
     agent_args = _agent_args(agent_command, prompt_path, repo)
     timed_out = False
     agent_start_epoch = time.time()
-    try:
-        agent = subprocess.run(agent_args, cwd=repo, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        agent = _timeout_result(agent_args, exc)
+    if setup_returncode:
+        agent = subprocess.CompletedProcess(agent_args, setup_returncode, "", f"setup failed: {setup_output}")
+    else:
+        try:
+            agent = subprocess.run(agent_args, cwd=repo, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            agent = _timeout_result(agent_args, exc)
     agent_log_path = work_root / "agent.log"
     test_log_path = work_root / "test.log"
     _write_e2e_process_log(agent_log_path, agent)
-    try:
-        test = subprocess.run(case.test_command, cwd=repo, shell=True, capture_output=True, text=True, timeout=timeout)
-    except subprocess.TimeoutExpired as exc:
-        timed_out = True
-        test = _timeout_result(case.test_command, exc)
+    if setup_returncode:
+        test = subprocess.CompletedProcess(case.test_command, setup_returncode, "", "skipped because setup failed")
+    else:
+        try:
+            test = subprocess.run(case.test_command, cwd=repo, shell=True, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired as exc:
+            timed_out = True
+            test = _timeout_result(case.test_command, exc)
     _write_e2e_process_log(test_log_path, test)
     input_tokens = estimate_tokens(prompt)
     agent_output_tokens = _process_output_tokens(agent)
@@ -491,7 +558,7 @@ def _run_e2e_case(
     time_to_first_expected_file = _time_to_first_expected_file(repo, expected_touched, agent_start_epoch)
     tool_calls = _estimate_agent_tool_calls(agent)
     duration = time.perf_counter() - start
-    passed = not timed_out and agent.returncode == 0 and test.returncode == 0 and not protected_changed
+    passed = not setup_returncode and not timed_out and agent.returncode == 0 and test.returncode == 0 and not protected_changed
 
     if not keep_workdir and passed:
         shutil.rmtree(work_root, ignore_errors=True)
@@ -528,7 +595,27 @@ def _run_e2e_case(
         agent_command=agent_command,
         validation_command=case.test_command,
         model=os.environ.get("AGENTPACK_E2E_MODEL", "unspecified"),
+        run_id=run_id,
+        tested_commit=tested_commit,
+        case_fingerprint=_e2e_case_fingerprint(case),
+        setup_returncode=setup_returncode,
     )
+
+
+def _e2e_case_fingerprint(case: E2ECase) -> str:
+    payload = json.dumps(
+        {
+            "name": case.name,
+            "task": case.task,
+            "test_command": case.test_command,
+            "setup_command": case.setup_command,
+            "protected_paths": sorted(case.protected_paths),
+            "expected_edit_paths": sorted(case.expected_edit_paths),
+            "risk_category": case.risk_category,
+        },
+        sort_keys=True,
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:16]
 
 
 def _public_changed_files(changed: list[str]) -> list[str]:

@@ -127,11 +127,14 @@ def _check_release_evidence(root: Path, *, tag: str | None) -> StageResult:
     public_reports = sorted(results_root.glob("*-public.md"))
     e2e_reports = sorted(results_root.glob(f"*-v{version}-e2e-ab.md")) if version else []
     errors: list[str] = []
+    if not tag:
+        errors.append("release evidence requires an explicit --tag so ancestry is checked against immutable release target")
 
-    public = next((path for path in public_reports if _report_version(path) == version), None)
-    if public is None:
-        errors.append(f"missing tracked deterministic report for version {version}")
+    matching_public = [path for path in public_reports if _report_version(path) == version]
+    if len(matching_public) != 1:
+        errors.append(f"expected one tracked deterministic report for version {version}; found {len(matching_public)}")
     else:
+        public = matching_public[0]
         _validate_report_commit(root, public, tag, errors)
         if not _is_tracked(root, public):
             errors.append(f"deterministic report is not tracked: {public.relative_to(root)}")
@@ -215,6 +218,27 @@ def _validate_e2e_report(path: Path, version: str, errors: list[str]) -> None:
     except OSError:
         errors.append(f"{path.name}: unreadable report")
         return
+    manifest_match = re.search(r"<!--\s*agentpack-e2e-manifest:\s*(\{.*?\})\s*-->", text)
+    if not manifest_match:
+        errors.append(f"{path.name}: missing machine-readable E2E manifest")
+        manifest: dict[str, Any] = {}
+    else:
+        try:
+            parsed = json.loads(manifest_match.group(1))
+            manifest = parsed if isinstance(parsed, dict) else {}
+        except json.JSONDecodeError:
+            manifest = {}
+            errors.append(f"{path.name}: malformed machine-readable E2E manifest")
+    if manifest.get("schema_version") != 1:
+        errors.append(f"{path.name}: unsupported or missing E2E manifest schema")
+    if manifest.get("baseline") != "no-context" or manifest.get("treatment") != "agentpack":
+        errors.append(f"{path.name}: manifest baseline/treatment mismatch")
+    run_ids: list[Any] = list(manifest["run_ids"]) if isinstance(manifest.get("run_ids"), list) else []
+    commits: list[Any] = list(manifest["tested_commits"]) if isinstance(manifest.get("tested_commits"), list) else []
+    if len(run_ids) != 1 or not str(run_ids[0]).startswith("e2e-"):
+        errors.append(f"{path.name}: evidence must come from one immutable E2E run")
+    if len(commits) != 1 or not re.fullmatch(r"[0-9a-fA-F]{7,64}", str(commits[0] or "")):
+        errors.append(f"{path.name}: manifest must contain one valid tested commit")
     categories = [item.strip() for item in _report_metadata(path, "risk categories").split(",") if item.strip()]
     cases = _parse_int_metadata(path, "cases")
     trials = _parse_int_metadata(path, "trials per strategy")
@@ -227,11 +251,18 @@ def _validate_e2e_report(path: Path, version: str, errors: list[str]) -> None:
         errors.append(f"{path.name}: requires at least three trials per strategy")
     if total_runs < 30:
         errors.append(f"{path.name}: requires at least 30 total runs")
+    if manifest.get("total_runs") != total_runs:
+        errors.append(f"{path.name}: manifest total_runs does not match report")
+    if manifest.get("trials_per_strategy") != trials:
+        errors.append(f"{path.name}: manifest trial count does not match report")
+    if sorted(str(item) for item in manifest.get("risk_categories", [])) != sorted(categories):
+        errors.append(f"{path.name}: manifest risk categories do not match report")
     trial_rows = re.findall(r"^\| `[^`]+` \| [^|]+ \| (\d+) \| (\d+) \|$", text, flags=re.MULTILINE)
     if len(trial_rows) < 5 or any(int(base) < 3 or int(treatment) < 3 for base, treatment in trial_rows):
         errors.append(f"{path.name}: trial matrix requires five cases with three baseline and treatment trials")
     for metric in ("task success", "expected file touched", "tokens", "token cost", "duration"):
-        if not re.search(rf"^\| {re.escape(metric)} \|", text, flags=re.MULTILINE):
+        metric_row = re.search(rf"^\| {re.escape(metric)} \| ([^|]+) \| ([^|]+) \|", text, flags=re.MULTILINE)
+        if not metric_row or not any(char.isdigit() for char in metric_row.group(1) + metric_row.group(2)):
             errors.append(f"{path.name}: missing metric {metric}")
     if "agent/model configuration: unspecified" in text:
         errors.append(f"{path.name}: missing agent/model configuration")
