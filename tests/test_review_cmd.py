@@ -328,7 +328,7 @@ def test_review_command_writes_run_scoped_bundle_and_active_aliases(tmp_path, mo
     preflight = json.loads(preflight_path.read_text(encoding="utf-8"))
     run_dir = repo / preflight["paths"]["run_dir"]
     assert preflight["review_context"] == "reviewer is worried about prompt latency"
-    assert preflight["diff"]["range"] == "HEAD~1..HEAD"
+    assert preflight["diff"]["range"] == f"{preflight['diff']['base_ref']}...HEAD"
     assert preflight["warnings"][0] == "gh PR metadata unavailable; review is using local git context only"
     assert run_dir.exists()
     assert (run_dir / "preflight.json").exists()

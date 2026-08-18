@@ -94,7 +94,12 @@ def register(app: typer.Typer) -> None:
         allow_local_fallback: bool = typer.Option(
             False,
             "--allow-local-fallback",
-            help="Allow local HEAD-based diff fallback when GitHub PR metadata or fetch is unavailable.",
+            help="Allow explicit local diff fallback when GitHub PR metadata or fetch is unavailable.",
+        ),
+        base_ref: str = typer.Option(
+            "",
+            "--base",
+            help="Explicit local review base ref used only with --allow-local-fallback.",
         ),
         check: bool = typer.Option(False, "--check", help="Validate active review stage artifacts and print the next gate."),
         post_inline_comments: bool = typer.Option(
@@ -153,6 +158,7 @@ def register(app: typer.Typer) -> None:
                     outputs,
                     target=target,
                     allow_local_fallback=allow_local_fallback,
+                    base_ref=base_ref.strip(),
                     review_mode_override="strict" if strict else "light" if light else "",
                     git_preflight=git_preflight,
                 )
@@ -256,13 +262,14 @@ def _build_review_preflight(
     *,
     target: dict[str, Any] | None = None,
     allow_local_fallback: bool = False,
+    base_ref: str = "",
     review_mode_override: str = "",
     git_preflight: GitPreflight | None = None,
 ) -> dict[str, Any]:
     branch = outputs["branch"]
     pr = _gh_pr_metadata(root, target)
     all_paths = _repo_paths(root)
-    diff_info = _diff_base(root, pr, target=target, allow_local_fallback=allow_local_fallback)
+    diff_info = _diff_base(root, pr, target=target, allow_local_fallback=allow_local_fallback, base_ref=base_ref)
     sha = diff_info.get("head_sha") or git_core.current_sha(root) or ""
     changed_paths = _changed_paths(root, diff_info["range"])
     changed_files = [
@@ -950,7 +957,7 @@ def _write_review_context_fallback(
                 continue
         if "\x00" in content:
             continue
-        snippet = content[: min(6_000, remaining)].rstrip()
+        snippet = _review_file_window(root, diff_info, path, content, max_chars=min(6_000, remaining)).rstrip()
         truncated = "\n\n[truncated]" if len(snippet) < len(content) else ""
         section = f"## {path}\n\n```text\n{snippet}{truncated}\n```\n"
         sections.append(section)
@@ -975,6 +982,8 @@ def _load_review_template(name: str) -> str:
 
 
 def _gh_pr_metadata(root: Path, target: dict[str, Any] | None = None) -> dict[str, Any] | None:
+    if not target:
+        return None
     if shutil.which("gh") is None:
         return None
     target_arg = _target_cli_arg(target)
@@ -1024,6 +1033,7 @@ def _diff_base(
     *,
     target: dict[str, Any] | None = None,
     allow_local_fallback: bool = False,
+    base_ref: str = "",
 ) -> dict[str, str]:
     if pr:
         number = pr.get("number") or (target or {}).get("number")
@@ -1048,7 +1058,7 @@ def _diff_base(
                 )
         elif not allow_local_fallback:
             raise _ReviewPreflightError("PR metadata missing number/base branch; pass --pr <number> or --allow-local-fallback")
-        return _local_diff_base(root, pr, fallback_reason=f"PR ref fetch unavailable for #{number or '?'}")
+        return _local_diff_base(root, pr, fallback_reason=f"PR ref fetch unavailable for #{number or '?'}", base_ref=base_ref)
 
     if not allow_local_fallback:
         target_hint = _target_cli_arg(target)
@@ -1061,39 +1071,48 @@ def _diff_base(
             "gh PR metadata unavailable; pass --pr <number-or-url> so review can bind to the requested PR, "
             "or pass --allow-local-fallback explicitly for local branch review"
         )
-    return _local_diff_base(root, pr, fallback_reason="gh PR metadata unavailable")
+    return _local_diff_base(root, pr, fallback_reason="gh PR metadata unavailable", base_ref=base_ref)
 
 
-def _local_diff_base(root: Path, pr: dict[str, Any] | None, *, fallback_reason: str) -> dict[str, str]:
-    base_name = (pr or {}).get("base_ref", "")
-    for candidate in _base_candidates(base_name):
-        if _git_ref_exists(root, candidate):
-            return {
-                "base_ref": candidate,
-                "head_ref": "HEAD",
-                "head_sha": git_core.current_sha(root) or "",
-                "range": f"{candidate}...HEAD",
-                "source": "local-fallback",
-                "fallback_reason": fallback_reason,
-                "target_label": "local branch",
-            }
-    if _git_ref_exists(root, "HEAD~1"):
-        return {
-            "base_ref": "HEAD~1",
-            "head_ref": "HEAD",
-            "head_sha": git_core.current_sha(root) or "",
-            "range": "HEAD~1..HEAD",
-            "source": "local-fallback",
-            "fallback_reason": fallback_reason,
-            "target_label": "local branch",
-        }
+def _local_diff_base(
+    root: Path,
+    pr: dict[str, Any] | None,
+    *,
+    fallback_reason: str,
+    base_ref: str = "",
+) -> dict[str, str]:
+    head_sha = git_core.current_sha(root) or ""
+    requested_base = base_ref or str((pr or {}).get("base_ref", ""))
+    candidates = _base_candidates(requested_base)
+    for candidate in candidates:
+        if not _git_ref_exists(root, candidate):
+            continue
+        base_sha = _merge_base(root, candidate)
+        if base_sha and (base_sha != head_sha or requested_base):
+            return _local_diff_info(base_sha, head_sha, fallback_reason, candidate)
+
+    # Fresh test repositories often have only a default branch and no remote.
+    # Use its parent only in that explicit local-fallback mode; feature branches
+    # without a resolvable default base remain blocked.
+    branch = git_core.current_branch(root) or ""
+    if not base_ref and branch in {"main", "master"} and _git_ref_exists(root, "HEAD^"):
+        base_sha = _merge_base(root, "HEAD^")
+        if base_sha:
+            return _local_diff_info(base_sha, head_sha, fallback_reason, "HEAD^")
+    raise _ReviewPreflightError(
+        "local review fallback requires --base <ref> or a resolvable origin/main, origin/master, main, or master ref"
+    )
+
+
+def _local_diff_info(base_sha: str, head_sha: str, fallback_reason: str, base_label: str) -> dict[str, str]:
     return {
-        "base_ref": "HEAD",
+        "base_ref": base_sha,
         "head_ref": "HEAD",
-        "head_sha": git_core.current_sha(root) or "",
-        "range": "HEAD",
+        "head_sha": head_sha,
+        "range": f"{base_sha}...HEAD",
         "source": "local-fallback",
         "fallback_reason": fallback_reason,
+        "base_label": base_label,
         "target_label": "local branch",
     }
 
@@ -1133,7 +1152,49 @@ def _base_candidates(base_name: str) -> list[str]:
     candidates: list[str] = []
     if base_name:
         candidates.extend([f"refs/remotes/origin/{base_name}", base_name])
+    candidates.extend([
+        "refs/remotes/origin/main",
+        "refs/remotes/origin/master",
+        "main",
+        "master",
+    ])
     return candidates
+
+
+def _merge_base(root: Path, ref: str) -> str:
+    result = subprocess.run(
+        ["git", "merge-base", "HEAD", ref],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip() if result.returncode == 0 else ""
+
+
+def _review_file_window(root: Path, diff_info: dict[str, Any], path: str, content: str, *, max_chars: int) -> str:
+    diff_range = str(diff_info.get("range") or "")
+    if not diff_range:
+        return content[:max_chars]
+    result = subprocess.run(
+        ["git", "diff", "--unified=24", diff_range, "--", path],
+        cwd=root,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        return content[:max_chars]
+    lines = content.splitlines()
+    windows: list[tuple[int, int]] = []
+    for match in re.finditer(_DIFF_HUNK_RE.pattern, result.stdout, flags=re.MULTILINE):
+        start = max(1, int(match.group("new_start")) - 24)
+        count = int(match.group("new_count") or "1")
+        windows.append((start, min(len(lines), start + count + 48)))
+    if not windows:
+        return content[:max_chars]
+    selected: list[str] = []
+    for start, end in windows:
+        selected.extend(f"{number}: {lines[number - 1]}" for number in range(start, end + 1))
+    return "\n".join(selected)[:max_chars]
 
 
 def _qualified_ref(ref: str) -> str:

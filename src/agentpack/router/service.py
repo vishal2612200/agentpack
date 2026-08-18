@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import re
 import shutil
@@ -8,15 +9,18 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from agentpack.core import git
 from agentpack.core.pr_target import is_explicit_pull_request_task, pull_request_target
+from agentpack.core.jsonl import append_record
 from agentpack.adapters.detect import detect_agent
 from agentpack.application.pack_service import PackPlanner, PackRequest
 from agentpack.core.config import load_config
 from agentpack.observer.priors import observer_notes_for_task, observer_route_priors
 from agentpack.session.events import read_events
+from agentpack.session.identity import resolve_identity
 from agentpack.session.references import extract_issue_references, merge_issue_references
 from agentpack.router.discovery import discover_inventory, inventory_for_route
 from agentpack.router.models import (
@@ -51,16 +55,46 @@ class PromptQualityDecision:
 
 
 class RouteService:
+    def __init__(self) -> None:
+        self._route_details: dict[tuple[str, str, tuple[str, ...]], tuple[RouteResult, SkillInventory, list[Any]]] = {}
+        self._inventory_cache: dict[str, tuple[float, SkillInventory]] = {}
+        self._inventory_cache_ttl_s = 2.0
+        self._cache_lock = RLock()
+
     def inventory(self, root: Path, *, use_index: bool = True) -> SkillInventory:
         cfg = load_config(root)
         paths = cfg.skills.paths
+        cache_key = f"{root.resolve()}|{tuple(paths)}|{use_index}"
+        with self._cache_lock:
+            cached = self._inventory_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < self._inventory_cache_ttl_s:
+            return cached[1]
         if use_index:
-            return inventory_for_route(root, paths)
-        return discover_inventory(root, paths)
+            inventory = inventory_for_route(root, paths)
+        else:
+            inventory = discover_inventory(root, paths)
+        with self._cache_lock:
+            self._inventory_cache[cache_key] = (time.monotonic(), inventory)
+            if len(self._inventory_cache) > 8:
+                oldest = min(self._inventory_cache, key=lambda key: self._inventory_cache[key][0])
+                self._inventory_cache.pop(oldest, None)
+        return inventory
 
-    def route_task(self, root: Path, task: str) -> RouteResult:
+    def route_task(
+        self,
+        root: Path,
+        task: str,
+        *,
+        thread_id: str = "",
+        timeout_s: float | None = None,
+    ) -> RouteResult:
         route_started = time.perf_counter()
         task = _normalize_task(task)
+        cache_key = _route_cache_key(root, task, thread_id=thread_id)
+        with self._cache_lock:
+            cached = self._route_details.get(cache_key)
+        if cached is not None:
+            return cached[0]
         routing_task = _task_with_recent_issue_context(root, task)
         mode_decision = classify_task_mode(task)
         task_mode = mode_decision.mode
@@ -77,6 +111,7 @@ class RouteService:
             since=None,
             refresh=False,
             task_source="route",
+            deadline=(time.monotonic() + timeout_s) if timeout_s is not None else None,
         ))
         plan.phase_times["route_plan"] = sum(plan.phase_times.values())
         pr_paths = _github_pr_paths(root, task) if task_mode == "pr_review" else set()
@@ -155,24 +190,36 @@ class RouteService:
         result.agent_prompt = build_agent_prompt(result)
         plan.phase_times["route_total"] = time.perf_counter() - route_started
         _record_route_phase_metrics(root, task, plan.phase_times)
+        cache_key = _route_cache_key(root, task, thread_id=thread_id)
+        with self._cache_lock:
+            self._route_details[cache_key] = (result, inventory, _all_scores)
+            if len(self._route_details) > 4:
+                self._route_details.pop(next(iter(self._route_details)))
         return result
 
-    def explain_route(self, root: Path, task: str) -> RouteExplanation:
+    def explain_route(
+        self,
+        root: Path,
+        task: str,
+        *,
+        thread_id: str = "",
+        timeout_s: float | None = None,
+    ) -> RouteExplanation:
         task = _normalize_task(task)
-        result = self.route_task(root, task)
-        cfg = load_config(root)
-        selected_paths = [item["path"] for item in result.selected_files]
-        inventory = self.inventory(root)
-        _selected, _warnings, all_scores = score_skills(
-            inventory.skills,
-            task=task,
-            selected_paths=selected_paths,
-            selected_files=result.selected_files,
-            max_selected=max(len(inventory.skills), cfg.skills.max_selected),
-            allow_external=True,
-            always_recommend=cfg.skills.always_recommend,
-            historical_success=_load_skill_success(root),
-        )
+        cache_key = _route_cache_key(root, task, thread_id=thread_id)
+        with self._cache_lock:
+            details = self._route_details.get(cache_key)
+        if details is None:
+            result = self.route_task(root, task, thread_id=thread_id, timeout_s=timeout_s)
+            with self._cache_lock:
+                details = self._route_details.get(_route_cache_key(root, task, thread_id=thread_id))
+            if details is None:
+                raise RuntimeError("route details were not cached after route planning")
+        else:
+            result = details[0]
+        _result, _inventory, all_scores = details
+        if not all_scores:
+            all_scores = []
         all_scores = _strip_skill_bodies(all_scores)
         return RouteExplanation(**result.model_dump(), skill_scores=all_scores)
 
@@ -206,19 +253,52 @@ def _normalize_task(task: str) -> str:
     return normalized
 
 
+def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str, str, tuple[str, ...]]:
+    dirty = sorted(git.dirty_files(root) | git.untracked_files(root))
+    fingerprints: list[str] = []
+    for relative in [*dirty, ".agentignore", ".agentpack/config.toml", ".agentpack/skills_index.json"]:
+        path = root / relative
+        try:
+            stat = path.stat()
+        except OSError:
+            fingerprints.append(f"{relative}:missing")
+        else:
+            fingerprints.append(f"{relative}:{stat.st_mtime_ns}:{stat.st_size}")
+    fingerprints.append(f"session-events:{_route_history_fingerprint(root)}")
+    return (
+        str(root.resolve()),
+        f"{git.current_sha(root) or 'worktree'}:{thread_id}:{task}",
+        tuple(fingerprints),
+    )
+
+
+def _route_history_fingerprint(root: Path) -> str:
+    """Fingerprint event sources because route enrichment reads recent issue refs."""
+    cfg = load_config(root)
+    configured = cfg.runtime.session_events_output or ".agentpack/session-events.jsonl"
+    paths = {root / configured, root / ".agentpack/session-events.jsonl"}
+    parts: list[str] = []
+    for path in sorted(paths, key=str):
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            digest = "missing"
+        parts.append(f"{path.relative_to(root)}:{digest}")
+    return "|".join(parts)
+
+
 def _record_route_phase_metrics(root: Path, task: str, phase_times: dict[str, float]) -> None:
     record = {
         "ts": time.time(),
-        "task": task,
+        "task": task[:500],
+        "task_truncated": len(task) > 500,
         "task_source": "route",
         "phases": {key: round(value, 3) for key, value in phase_times.items()},
         "total_s": round(phase_times.get("route_total", sum(phase_times.values())), 3),
     }
     try:
         metrics_path = root / ".agentpack" / "metrics.jsonl"
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        with metrics_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        append_record(metrics_path, record, max_records=2000)
     except OSError:
         pass
 
@@ -227,16 +307,51 @@ def _task_with_recent_issue_context(root: Path, task: str) -> str:
     if extract_issue_references(task):
         return task
     cfg = load_config(root)
-    events = read_events(root, output_path=cfg.runtime.session_events_output, limit=50)
+    identity = resolve_identity(root, task=task)
+    events = read_events(root, output_path=cfg.runtime.session_events_output, limit=100)
     refs = merge_issue_references(
         ref
         for event in events
+        if _event_matches_route_identity(event, identity, task)
         for ref in (event.get("issue_references") or [])
         if isinstance(ref, str)
     )
     if not refs:
         return task
     return f"{task} issue references {' '.join(refs[-5:])}"
+
+
+def _event_matches_route_identity(event: dict[str, Any], identity: dict[str, Any], task: str) -> bool:
+    for key in ("project_id", "workspace_id"):
+        expected = str(identity.get(key) or "")
+        observed = str(event.get(key) or "")
+        if expected and observed and expected != observed:
+            return False
+    expected_session = str(identity.get("session_id") or "")
+    observed_session = str(event.get("session_id") or "")
+    if expected_session and observed_session and expected_session != observed_session:
+        return False
+    expected_task = str(identity.get("task_id") or "")
+    observed_task = str(event.get("task_id") or "")
+    expected_logical = str(identity.get("logical_task_id") or "")
+    observed_logical = str(event.get("logical_task_id") or "")
+    if (
+        (expected_task and observed_task and expected_task == observed_task)
+        or (expected_logical and observed_logical and expected_logical == observed_logical)
+    ):
+        return True
+    event_task = str(event.get("task") or event.get("payload", {}).get("task") or "")
+    current_terms = _route_task_terms(task)
+    prior_terms = _route_task_terms(event_task)
+    return bool(current_terms and prior_terms and len(current_terms & prior_terms) >= 1)
+
+
+def _route_task_terms(value: str) -> set[str]:
+    return {
+        term
+        for term in re.findall(r"[a-z0-9_]{4,}", value.lower())
+        if term not in {"continue", "current", "issue", "task", "with", "from", "this", "that"}
+    }
 
 
 def _selected_file_dict(item) -> dict:

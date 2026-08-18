@@ -2,16 +2,20 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import datetime, timezone
+import hashlib
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from pydantic import ValidationError
 
 from agentpack.learning.models import FeedbackSignal, FeedbackSummary, LearningReport
+from agentpack.core import git
+from agentpack.session.identity import project_id
 
 
 VALID_FEEDBACK = {"helpful", "not-helpful", "ignored", "bad"}
 RANKING_FEEDBACK_PATH = ".agentpack/ranking-feedback.jsonl"
+RANKING_FEEDBACK_MAX_AGE = timedelta(days=180)
 
 
 def record_learning_feedback(
@@ -71,21 +75,49 @@ def record_ranking_feedback(
         return 0
     record = {
         "timestamp": datetime.now(timezone.utc).isoformat(),
+        "project_id": project_id(root),
+        "branch": git.current_branch(root) or "",
         "task": report.task,
         "concepts": report.concepts,
         "missed_paths": report.selected_misses,
         "hit_paths": report.selected_hits,
+        "path_fingerprints": {
+            path: hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+            for path in [*report.selected_misses, *report.selected_hits]
+        },
     }
     _append_jsonl(root / output_path, record)
     return len(report.selected_misses)
 
 
-def ranking_feedback_boosts(root: Path, task: str, *, output_path: str = RANKING_FEEDBACK_PATH) -> dict[str, float]:
+def ranking_feedback_boosts(
+    root: Path,
+    task: str,
+    *,
+    output_path: str = RANKING_FEEDBACK_PATH,
+    eligible_paths: set[str] | None = None,
+) -> dict[str, float]:
     task_terms = _terms(task)
     if not task_terms:
         return {}
+    current_project = project_id(root)
+    current_branch = git.current_branch(root) or ""
+    now = datetime.now(timezone.utc)
     boosts: dict[str, float] = {}
     for record in _read_jsonl(root / output_path):
+        if record.get("project_id") != current_project:
+            continue
+        recorded_branch = str(record.get("branch") or "")
+        if recorded_branch and current_branch and recorded_branch != current_branch:
+            continue
+        try:
+            created = datetime.fromisoformat(str(record.get("timestamp") or "").replace("Z", "+00:00"))
+        except ValueError:
+            continue
+        age = now - created
+        if age < timedelta(0) or age > RANKING_FEEDBACK_MAX_AGE:
+            continue
+        decay = max(0.25, 1.0 - age.total_seconds() / RANKING_FEEDBACK_MAX_AGE.total_seconds())
         feedback_terms = _terms(str(record.get("task") or ""))
         for concept in record.get("concepts") or []:
             if isinstance(concept, str):
@@ -93,9 +125,17 @@ def ranking_feedback_boosts(root: Path, task: str, *, output_path: str = RANKING
         overlap = task_terms & feedback_terms
         if not overlap:
             continue
+        fingerprints = record.get("path_fingerprints") or {}
         for path in record.get("missed_paths") or []:
-            if isinstance(path, str) and path:
-                boosts[path] = min(60.0, boosts.get(path, 0.0) + 18.0 + min(12.0, len(overlap) * 3.0))
+            if not isinstance(path, str) or not path:
+                continue
+            if eligible_paths is not None and path not in eligible_paths:
+                continue
+            expected_fingerprint = hashlib.sha256(path.encode("utf-8")).hexdigest()[:16]
+            if fingerprints.get(path) != expected_fingerprint:
+                continue
+            amount = (18.0 + min(12.0, len(overlap) * 3.0)) * decay
+            boosts[path] = min(60.0, boosts.get(path, 0.0) + amount)
     return boosts
 
 

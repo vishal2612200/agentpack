@@ -47,3 +47,4 @@ def test_e2e_report_output_contains_reproducible_metadata(tmp_path: Path, monkey
     assert "- total runs: 30" in report
     assert "## Trial matrix" in report
     assert "| task success |" in report
+    assert "agentpack-e2e-manifest" in report

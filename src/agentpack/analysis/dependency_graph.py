@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import OrderedDict
 from pathlib import Path
 
 from agentpack.core.models import DependencyGraph, DependencyNode, FileInfo
@@ -15,7 +16,9 @@ from agentpack.analysis.ruby_imports import resolve_relative_import as ruby_reso
 from agentpack.analysis.php_imports import extract_imports as php_imports
 from agentpack.analysis.protobuf_imports import extract_imports as protobuf_imports
 
-_GRAPH_CACHE: dict[tuple[tuple[tuple[str, str | None], ...], bool], DependencyGraph] = {}
+_GRAPH_CACHE: OrderedDict[tuple[str, tuple[tuple[str, str | None], ...], bool, int], DependencyGraph] = OrderedDict()
+_GRAPH_CACHE_SCHEMA = 1
+_GRAPH_CACHE_LIMIT = 8
 
 
 def build(
@@ -35,11 +38,14 @@ def build(
         via find_related_tests after construction.
     """
     cache_key = (
+        str(root.resolve()),
         tuple(sorted((fi.path, fi.hash) for fi in files)),
         bool(summaries),
+        _GRAPH_CACHE_SCHEMA,
     )
     cached_graph = _GRAPH_CACHE.get(cache_key)
     if cached_graph is not None:
+        _GRAPH_CACHE.move_to_end(cache_key)
         return cached_graph.model_copy(deep=True)
 
     graph = DependencyGraph(
@@ -87,6 +93,9 @@ def build(
                 graph.nodes[dep].imported_by.append(fi.path)
 
     _GRAPH_CACHE[cache_key] = graph.model_copy(deep=True)
+    _GRAPH_CACHE.move_to_end(cache_key)
+    while len(_GRAPH_CACHE) > _GRAPH_CACHE_LIMIT:
+        _GRAPH_CACHE.popitem(last=False)
     return graph
 
 

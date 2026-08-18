@@ -11,7 +11,7 @@ task text
   -> terminal or MCP response
 ```
 
-Writes no full context file. No source upload.
+Writes no full context file and never uploads source. May append local route timing metrics to `.agentpack/metrics.jsonl`.
 
 ## `agentpack pack`
 

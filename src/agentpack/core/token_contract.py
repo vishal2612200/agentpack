@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, cast
+
+from agentpack.core.token_estimator import estimator_mode
 
 
 def build_token_contract(
@@ -12,6 +14,7 @@ def build_token_contract(
     selected_files: list[dict[str, Any]] | None = None,
     context_path: str = "",
     mode: str = "",
+    estimator: str | None = None,
 ) -> dict[str, Any]:
     selected = [item for item in (selected_files or []) if isinstance(item, dict)]
     mode_counts: dict[str, int] = {}
@@ -20,7 +23,7 @@ def build_token_contract(
         if isinstance(mode_value, str) and mode_value:
             mode_counts[mode_value] = mode_counts.get(mode_value, 0) + 1
 
-    largest = sorted(
+    largest: list[dict[str, Any]] = sorted(
         (
             {
                 "path": str(item.get("path") or ""),
@@ -30,7 +33,7 @@ def build_token_contract(
             for item in selected
             if item.get("path")
         ),
-        key=lambda item: (-item["tokens"], item["path"]),
+        key=lambda item: (-cast(int, item["tokens"]), cast(str, item["path"])),
     )[:8]
     usage_ratio = round(token_estimate / budget, 4) if budget > 0 else 0.0
     trimmed_modes = {
@@ -52,6 +55,7 @@ def build_token_contract(
         "raw_repo_tokens": raw_repo_tokens,
         "after_ignore_tokens": after_ignore_tokens,
         "mode": mode,
+        "estimator_mode": estimator or estimator_mode(),
         "context_path": context_path,
         "selected_count": len(selected),
         "mode_counts": mode_counts,

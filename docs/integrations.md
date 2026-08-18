@@ -30,6 +30,14 @@ For MCP-capable agents, the preferred workflow is pull-based:
 
 The CLI remains the setup/debug/release path. MCP is the best interactive path because the agent can ask for only the context it needs instead of relying on one static startup blob.
 
+### Canonical task lifecycle
+
+Use one run identity across flow stages:
+
+`start_task(task, thread_id) -> readiness -> route -> pack -> agent work -> review(PR target or explicit local base) -> resolve -> learn -> release evidence`
+
+`route` is read-only for context artifacts but may write local timing metrics. `pack`, `review`, `resolve`, and `learn` write local evidence. GitHub posting and release publication are external writes and require explicit targets plus immutable commit evidence. Route and pack outputs are starting points; review and release gates must verify current source independently.
+
 MCP tools should follow the token hint instead of always requesting a full pack.
 When readiness says the context is fresh, avoid `pack_context` unless task text
 changed. When the token contract is near budget, prefer `get_delta_context()` for
