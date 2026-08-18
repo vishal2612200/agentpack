@@ -5,6 +5,11 @@ import os
 _encoder = None
 
 
+def estimator_mode() -> str:
+    """Return active estimator mode without forcing a network-backed encoder load."""
+    return "tiktoken" if _get_encoder() else "chars_per_4_fallback"
+
+
 def _get_encoder():
     global _encoder
     if _encoder is None:

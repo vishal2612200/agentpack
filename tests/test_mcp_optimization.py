@@ -12,10 +12,14 @@ from agentpack.mcp_server import (
     _McpSession,
     _compress_output_impl,
     _explain_file_impl,
+    _get_context_impl,
+    _get_skills_impl,
+    _retrieve_context_impl,
     _graph_index,
     _repo_root,
     _truncate_to_budget,
 )
+from agentpack.core.token_estimator import estimate_tokens
 from agentpack.router.service import _route_cache_key
 
 
@@ -110,3 +114,68 @@ def test_truncate_budget_does_not_duplicate_accumulated_tokens():
 
     assert "Truncated" in result
     assert len(result) < len(text)
+
+
+def test_truncate_budget_is_hard_even_when_header_exceeds_budget():
+    result = _truncate_to_budget("# Header\n" + "x" * 10_000, max_tokens=100)
+
+    assert estimate_tokens(result) <= 100
+
+
+def test_get_skills_omits_raw_skill_bodies_and_caps_inventory(tmp_path):
+    skills_root = tmp_path / ".agentpack" / "skills"
+    skill = skills_root / "large" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Large\n\n" + ("secret body\n" * 10_000), encoding="utf-8")
+    (tmp_path / ".agentpack").mkdir(exist_ok=True)
+
+    result = _get_skills_impl(tmp_path, "json", max_items=1, max_tokens=500)
+    payload = json.loads(result)
+
+    assert estimate_tokens(result) <= 500
+    assert "raw_text" not in result
+    assert "secret body" not in result
+    assert payload["body_fetch"].startswith("Use get_skill")
+
+
+def test_retrieve_context_caps_aggregate_targets(tmp_path):
+    with patch(
+        "agentpack.core.pack_registry.retrieve_from_registry",
+        side_effect=lambda *args, **kwargs: f"## {kwargs['path']}\n" + ("x" * 19_000),
+    ), patch("agentpack.session.events.record_event"):
+        result = _retrieve_context_impl(
+            tmp_path,
+            targets=[f"file_{index}.py" for index in range(12)],
+            max_tokens=500,
+        )
+
+    assert estimate_tokens(result) <= 500
+    assert "Retrieval truncated" in result
+
+
+def test_get_context_caps_fresh_cached_pack(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "context.md").write_text("# pack\n" + ("x" * 20_000))
+    (tmp_path / ".agentpack" / "pack_metadata.json").write_text(
+        json.dumps({"generated_at": "now", "snapshot_root_hash": "same", "token_estimate": 1})
+    )
+    (tmp_path / ".agentpack" / "snapshots").mkdir()
+    (tmp_path / ".agentpack" / "snapshots" / "latest.json").write_text(json.dumps({"root_hash": "same"}))
+
+    result = _get_context_impl(tmp_path, max_tokens=400)
+
+    assert estimate_tokens(result) <= 400
+
+
+def test_compress_output_supports_token_input_cap(tmp_path):
+    with patch("agentpack.session.events.record_event") as record:
+        result = _compress_output_impl(
+            tmp_path,
+            "ERROR important\n" + ("noise\n" * 10_000),
+            max_input_tokens=100,
+        )
+
+    assert "ERROR" in result
+    event = record.call_args.args[2]
+    assert event["input_truncated"] is True
+    assert event["input_tokens"] <= 100

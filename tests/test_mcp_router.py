@@ -6,6 +6,7 @@ import types
 
 import pytest
 
+from agentpack.core.token_estimator import estimate_tokens
 from agentpack.mcp_server import MCP_TOOL_NAMES, _explain_route_impl, _get_skill_impl, _get_skills_impl, _readiness_impl, _route_task_impl, serve
 from agentpack.router.service import RouteService
 
@@ -82,6 +83,7 @@ def test_mcp_explain_route_includes_skill_scores(tmp_path):
 
     assert data["skill_scores"]
     assert data["skill_scores"][0]["reasons"]
+    assert estimate_tokens(json.dumps(data)) <= 8_000
 
 
 def test_mcp_readiness_proves_live_tool_exposure(tmp_path):
@@ -97,6 +99,7 @@ def test_mcp_readiness_proves_live_tool_exposure(tmp_path):
     assert "pack" in data["cli_commands"]
     assert data["tool_manifest"]["count"] == len(MCP_TOOL_NAMES)
     assert data["tool_manifest"]["sha256"]
+    assert data["token_estimator"]["mode"] in {"tiktoken", "chars_per_4_fallback"}
 
 
 def test_route_service_separates_always_recommend_baseline_skill(tmp_path):

@@ -62,7 +62,7 @@ from agentpack.core.context_pack import load_pack_metadata
 from agentpack.core.structured_format import StructuredFormat, to_llm
 from agentpack.core.task_freshness import read_task_md, task_freshness, write_task_md
 from agentpack.core.thread_context import resolve_session_thread_option, read_task_status, task_is_terminal, thread_paths
-from agentpack.core.token_estimator import estimate_tokens
+from agentpack.core.token_estimator import estimate_tokens, estimator_mode
 from agentpack.control_plane import build_control_plane_snapshot, plan_next_actions
 from agentpack.control_plane.renderer import token_hint
 
@@ -199,6 +199,9 @@ _MCP_SESSIONS: dict[str, _McpSession] = {}
 _MCP_SESSIONS_LOCK = RLock()
 _GRAPH_INDEX_CACHE: OrderedDict[tuple[str, str], Any] = OrderedDict()
 _GRAPH_INDEX_LOCK = RLock()
+MCP_DEFAULT_OUTPUT_TOKENS = 20_000
+MCP_MAX_OUTPUT_TOKENS = 100_000
+MCP_MAX_INPUT_TOKENS = 100_000
 
 
 def _session(root: Path) -> _McpSession:
@@ -282,6 +285,10 @@ def _readiness_impl(root: Path, output_format: StructuredFormat = "auto") -> str
         "reason": recommendations[0].reason if recommendations else "context is ready for the current task",
         "avoid": _mcp_avoid_list(snapshot, [item.kind for item in recommendations]),
         "token_hint": token_hint(snapshot),
+        "token_estimator": {
+            "mode": estimator_mode(),
+            "fallback": estimator_mode() != "tiktoken",
+        },
         "control_plane": {
             "thread_id": snapshot.task.thread_id,
             "context_status": snapshot.context.status,
@@ -369,59 +376,96 @@ def _stale_context_notice(
     return "\n".join(lines)
 
 
-def _truncate_to_budget(text: str, max_tokens: int = 20000) -> str:
-    """Truncate packed context to fit within max_tokens (estimated via tiktoken, falls back to len//4)."""
-    total_tokens = estimate_tokens(text)
-    if total_tokens <= max_tokens:
-        return text
+def _validate_token_limit(value: int, name: str, *, maximum: int = MCP_MAX_OUTPUT_TOKENS) -> int:
+    if value < 1:
+        raise ValueError(f"{name} must be at least 1")
+    if value > maximum:
+        raise ValueError(f"{name} must be no more than {maximum}")
+    return value
 
+
+def _hard_prefix(text: str, max_tokens: int) -> str:
+    """Return longest prefix whose estimate stays within max_tokens."""
+    if not text or max_tokens < 1:
+        return ""
+    if estimate_tokens(text) <= max_tokens:
+        return text
+    low, high = 0, len(text)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if estimate_tokens(text[:mid]) <= max_tokens:
+            low = mid
+        else:
+            high = mid - 1
+    return text[:low]
+
+
+def _fit_prefix_with_suffix(prefix: str, suffix: str, max_tokens: int) -> str:
+    if estimate_tokens(suffix) > max_tokens:
+        return _hard_prefix(suffix, max_tokens)
+    low, high = 0, len(prefix)
+    while low < high:
+        mid = (low + high + 1) // 2
+        if estimate_tokens(prefix[:mid] + suffix) <= max_tokens:
+            low = mid
+        else:
+            high = mid - 1
+    return prefix[:low] + suffix
+
+
+def _truncate_to_budget(
+    text: str,
+    max_tokens: int = MCP_DEFAULT_OUTPUT_TOKENS,
+    *,
+    marker: str | None = None,
+) -> str:
+    """Hard-cap markdown output using active token estimator."""
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
+    if estimate_tokens(text) <= max_tokens:
+        return text
+    marker = marker or (
+        "> [Truncated by AgentPack to fit output budget. "
+        "Use get_context() to read full pack or narrow the task.]"
+    )
+    suffix = "\n\n" + marker
     split_marker = "\n## File Context"
     marker_pos = text.find(split_marker)
-    if marker_pos == -1:
-        budget_chars = max_tokens * 4
-        truncated = text[:budget_chars]
-        omit_files = max(1, (len(text) - budget_chars) // 2000)
-        return truncated + f"\n\n> [Truncated: {omit_files} files omitted to fit context window. Use get_context() to read full pack or narrow the task.]"
-
-    header = text[:marker_pos]
-    file_section = text[marker_pos:]
-
-    header_tokens = estimate_tokens(header)
-    if header_tokens >= max_tokens:
-        return header + "\n\n> [Truncated: file context omitted to fit context window. Use get_context() to read full pack or narrow the task.]"
-
-    blocks = file_section.split("\n### ")
-    # blocks[0] is the "## File Context" heading; blocks[1:] are individual files
-    accumulated = blocks[0]
-    accumulated_tokens = estimate_tokens(accumulated)
-    total_files = len(blocks) - 1
-    kept_files = 0
-    for block in blocks[1:]:
-        candidate = "\n### " + block
-        candidate_tokens = estimate_tokens(candidate)
-        if header_tokens + accumulated_tokens + candidate_tokens > max_tokens:
-            break
-        accumulated += candidate
-        accumulated_tokens += candidate_tokens
-        kept_files += 1
-
-    omitted = total_files - kept_files
-    if omitted > 0:
-        return header + accumulated + f"\n\n> [Truncated: {omitted} files omitted to fit context window. Use get_context() to read full pack or narrow the task.]"
-    return header + accumulated
+    if marker_pos >= 0:
+        header = text[:marker_pos]
+        blocks = text[marker_pos:].split("\n### ")
+        kept = blocks[0]
+        kept_files = 0
+        for block in blocks[1:]:
+            candidate = kept + "\n### " + block
+            if estimate_tokens(header + candidate + suffix) > max_tokens:
+                break
+            kept = candidate
+            kept_files += 1
+        omitted = max(0, len(blocks) - 1 - kept_files)
+        if omitted:
+            suffix = "\n\n" + marker.replace("output budget", f"{omitted} files omitted; output budget")
+        return _fit_prefix_with_suffix(header + kept, suffix, max_tokens)
+    omitted = max(1, len(text) // 2000)
+    suffix = "\n\n" + marker.replace("output budget", f"{omitted} sections omitted; output budget")
+    return _fit_prefix_with_suffix(text, suffix, max_tokens)
 
 
-def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
+def _get_context_impl(
+    root: Path,
+    thread_id: str | None = None,
+    max_tokens: int = MCP_DEFAULT_OUTPUT_TOKENS,
+) -> str:
     """Read the latest context pack, blocking to refresh when task.md changed."""
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
     scoped = thread_paths(root, thread_id)
     if task_is_terminal(root, scoped.thread_id if scoped else None):
         label = f"AgentPack session {scoped.thread_id}" if scoped else "AgentPack task"
         status = read_task_status(root, scoped.thread_id if scoped else None)
         terminal_description = "Completed context" if status == "done" else "Handed-off context"
-        return (
+        return _truncate_to_budget((
             f"> {label} is marked {status}. {terminal_description} will not be reused.\n\n"
             "Start a new task/session with `agentpack start \"describe the task\"` or MCP `start_task(...)`."
-        )
+        ), max_tokens)
     pack_path = None
     candidates = (
         (scoped.context_claude, scoped.context) if scoped else (root / ".agentpack" / "context.claude.md", root / ".agentpack" / "context.md")
@@ -462,13 +506,19 @@ def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
     if auto_refresh_reason:
         try:
             if scoped:
-                refreshed = _pack_context_impl(root, task="", max_tokens=20000, thread_id=scoped.thread_id)
+                refreshed = _pack_context_impl(root, task="", max_tokens=max_tokens, thread_id=scoped.thread_id)
             else:
-                refreshed = _pack_context_impl(root, task="", max_tokens=20000)
-            return f"> Context auto-refreshed because {auto_refresh_reason}.\n\n{refreshed}"
+                refreshed = _pack_context_impl(root, task="", max_tokens=max_tokens)
+            return _truncate_to_budget(
+                f"> Context auto-refreshed because {auto_refresh_reason}.\n\n{refreshed}",
+                max_tokens,
+            )
         except Exception as exc:
             content = pack_path.read_text(encoding="utf-8")
-            return _stale_context_notice(root, metadata, auto_refresh_reason, refresh_failed=str(exc)) + content
+            return _truncate_to_budget(
+                _stale_context_notice(root, metadata, auto_refresh_reason, refresh_failed=str(exc)) + content,
+                max_tokens,
+            )
 
     content = pack_path.read_text(encoding="utf-8")
 
@@ -493,7 +543,7 @@ def _get_context_impl(root: Path, thread_id: str | None = None) -> str:
     else:
         header = f"> Context is fresh (generated: {generated_at}, {token_estimate:,} tokens).\n\n"
 
-    return header + content
+    return _truncate_to_budget(header + content, max_tokens)
 
 
 def _task_md_body(root: Path, thread_id: str | None = None) -> str | None:
@@ -543,6 +593,7 @@ def _pack_context_impl(
     timeout_s: float = 60.0,
 ) -> str:
     """Write task.md when task is provided, pack context, and return markdown."""
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
     from agentpack.application.pack_service import PackService, PackRequest
     from agentpack.adapters.detect import detect_agent
     from agentpack.renderers.markdown import render_claude
@@ -1045,11 +1096,13 @@ def _retrieve_context_impl(
     *,
     targets: list[str] | None = None,
     kind: str = "any",
+    max_tokens: int = 12_000,
 ) -> str:
     from agentpack.core.config import load_config
     from agentpack.core.pack_registry import retrieve_from_registry
     from agentpack.session.events import record_event
 
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
     cfg = load_config(root)
     clean_kind = kind if kind in {"any", "selected", "omitted"} else "any"
     target_paths = [item for item in (targets or []) if item]
@@ -1067,6 +1120,9 @@ def _retrieve_context_impl(
             for target in target_paths[:12]
         ]
         result = "\n\n---\n\n".join(results)
+        omitted_targets = max(0, len(target_paths) - 12)
+        if omitted_targets:
+            result += f"\n\n> Retrieval omitted {omitted_targets} targets beyond 12-target safety cap."
     else:
         result = retrieve_from_registry(
             root,
@@ -1091,7 +1147,14 @@ def _retrieve_context_impl(
         },
         output_path=cfg.runtime.session_events_output,
     )
-    return result
+    return _truncate_to_budget(
+        result,
+        max_tokens,
+        marker=(
+            "> [Retrieval truncated by AgentPack to fit output budget. "
+            "Narrow targets or request one file at a time.]"
+        ),
+    )
 
 
 def _compress_output_impl(
@@ -1099,6 +1162,7 @@ def _compress_output_impl(
     content: str,
     kind: str = "auto",
     max_input_chars: int = 250_000,
+    max_input_tokens: int | None = 60_000,
 ) -> str:
     from agentpack.core.config import load_config
     from agentpack.output_compression import compress_output
@@ -1106,10 +1170,23 @@ def _compress_output_impl(
 
     if max_input_chars < 1:
         raise ValueError("max_input_chars must be at least 1")
+    if max_input_chars > MCP_MAX_INPUT_TOKENS * 4:
+        raise ValueError(f"max_input_chars must be no more than {MCP_MAX_INPUT_TOKENS * 4}")
+    if max_input_tokens is not None:
+        max_input_tokens = _validate_token_limit(max_input_tokens, "max_input_tokens", maximum=MCP_MAX_INPUT_TOKENS)
     original_chars = len(content)
     truncated_input = original_chars > max_input_chars
+    if len(content) > max_input_chars:
+        content = content[:max_input_chars]
+    if max_input_tokens is not None and estimate_tokens(content) > max_input_tokens:
+        truncated_input = True
+        content = _hard_prefix(content, max_input_tokens)
     if truncated_input:
-        content = content[:max_input_chars].rstrip() + "\n... input truncated by AgentPack ..."
+        marker = "\n... input truncated by AgentPack ..."
+        if max_input_tokens is not None:
+            content = _fit_prefix_with_suffix(content, marker, max_input_tokens)
+        elif "input truncated by AgentPack" not in content:
+            content = content.rstrip() + marker
     cfg = load_config(root)
     result = compress_output(content, kind=kind, max_items=cfg.runtime.max_output_summary_items)
     record_event(
@@ -1120,6 +1197,8 @@ def _compress_output_impl(
             "input_chars": original_chars,
             "output_chars": len(result),
             "input_truncated": truncated_input,
+            "input_tokens": estimate_tokens(content),
+            "input_token_limit": max_input_tokens,
         },
         output_path=cfg.runtime.session_events_output,
     )
@@ -1216,6 +1295,7 @@ def _route_task_impl(
     detail: str = "compact",
     thread_id: str = "",
     timeout_s: float = 60.0,
+    max_tokens: int = MCP_DEFAULT_OUTPUT_TOKENS,
 ) -> str:
     """Return a compact read-only route payload; full details remain opt-in."""
     from agentpack.application.pack_service import PackTimeoutError
@@ -1234,13 +1314,14 @@ def _route_task_impl(
             requested=output_format,
             root_name="agentpack_route",
         )
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
     if detail == "full":
         payload = result.model_dump(mode="json")
     elif detail == "compact":
         payload = _compact_route_payload(result)
     else:
         raise ValueError("detail must be 'compact' or 'full'")
-    return to_llm(root, payload, requested=output_format, root_name="agentpack_route")
+    return _bounded_structured(root, payload, output_format, "agentpack_route", max_tokens)
 
 
 def _compact_route_payload(result) -> dict:
@@ -1281,20 +1362,106 @@ def _compact_route_payload(result) -> dict:
     }
 
 
-def _get_skills_impl(root: Path, output_format: StructuredFormat = "toon") -> str:
+def _bounded_structured(
+    root: Path,
+    payload: dict[str, Any],
+    output_format: StructuredFormat,
+    root_name: str,
+    max_tokens: int,
+    *,
+    list_fields: tuple[str, ...] = (),
+) -> str:
+    """Render structured payload without allowing inventory-style fan-out."""
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
+    rendered = to_llm(root, payload, requested=output_format, root_name=root_name)
+    if estimate_tokens(rendered) <= max_tokens:
+        return rendered
+
+    candidate = dict(payload)
+    for _ in range(8):
+        changed = False
+        for field in list_fields:
+            values = candidate.get(field)
+            if isinstance(values, list) and values:
+                shortened = values[: max(1, len(values) // 2)]
+                if len(shortened) < len(values):
+                    candidate[field] = shortened
+                    changed = True
+        candidate["truncated"] = True
+        rendered = to_llm(root, candidate, requested=output_format, root_name=root_name)
+        if estimate_tokens(rendered) <= max_tokens:
+            return rendered
+        if not changed:
+            break
+
+    minimal = {
+        "truncated": True,
+        "message": "Response exceeded MCP token budget; narrow request or increase max_tokens.",
+    }
+    rendered = to_llm(root, minimal, requested=output_format, root_name=root_name)
+    return _truncate_to_budget(rendered, max_tokens, marker="Response exceeded MCP token budget.")
+
+
+def _skill_metadata(skill: Any) -> dict[str, Any]:
+    data = skill.model_dump(mode="json") if hasattr(skill, "model_dump") else dict(skill)
+    data.pop("raw_text", None)
+    return data
+
+
+def _get_skills_impl(
+    root: Path,
+    output_format: StructuredFormat = "toon",
+    max_items: int = 50,
+    max_tokens: int = 4_000,
+) -> str:
     """Return discovered skill/rule inventory payload."""
+    if max_items < 1:
+        raise ValueError("max_items must be at least 1")
+    max_items = min(max_items, 500)
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
     inventory = _session(root).route_service.inventory(root)
-    return to_llm(root, inventory.model_dump(mode="json"), requested=output_format, root_name="agentpack_skills")
+    skills = [_skill_metadata(item) for item in inventory.skills]
+    rules = [_skill_metadata(item) for item in inventory.rules]
+    payload = {
+        "version": inventory.version,
+        "skills": skills[:max_items],
+        "rules": rules[:max_items],
+        "total_skills": len(skills),
+        "total_rules": len(rules),
+        "returned_skills": min(len(skills), max_items),
+        "returned_rules": min(len(rules), max_items),
+        "body_fetch": "Use get_skill(name_or_path) for raw skill content.",
+    }
+    return _bounded_structured(
+        root,
+        payload,
+        output_format,
+        "agentpack_skills",
+        max_tokens,
+        list_fields=("skills", "rules"),
+    )
 
 
-def _get_skill_impl(root: Path, name_or_path: str, max_chars: int = 20000) -> str:
+def _get_skill_impl(
+    root: Path,
+    name_or_path: str,
+    max_chars: int = 20000,
+    max_tokens: int = 4_000,
+) -> str:
     """Return one skill's raw SKILL.md content by name or path."""
     if max_chars < 1:
         raise ValueError("max_chars must be at least 1")
+    if max_chars > MCP_MAX_INPUT_TOKENS * 4:
+        raise ValueError(f"max_chars must be no more than {MCP_MAX_INPUT_TOKENS * 4}")
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
     content = _session(root).route_service.get_skill(root, name_or_path)
-    if len(content) <= max_chars:
-        return content
-    return content[:max_chars].rstrip() + "\n\n... skill output truncated by AgentPack ..."
+    if len(content) > max_chars:
+        content = content[:max_chars].rstrip() + "\n\n... skill output truncated by AgentPack ..."
+    return _truncate_to_budget(
+        content,
+        max_tokens,
+        marker="... skill output truncated by AgentPack; request narrower skill content ...",
+    )
 
 
 def _explain_route_impl(
@@ -1303,6 +1470,8 @@ def _explain_route_impl(
     output_format: StructuredFormat = "toon",
     thread_id: str = "",
     timeout_s: float = 60.0,
+    max_items: int = 40,
+    max_tokens: int = 8_000,
 ) -> str:
     """Return task route payload including all positive skill scores."""
     from agentpack.application.pack_service import PackTimeoutError
@@ -1321,11 +1490,24 @@ def _explain_route_impl(
             requested=output_format,
             root_name="agentpack_route_explanation",
         )
-    return to_llm(
+    if max_items < 1:
+        raise ValueError("max_items must be at least 1")
+    max_items = min(max_items, 500)
+    max_tokens = _validate_token_limit(max_tokens, "max_tokens")
+    payload = result.model_dump(mode="json")
+    scores = payload.get("skill_scores") or []
+    payload["skill_scores_total"] = len(scores)
+    payload["skill_scores"] = scores[:max_items]
+    payload["skill_scores_truncated"] = len(scores) > max_items
+    # Full route already exposes selected evidence; avoid duplicating generated prompt.
+    payload.pop("agent_prompt", None)
+    return _bounded_structured(
         root,
-        result.model_dump(mode="json"),
-        requested=output_format,
-        root_name="agentpack_route_explanation",
+        payload,
+        output_format,
+        "agentpack_route_explanation",
+        max_tokens,
+        list_fields=("skill_scores", "selected_files", "selection_explanations", "omitted_files"),
     )
 
 
@@ -1549,7 +1731,14 @@ def serve() -> None:
         )
 
     @mcp.tool()
-    def route_task(task: str, format: str = "toon", detail: str = "compact", thread_id: str = "", timeout_s: float = 60.0) -> str:
+    def route_task(
+        task: str,
+        format: str = "toon",
+        detail: str = "compact",
+        thread_id: str = "",
+        timeout_s: float = 60.0,
+        max_tokens: int = MCP_DEFAULT_OUTPUT_TOKENS,
+    ) -> str:
         """Route a task to files, rules, skills, command suggestions, and safety warnings.
 
         Read-only: does not write task.md or context files. The default compact response
@@ -1557,37 +1746,47 @@ def serve() -> None:
         explain_route when full routing evidence is needed.
         """
         return _route_task_impl(
-            _repo_root(), task, format, detail, resolve_session_thread_option(thread_id) or "", timeout_s
+            _repo_root(), task, format, detail, resolve_session_thread_option(thread_id) or "", timeout_s, max_tokens
         )
 
     @mcp.tool()
-    def get_skills(format: str = "toon") -> str:
-        """Return the discovered Agentpack skill/rule inventory as TOON or JSON."""
-        return _get_skills_impl(_repo_root(), format)
+    def get_skills(format: str = "toon", max_items: int = 50, max_tokens: int = 4_000) -> str:
+        """Return bounded skill/rule metadata; use get_skill for one raw body."""
+        return _get_skills_impl(_repo_root(), format, max_items=max_items, max_tokens=max_tokens)
 
     @mcp.tool()
-    def get_skill(name_or_path: str, max_chars: int = 20000) -> str:
+    def get_skill(name_or_path: str, max_chars: int = 20000, max_tokens: int = 4_000) -> str:
         """Return one AgentPack skill by name or path.
 
         Use after route_task/explain_route recommends a skill and before applying it.
         """
-        return _get_skill_impl(_repo_root(), name_or_path, max_chars=max_chars)
+        return _get_skill_impl(_repo_root(), name_or_path, max_chars=max_chars, max_tokens=max_tokens)
 
     @mcp.tool()
-    def explain_route(task: str, format: str = "toon", thread_id: str = "", timeout_s: float = 60.0) -> str:
-        """Return a route_task-style payload with skill scoring reasons."""
+    def explain_route(
+        task: str,
+        format: str = "toon",
+        thread_id: str = "",
+        timeout_s: float = 60.0,
+        max_items: int = 40,
+        max_tokens: int = 8_000,
+    ) -> str:
+        """Return bounded route payload with top skill scoring reasons."""
         return _explain_route_impl(
-            _repo_root(), task, format, resolve_session_thread_option(thread_id) or "", timeout_s
+            _repo_root(), task, format, resolve_session_thread_option(thread_id) or "", timeout_s, max_items, max_tokens
         )
 
     @mcp.tool()
-    def get_context(thread_id: str = "") -> str:
+    def get_context(thread_id: str = "", max_tokens: int = MCP_DEFAULT_OUTPUT_TOKENS) -> str:
         """Return the latest session context pack, auto-refreshing when task.md changed.
 
         Fast for fresh packs. Blocks for one refresh if the current task differs from the packed task.
         Returns empty string if no pack exists yet.
+
+        Args:
+            max_tokens: Hard output budget. Default 20,000.
         """
-        return _get_context_impl(_repo_root(), resolve_session_thread_option(thread_id))
+        return _get_context_impl(_repo_root(), resolve_session_thread_option(thread_id), max_tokens)
 
     @mcp.tool()
     def refresh() -> str:
@@ -1672,6 +1871,7 @@ def serve() -> None:
         allow_stale: bool = False,
         targets: list[str] | None = None,
         kind: str = "any",
+        max_tokens: int = 12_000,
     ) -> str:
         """Retrieve full or stored content for a selected/omitted pack registry record.
 
@@ -1682,6 +1882,7 @@ def serve() -> None:
             allow_stale: If false, refuse retrieval when file changed since the latest pack.
             targets: Optional list of repo-relative paths to retrieve in one call.
             kind: any | selected | omitted.
+            max_tokens: Aggregate hard output budget. Default 12,000.
         """
         return _retrieve_context_impl(
             _repo_root(),
@@ -1691,13 +1892,20 @@ def serve() -> None:
             allow_stale=allow_stale,
             targets=targets,
             kind=kind,
+            max_tokens=max_tokens,
         )
 
     @mcp.tool()
-    def compress_output(content: str, kind: str = "auto", max_input_chars: int = 250000) -> str:
-        """Summarize noisy command output while preserving errors, failures, paths, and diffs."""
+    def compress_output(
+        content: str,
+        kind: str = "auto",
+        max_input_chars: int = 250000,
+        max_input_tokens: int | None = 60_000,
+    ) -> str:
+        """Summarize noisy command output with bounded token input."""
         return _compress_output_impl(
-            _repo_root(), content=content, kind=kind, max_input_chars=max_input_chars
+            _repo_root(), content=content, kind=kind, max_input_chars=max_input_chars,
+            max_input_tokens=max_input_tokens,
         )
 
     @mcp.tool()
