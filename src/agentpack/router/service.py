@@ -255,8 +255,14 @@ def _normalize_task(task: str) -> str:
 def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str, str, tuple[str, ...]]:
     dirty = sorted(git.dirty_files(root) | git.untracked_files(root))
     fingerprints: list[str] = []
-    for relative in [*dirty, ".agentignore", ".agentpack/config.toml", ".agentpack/skills_index.json"]:
-        if relative in {".agentpack/metrics.jsonl", ".agentpack/session-events.jsonl"}:
+    routing_inputs = [
+        ".agentignore",
+        ".agentpack/config.toml",
+        ".agentpack/skills_index.json",
+        *_route_event_paths(root),
+    ]
+    for relative in [*dirty, *routing_inputs]:
+        if relative == ".agentpack/metrics.jsonl":
             continue
         path = root / relative
         try:
@@ -270,6 +276,18 @@ def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str
         f"{git.current_sha(root) or 'worktree'}:{thread_id}:{task}",
         tuple(fingerprints),
     )
+
+
+def _route_event_paths(root: Path) -> list[str]:
+    """Return event files read by route enrichment and observer priors."""
+    cfg = load_config(root)
+    configured = {
+        cfg.runtime.session_events_output or ".agentpack/session-events.jsonl",
+        cfg.runtime.observer_events_output or ".agentpack/observer-events.jsonl",
+        ".agentpack/session-events.jsonl",
+        ".agentpack/observer-events.jsonl",
+    }
+    return sorted(configured)
 
 
 def _record_route_phase_metrics(root: Path, task: str, phase_times: dict[str, float]) -> None:

@@ -30,9 +30,19 @@ def test_route_cache_key_ignores_telemetry_files(tmp_path):
     (tmp_path / ".agentpack").mkdir()
     first = _route_cache_key(tmp_path, "fix auth")
     (tmp_path / ".agentpack" / "metrics.jsonl").write_text("{}\n", encoding="utf-8")
-    (tmp_path / ".agentpack" / "session-events.jsonl").write_text("{}\n", encoding="utf-8")
 
     assert _route_cache_key(tmp_path, "fix auth") == first
+
+
+def test_route_cache_key_includes_routing_event_files(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    first = _route_cache_key(tmp_path, "fix auth")
+    (tmp_path / ".agentpack" / "session-events.jsonl").write_text("{}\n", encoding="utf-8")
+    second = _route_cache_key(tmp_path, "fix auth")
+    (tmp_path / ".agentpack" / "observer-events.jsonl").write_text("{}\n", encoding="utf-8")
+
+    assert second != first
+    assert _route_cache_key(tmp_path, "fix auth") != second
 
 
 def test_mcp_session_reuses_plan_for_same_workspace_and_task(tmp_path):
