@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import fnmatch
+import hashlib
 import json
 import re
 import shutil
@@ -256,8 +257,6 @@ def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str
     dirty = sorted(git.dirty_files(root) | git.untracked_files(root))
     fingerprints: list[str] = []
     for relative in [*dirty, ".agentignore", ".agentpack/config.toml", ".agentpack/skills_index.json"]:
-        if relative in {".agentpack/metrics.jsonl", ".agentpack/session-events.jsonl"}:
-            continue
         path = root / relative
         try:
             stat = path.stat()
@@ -265,11 +264,27 @@ def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str
             fingerprints.append(f"{relative}:missing")
         else:
             fingerprints.append(f"{relative}:{stat.st_mtime_ns}:{stat.st_size}")
+    fingerprints.append(f"session-events:{_route_history_fingerprint(root)}")
     return (
         str(root.resolve()),
         f"{git.current_sha(root) or 'worktree'}:{thread_id}:{task}",
         tuple(fingerprints),
     )
+
+
+def _route_history_fingerprint(root: Path) -> str:
+    """Fingerprint event sources because route enrichment reads recent issue refs."""
+    cfg = load_config(root)
+    configured = cfg.runtime.session_events_output or ".agentpack/session-events.jsonl"
+    paths = {root / configured, root / ".agentpack/session-events.jsonl"}
+    parts: list[str] = []
+    for path in sorted(paths, key=str):
+        try:
+            digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            digest = "missing"
+        parts.append(f"{path.relative_to(root)}:{digest}")
+    return "|".join(parts)
 
 
 def _record_route_phase_metrics(root: Path, task: str, phase_times: dict[str, float]) -> None:

@@ -34,9 +34,19 @@ def test_route_cache_key_ignores_telemetry_files(tmp_path):
     (tmp_path / ".agentpack").mkdir()
     first = _route_cache_key(tmp_path, "fix auth")
     (tmp_path / ".agentpack" / "metrics.jsonl").write_text("{}\n", encoding="utf-8")
-    (tmp_path / ".agentpack" / "session-events.jsonl").write_text("{}\n", encoding="utf-8")
+    (tmp_path / ".agentpack" / "metrics.jsonl").write_text("{}\n", encoding="utf-8")
 
     assert _route_cache_key(tmp_path, "fix auth") == first
+
+
+def test_route_cache_key_changes_when_session_history_changes(tmp_path):
+    (tmp_path / ".agentpack").mkdir()
+    first = _route_cache_key(tmp_path, "fix auth")
+    (tmp_path / ".agentpack" / "session-events.jsonl").write_text(
+        '{"issue_references": ["#123"]}\n', encoding="utf-8"
+    )
+
+    assert _route_cache_key(tmp_path, "fix auth") != first
 
 
 def test_mcp_session_reuses_plan_for_same_workspace_and_task(tmp_path):
@@ -136,6 +146,13 @@ def test_get_skills_omits_raw_skill_bodies_and_caps_inventory(tmp_path):
     assert "raw_text" not in result
     assert "secret body" not in result
     assert payload["body_fetch"].startswith("Use get_skill")
+
+
+def test_structured_budget_returns_valid_json_at_one_token(tmp_path):
+    result = _get_skills_impl(tmp_path, "json", max_tokens=1)
+
+    assert json.loads(result) is None
+    assert estimate_tokens(result) <= 1
 
 
 def test_retrieve_context_caps_aggregate_targets(tmp_path):

@@ -1399,7 +1399,13 @@ def _bounded_structured(
         "message": "Response exceeded MCP token budget; narrow request or increase max_tokens.",
     }
     rendered = to_llm(root, minimal, requested=output_format, root_name=root_name)
-    return _truncate_to_budget(rendered, max_tokens, marker="Response exceeded MCP token budget.")
+    if estimate_tokens(rendered) <= max_tokens:
+        return rendered
+    # Structured callers must never receive arbitrary character slices. `null`
+    # is valid JSON and fits even the smallest accepted token budget.
+    if output_format in {"auto", "json"}:
+        return "null"
+    raise ValueError("max_tokens is too small for a valid structured response")
 
 
 def _skill_metadata(skill: Any) -> dict[str, Any]:
