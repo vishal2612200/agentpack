@@ -257,6 +257,8 @@ def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str
     dirty = sorted(git.dirty_files(root) | git.untracked_files(root))
     fingerprints: list[str] = []
     for relative in [*dirty, ".agentignore", ".agentpack/config.toml", ".agentpack/skills_index.json"]:
+        if relative == ".agentpack/metrics.jsonl":
+            continue
         path = root / relative
         try:
             stat = path.stat()
@@ -275,8 +277,12 @@ def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str
 def _route_history_fingerprint(root: Path) -> str:
     """Fingerprint event sources because route enrichment reads recent issue refs."""
     cfg = load_config(root)
-    configured = cfg.runtime.session_events_output or ".agentpack/session-events.jsonl"
-    paths = {root / configured, root / ".agentpack/session-events.jsonl"}
+    paths = {
+        root / (cfg.runtime.session_events_output or ".agentpack/session-events.jsonl"),
+        root / (cfg.runtime.observer_events_output or ".agentpack/observer-events.jsonl"),
+        root / ".agentpack/session-events.jsonl",
+        root / ".agentpack/observer-events.jsonl",
+    }
     parts: list[str] = []
     for path in sorted(paths, key=str):
         try:
