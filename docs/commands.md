@@ -1320,16 +1320,17 @@ Register in Claude Code settings (`~/.claude/settings.json`):
 | Tool | Description |
 |---|---|
 | `readiness()` | Prove the current host can call AgentPack MCP tools; returns server, version, tool list, CLI command surface, and latest context provenance. |
-| `route_task(task)` | Read-only task router. Returns relevant files, why-selected/why-not-selected explanations, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt as JSON. |
+| `route_task(task, timeout_s=60)` | Read-only task router. Returns relevant files, why-selected/why-not-selected explanations, applied rules, recommended skills, suggested commands, safety warnings, and an agent prompt as JSON. Route plans and inventories reuse bounded process-local caches. |
 | `get_skills()` | Return discovered skill/rule inventory as JSON. |
 | `get_skill(name_or_path)` | Return one skill's raw `SKILL.md` content after `route_task` recommends it. |
 | `explain_route(task)` | Return route JSON with positive skill score reasons for debugging router choices. |
-| `start_task(task, mode, budget, max_tokens, thread_id)` | Recommended MCP-first entry point. Uses the ambient session by default, writes scoped or explicit global task.md, generates a ranked pack, and returns packed markdown. |
-| `pack_context(task, mode, budget, max_tokens, thread_id)` | Generate a ranked context pack. If `task` is provided, writes scoped/global task.md; if omitted in a scoped session, requires an existing scoped task instead of falling back to stale global task text. |
+| `start_task(task, mode, budget, max_tokens, thread_id, timeout_s=60)` | Recommended MCP-first entry point. Uses the ambient session by default, writes scoped or explicit global task.md, generates a ranked pack, and returns packed markdown. |
+| `pack_context(task, mode, budget, max_tokens, thread_id, timeout_s=60)` | Generate a ranked context pack. If `task` is provided, writes scoped/global task.md; if omitted in a scoped session, requires an existing scoped task instead of falling back to stale global task text. |
 | `get_context(thread_id)` | Return the latest scoped/global pack. If task.md or the repo snapshot differs from the packed metadata, it auto-refreshes before returning; completed sessions return a refusal instead of old context. |
 | `refresh()` | Refresh using the current ambient session task file; legacy global mode may fall back to git-inferred task. |
-| `explain_file(path, task)` | Show score, inclusion mode, reasons, symbols, imports, and importers for one file. |
-| `get_related_files(path, depth)` | Return import-graph neighbours and related tests for a file. |
+| `explain_file(path, task, thread_id, timeout_s=60)` | Show score, inclusion mode, reasons, symbols, imports, and importers for one file. Reuses the session's cached plan. |
+| `get_related_files(path, depth, thread_id, timeout_s=60)` | Return import-graph neighbours and related tests for a file. Reuses the session's cached plan and graph. |
+| `query_graph(...)`, `get_graph_node(...)`, `get_graph_neighbors(...)`, `shortest_path(...)`, `explain_graph_edge(...)` | Bounded semantic-graph reads. Each accepts `timeout_s` and reuses a manifest-validated process-local graph index. |
 | `get_delta_context(max_files)` | Return the latest selected-file delta plus top current selected files. Useful for cheap prompt-time refresh checks. |
 | `validate_toon(content, path, require_format, schema, allow_json, return_canonical)` | Validate TOON or review-stage JSON fallback. With `return_canonical=true`, includes canonical TOON in the response when validation succeeds. |
 | `get_stats()` | Return latest pack stats, savings, selection quality, excluded files, and benchmark-style signals. |

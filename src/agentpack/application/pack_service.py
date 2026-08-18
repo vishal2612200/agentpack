@@ -109,6 +109,11 @@ class PackRequest:
     output_path: Path | None = None
     write_canonical: bool = True
     verify_incremental: bool = False
+    deadline: float | None = None
+
+
+class PackTimeoutError(TimeoutError):
+    """Raised when a cooperative packing deadline is exceeded."""
 
 
 @dataclass
@@ -566,7 +571,8 @@ def _full_scan_reason(
     if not git.is_git_repo(root):
         return "git unavailable"
 
-    previous_meta = previous_snap.get("metadata") if isinstance(previous_snap.get("metadata"), dict) else {}
+    raw_previous_meta = previous_snap.get("metadata")
+    previous_meta: dict[str, Any] = dict(raw_previous_meta) if isinstance(raw_previous_meta, dict) else {}
     if previous_meta.get("scan_fingerprint") != scan_metadata.get("scan_fingerprint") and (
         _normalized_scan_config(previous_meta.get("scan_config"))
         != _normalized_scan_config(scan_metadata.get("scan_config"))
@@ -625,6 +631,11 @@ def _read_agent_lessons(root: Path, cfg: Any, limit: int = 2000) -> str:
     return text[:limit]
 
 
+def _check_deadline(request: PackRequest, phase: str) -> None:
+    if request.deadline is not None and time.monotonic() >= request.deadline:
+        raise PackTimeoutError(f"AgentPack planning timed out during {phase}")
+
+
 class PackPlanner:
     """Runs scan → summarize → graph → rank → select; shared by pack and explain."""
 
@@ -638,6 +649,7 @@ class PackPlanner:
         if selection_engine is not SelectionEngine.V1:
             raise NotImplementedError(f"selection engine {selection_engine.value} is not implemented")
         root = request.root
+        _check_deadline(request, "startup")
         from agentpack.architecture.service import build_snapshot_for_ref
         cfg = load_config(root)
         requested_mode = request.mode or cfg.context.default_mode
@@ -699,6 +711,7 @@ class PackPlanner:
                 always_skip_paths=generated_paths,
             )
         phase_times["scan"] = time.perf_counter() - t0
+        _check_deadline(request, "scan")
 
         packable = scan_result.packable
 
@@ -706,6 +719,7 @@ class PackPlanner:
         summaries_objs = build_all_summaries(packable, root)
         summaries = {p: s.model_dump() for p, s in summaries_objs.items()}
         phase_times["summarize"] = time.perf_counter() - t0
+        _check_deadline(request, "summaries")
 
         t0 = time.perf_counter()
         use_semantic_graph = request.task_source != "route" or is_explicit_pull_request_task(request.task)
@@ -719,6 +733,7 @@ class PackPlanner:
         else:
             semantic_graph = None
         phase_times["deps"] = time.perf_counter() - t0
+        _check_deadline(request, "semantic graph")
 
         t0 = time.perf_counter()
         changes = ChangeDetector().detect(packable, root, request.since, previous_snap=previous_snap)
@@ -732,6 +747,7 @@ class PackPlanner:
             "full_scan_reason": scan_result.full_scan_reason,
         }
         phase_times["changes"] = time.perf_counter() - t0
+        _check_deadline(request, "change detection")
 
         planning_packable = (
             _route_rank_candidates(packable, changes, request.task, summaries, semantic_graph)
@@ -781,6 +797,7 @@ class PackPlanner:
         )
         mode_warning = mode_warning or resolved_mode_warning
         phase_times["rank"] = time.perf_counter() - t0
+        _check_deadline(request, "ranking")
 
         t0 = time.perf_counter()
         repo_map_budget = _repo_map_budget_for_mode(effective_mode, effective_budget)
@@ -794,6 +811,7 @@ class PackPlanner:
             budget_tokens=repo_map_budget,
         )
         phase_times["repo_map"] = time.perf_counter() - t0
+        _check_deadline(request, "repo map")
         selection_budget = max(0, effective_budget - estimate_tokens(repo_map))
 
         context_intent = infer_context_intent(request.task, task_mode=rank_result.keyword_plan.task_kind)
@@ -813,6 +831,7 @@ class PackPlanner:
             )
             selection_budget = max(0, selection_budget - estimate_tokens(broad_context.model_dump_json()))
             phase_times["broad_context"] = time.perf_counter() - t0
+            _check_deadline(request, "broad context")
 
         t0 = time.perf_counter()
         omitted_relevant_files: list[OmittedRelevantFile] = []
@@ -911,6 +930,7 @@ class PackPlanner:
             changed_paths=changes.all_changed,
         )
         phase_times["select"] = time.perf_counter() - t0
+        _check_deadline(request, "selection")
 
         return PackPlan(
             task=request.task,
@@ -1800,12 +1820,12 @@ def _compute_delta_summary(
     previous = previous_metadata.get("selected_files_meta") or []
     if not isinstance(previous, list):
         return ""
-    prev_modes = {
-        item.get("path"): item.get("mode")
+    prev_modes: dict[str, str] = {
+        str(item.get("path")): str(item.get("mode") or "")
         for item in previous
         if isinstance(item, dict) and item.get("path")
     }
-    current_modes = {sf.path: sf.include_mode for sf in selected}
+    current_modes: dict[str, str] = {sf.path: sf.include_mode for sf in selected}
     added = sorted(set(current_modes) - set(prev_modes))
     removed = sorted(set(prev_modes) - set(current_modes))
     mode_changed = sorted(

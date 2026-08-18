@@ -6,8 +6,9 @@ import uuid
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
+from agentpack.core.jsonl import append_record
 from agentpack.session.identity import remember_external_thread_ids, resolve_identity
 
 
@@ -48,9 +49,9 @@ def record_event(
     *,
     output_path: str | None = None,
     source: str = "agentpack",
+    max_records: int = 2000,
 ) -> dict[str, Any]:
     path = root / (output_path or configured_events_output(root))
-    path.parent.mkdir(parents=True, exist_ok=True)
     data = dict(payload or {})
     identity = resolve_identity(
         root,
@@ -77,8 +78,7 @@ def record_event(
     event.update(identity)
     event["event_type"] = _CANONICAL_EVENT_TYPES.get(event_type, event_type)
     remember_external_thread_ids(root, identity["external_thread_ids"])
-    with path.open("a", encoding="utf-8") as f:
-        f.write(json.dumps(event, sort_keys=True, separators=(",", ":")) + "\n")
+    append_record(path, event, max_records=max_records)
     return event
 
 
@@ -150,7 +150,9 @@ def normalize_event(root: Path, event: dict[str, Any], *, base_identity: dict[st
         for key, value in identity.items():
             if key == "external_thread_ids":
                 existing = result.get(key) if isinstance(result.get(key), list) else []
-                result[key] = list(dict.fromkeys([*existing, *value]))[:20]
+                existing_values = [str(item) for item in cast(list[Any], existing)]
+                identity_values = [str(item) for item in cast(list[Any], value)] if isinstance(value, list) else []
+                result[key] = list(dict.fromkeys(existing_values + identity_values))[:20]
             else:
                 result[key] = value or result.get(key, "")
     if not result.get("event_id"):

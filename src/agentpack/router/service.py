@@ -8,10 +8,12 @@ import subprocess
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from threading import RLock
 from typing import Any
 
 from agentpack.core import git
 from agentpack.core.pr_target import is_explicit_pull_request_task, pull_request_target
+from agentpack.core.jsonl import append_record
 from agentpack.adapters.detect import detect_agent
 from agentpack.application.pack_service import PackPlanner, PackRequest
 from agentpack.core.config import load_config
@@ -54,17 +56,44 @@ class PromptQualityDecision:
 class RouteService:
     def __init__(self) -> None:
         self._route_details: dict[tuple[str, str, tuple[str, ...]], tuple[RouteResult, SkillInventory, list[Any]]] = {}
+        self._inventory_cache: dict[str, tuple[float, SkillInventory]] = {}
+        self._inventory_cache_ttl_s = 2.0
+        self._cache_lock = RLock()
 
     def inventory(self, root: Path, *, use_index: bool = True) -> SkillInventory:
         cfg = load_config(root)
         paths = cfg.skills.paths
+        cache_key = f"{root.resolve()}|{tuple(paths)}|{use_index}"
+        with self._cache_lock:
+            cached = self._inventory_cache.get(cache_key)
+        if cached and time.monotonic() - cached[0] < self._inventory_cache_ttl_s:
+            return cached[1]
         if use_index:
-            return inventory_for_route(root, paths)
-        return discover_inventory(root, paths)
+            inventory = inventory_for_route(root, paths)
+        else:
+            inventory = discover_inventory(root, paths)
+        with self._cache_lock:
+            self._inventory_cache[cache_key] = (time.monotonic(), inventory)
+            if len(self._inventory_cache) > 8:
+                oldest = min(self._inventory_cache, key=lambda key: self._inventory_cache[key][0])
+                self._inventory_cache.pop(oldest, None)
+        return inventory
 
-    def route_task(self, root: Path, task: str) -> RouteResult:
+    def route_task(
+        self,
+        root: Path,
+        task: str,
+        *,
+        thread_id: str = "",
+        timeout_s: float | None = None,
+    ) -> RouteResult:
         route_started = time.perf_counter()
         task = _normalize_task(task)
+        cache_key = _route_cache_key(root, task, thread_id=thread_id)
+        with self._cache_lock:
+            cached = self._route_details.get(cache_key)
+        if cached is not None:
+            return cached[0]
         routing_task = _task_with_recent_issue_context(root, task)
         mode_decision = classify_task_mode(task)
         task_mode = mode_decision.mode
@@ -81,6 +110,7 @@ class RouteService:
             since=None,
             refresh=False,
             task_source="route",
+            deadline=(time.monotonic() + timeout_s) if timeout_s is not None else None,
         ))
         plan.phase_times["route_plan"] = sum(plan.phase_times.values())
         pr_paths = _github_pr_paths(root, task) if task_mode == "pr_review" else set()
@@ -159,19 +189,31 @@ class RouteService:
         result.agent_prompt = build_agent_prompt(result)
         plan.phase_times["route_total"] = time.perf_counter() - route_started
         _record_route_phase_metrics(root, task, plan.phase_times)
-        cache_key = _route_cache_key(root, task)
-        self._route_details[cache_key] = (result, inventory, _all_scores)
-        if len(self._route_details) > 4:
-            self._route_details.pop(next(iter(self._route_details)))
+        cache_key = _route_cache_key(root, task, thread_id=thread_id)
+        with self._cache_lock:
+            self._route_details[cache_key] = (result, inventory, _all_scores)
+            if len(self._route_details) > 4:
+                self._route_details.pop(next(iter(self._route_details)))
         return result
 
-    def explain_route(self, root: Path, task: str) -> RouteExplanation:
+    def explain_route(
+        self,
+        root: Path,
+        task: str,
+        *,
+        thread_id: str = "",
+        timeout_s: float | None = None,
+    ) -> RouteExplanation:
         task = _normalize_task(task)
-        cache_key = _route_cache_key(root, task)
-        details = self._route_details.get(cache_key)
+        cache_key = _route_cache_key(root, task, thread_id=thread_id)
+        with self._cache_lock:
+            details = self._route_details.get(cache_key)
         if details is None:
-            result = self.route_task(root, task)
-            details = self._route_details[cache_key]
+            result = self.route_task(root, task, thread_id=thread_id, timeout_s=timeout_s)
+            with self._cache_lock:
+                details = self._route_details.get(_route_cache_key(root, task, thread_id=thread_id))
+            if details is None:
+                raise RuntimeError("route details were not cached after route planning")
         else:
             result = details[0]
         _result, _inventory, all_scores = details
@@ -210,27 +252,38 @@ def _normalize_task(task: str) -> str:
     return normalized
 
 
-def _route_cache_key(root: Path, task: str) -> tuple[str, str, tuple[str, ...]]:
+def _route_cache_key(root: Path, task: str, *, thread_id: str = "") -> tuple[str, str, tuple[str, ...]]:
+    dirty = sorted(git.dirty_files(root) | git.untracked_files(root))
+    fingerprints: list[str] = []
+    for relative in [*dirty, ".agentignore", ".agentpack/config.toml", ".agentpack/skills_index.json"]:
+        if relative in {".agentpack/metrics.jsonl", ".agentpack/session-events.jsonl"}:
+            continue
+        path = root / relative
+        try:
+            stat = path.stat()
+        except OSError:
+            fingerprints.append(f"{relative}:missing")
+        else:
+            fingerprints.append(f"{relative}:{stat.st_mtime_ns}:{stat.st_size}")
     return (
         str(root.resolve()),
-        f"{git.current_sha(root) or 'worktree'}:{task}",
-        tuple(sorted(git.dirty_files(root) | git.untracked_files(root))),
+        f"{git.current_sha(root) or 'worktree'}:{thread_id}:{task}",
+        tuple(fingerprints),
     )
 
 
 def _record_route_phase_metrics(root: Path, task: str, phase_times: dict[str, float]) -> None:
     record = {
         "ts": time.time(),
-        "task": task,
+        "task": task[:500],
+        "task_truncated": len(task) > 500,
         "task_source": "route",
         "phases": {key: round(value, 3) for key, value in phase_times.items()},
         "total_s": round(phase_times.get("route_total", sum(phase_times.values())), 3),
     }
     try:
         metrics_path = root / ".agentpack" / "metrics.jsonl"
-        metrics_path.parent.mkdir(parents=True, exist_ok=True)
-        with metrics_path.open("a", encoding="utf-8") as handle:
-            handle.write(json.dumps(record, sort_keys=True) + "\n")
+        append_record(metrics_path, record, max_records=2000)
     except OSError:
         pass
 
