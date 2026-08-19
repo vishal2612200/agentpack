@@ -14,7 +14,7 @@ resolution-markers = [
 
 [[package]]
 name = "agentpack-cli"
-version = "0.4.3"
+version = "0.4.4"
 source = { editable = "." }
 dependencies = [
     { name = "pathspec" },
