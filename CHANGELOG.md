@@ -8,6 +8,24 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ## [Unreleased]
 
+## [0.4.4] — 2026-08-19
+
+### Added
+- Added bounded MCP response contracts, workspace-scoped request reuse, and
+  route phase telemetry for more predictable context-engine behavior.
+
+### Changed
+- Reduced MCP token-heavy response fan-out while preserving detailed retrieval
+  through explicit follow-up tools.
+- Added session and observer event fingerprints to route-cache invalidation and
+  cross-process locking for JSONL telemetry writes.
+
+### Fixed
+- Prevented MCP caches from crossing workspace boundaries or reusing stale
+  route state after session and observer events.
+- Filtered Android build artifacts from context selection and preserved the
+  `mcp<2` compatibility cap for the FastMCP runtime.
+
 ## [0.4.3] — 2026-08-12
 
 ### Added
