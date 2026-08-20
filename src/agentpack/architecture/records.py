@@ -52,7 +52,11 @@ class GraphManifest(BaseModel):
 
 
 class MaterializedGraphState(BaseModel):
-    """Snapshot plus ownership metadata used for record-level delta merges."""
+    """Ownership metadata used for record-level delta merges.
+
+    New states point at the canonical snapshot file. ``snapshot`` remains
+    optional so older embedded-snapshot states remain readable during rollout.
+    """
 
     schema_version: int
     repository_identity: str
@@ -63,4 +67,5 @@ class MaterializedGraphState(BaseModel):
     record_keys: dict[str, str] = Field(default_factory=dict)
     entity_owners: dict[str, str] = Field(default_factory=dict)
     edge_owners: dict[str, str] = Field(default_factory=dict)
-    snapshot: dict[str, Any]
+    snapshot: dict[str, Any] | None = None
+    snapshot_path: str | None = None
