@@ -156,6 +156,47 @@ def test_byte_budget_evicts_oldest_optional_refs(tmp_path: Path, monkeypatch) ->
     assert not (cache / f"{2:040x}-{SCHEMA}-{PROFILE}.json").exists()
 
 
+def test_byte_budget_does_not_double_evict_count_pruned_refs(tmp_path: Path, monkeypatch) -> None:
+    cache = tmp_path / ".agentpack" / "architecture"
+    cache.mkdir(parents=True)
+    for index in range(4):
+        commit = f"{index + 1:040x}"
+        _write_state(cache, f"ref-{index}", commit, index + 1, record=f"record-{index}", fact=f"fact-{index}")
+        _write(cache / f"{commit}-{SCHEMA}-{PROFILE}.json", "snapshot")
+
+    state_paths = sorted((cache / "state").glob("*.json"), key=lambda path: path.stat().st_mtime)
+    retained_paths = [
+        cache / f"{index:040x}-{SCHEMA}-{PROFILE}.json"
+        for index in (2, 3, 4)
+    ]
+    retained_paths += [
+        cache / "records" / f"record-{index}.json"
+        for index in (1, 2, 3)
+    ]
+    retained_paths += [
+        cache / "facts" / f"fact-{index}.json"
+        for index in (1, 2, 3)
+    ]
+    for state_path in state_paths[-3:]:
+        retained_paths.extend((state_path, cache / "manifests" / state_path.name))
+    config = load_config(tmp_path)
+    config.architecture.max_cache_bytes = sum(path.stat().st_size for path in retained_paths) + 100
+    monkeypatch.setattr(retention_module, "load_config", lambda root: config)
+
+    prune_architecture_cache(
+        tmp_path,
+        keep_refs=3,
+        dry_run=False,
+        force=True,
+        schema_version=SCHEMA,
+        extractor_profile_hash=PROFILE,
+        repo_fingerprint=REPO,
+    )
+
+    assert len(list(cache.glob(f"*-{SCHEMA}-{PROFILE}.json"))) == 3
+    assert (cache / f"{2:040x}-{SCHEMA}-{PROFILE}.json").exists()
+
+
 def test_malformed_current_state_fails_closed_for_dependency_sweep(tmp_path: Path) -> None:
     cache = tmp_path / ".agentpack" / "architecture"
     cache.mkdir(parents=True)

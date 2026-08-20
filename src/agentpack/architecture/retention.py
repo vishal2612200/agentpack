@@ -72,6 +72,7 @@ def _cache_lock(cache_dir: Path) -> Iterator[None]:
             handle.seek(0)
             handle.write(b"0")
             handle.flush()
+            handle.seek(0)
             msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
         try:
             yield
@@ -255,6 +256,9 @@ def _collect_candidates(
     retained_states = {path for path, _ in worktree_states[:1]}
     retained_states.update(path for path, _ in ref_states[:keep_refs])
     candidates.update(path for path, _ in valid_states if path not in retained_states)
+    for path, header in valid_states:
+        if path not in retained_states and header.get("ref") != "WORKTREE" and header.get("commit_sha"):
+            candidates.add(cache_dir / f"{header['commit_sha']}-{schema_version}-{extractor_profile_hash}.json")
 
     retained_basenames = {path.name for path in retained_states}
     manifest_dir = cache_dir / "manifests"
