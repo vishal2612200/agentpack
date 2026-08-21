@@ -4,6 +4,7 @@ from pathlib import Path
 import json
 import os
 import subprocess
+from datetime import datetime, timezone
 
 import pytest
 from typer.testing import CliRunner
@@ -161,7 +162,7 @@ def test_learn_global_session_is_written_and_completed_in_owning_repo(tmp_path, 
         json.dumps(
             {
                 "type": "task_memory",
-                "timestamp": "2026-07-19T10:00:00+00:00",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "task_id": "task-retry",
                 "task": "Bound worker retry attempts",
                 "status": "done",

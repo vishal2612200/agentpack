@@ -6,6 +6,7 @@ import threading
 import urllib.error
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
+from datetime import datetime, timezone
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -179,7 +180,7 @@ def test_learning_recommendations_endpoint_is_typed_and_read_only(tmp_path: Path
         json.dumps(
             {
                 "type": "task_memory",
-                "timestamp": "2026-07-19T10:00:00+00:00",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "task_id": "task-cli",
                 "task": "Improve CLI output",
                 "status": "done",
