@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import shutil
 import subprocess
 import tempfile
+import time
 from contextlib import contextmanager
 from fnmatch import fnmatch
 from pathlib import Path
@@ -24,6 +26,7 @@ from agentpack.architecture.models import (
     EntityChange,
 )
 from agentpack.architecture.store import SemanticGraphStore
+from agentpack.architecture.retention import prune_architecture_cache
 from agentpack.core.config import Config, load_config
 from agentpack.core.git import current_sha, dirty_files
 from agentpack.core.ignore import load_spec
@@ -66,6 +69,8 @@ def build_snapshot_for_ref(
         if cached is not None and _cached_snapshot_header_is_valid(root, cached, commit_sha):
             valid, _reason = _validate_ref_cached_snapshot(root, requested_ref, commit_sha, cached)
             if valid:
+                _mark_cache_access(root, cached)
+                _prune_after_cache_use(root)
                 return cached
         live_sha = current_sha(root)
         if live_sha == commit_sha and not dirty_files(root):
@@ -81,7 +86,8 @@ def build_snapshot_for_ref(
                     cache_root=root,
                     repo_fingerprint=_repo_fingerprint(root),
                 )
-        _save_cached_snapshot(root, snapshot)
+        _mark_cache_access(root, snapshot)
+        _prune_after_cache_use(root)
         return snapshot
 
     live_sha = current_sha(root) or "worktree"
@@ -93,6 +99,8 @@ def build_snapshot_for_ref(
         cfg = load_config(root)
         validator = SemanticGraphStore(root / cfg.architecture.cache_dir, schema_version=SCHEMA_VERSION)
         if cache_validation == "manifest" and _cached_worktree_manifest_is_valid(root, cached, scan_result):
+            _mark_cache_access(root, cached, cache_path=cache_path)
+            _prune_after_cache_use(root)
             return cached
         valid, _reason = validator.validate_cached_snapshot(
             scan_result.packable,
@@ -101,9 +109,12 @@ def build_snapshot_for_ref(
             snapshot=cached,
         )
         if valid:
+            _mark_cache_access(root, cached, cache_path=cache_path)
+            _prune_after_cache_use(root)
             return cached
     snapshot = _build_snapshot_from_root(root, "WORKTREE", live_sha, scan_result=scan_result, cold=cold, verify_incremental=verify_incremental)
-    _save_snapshot_path(cache_path, snapshot)
+    _mark_cache_access(root, snapshot, cache_path=cache_path)
+    _prune_after_cache_use(root)
     return snapshot
 
 
@@ -372,6 +383,7 @@ def _build_snapshot_from_root(
     verify_incremental: bool = False,
     cache_root: Path | None = None,
     repo_fingerprint: str | None = None,
+    snapshot_cache_path: Path | None = None,
 ) -> ArchitectureSnapshot:
     """Build the canonical architecture artifact from the semantic graph."""
     cfg = load_config(root)
@@ -386,6 +398,11 @@ def _build_snapshot_from_root(
     capabilities = capability_registry()
     repo_fingerprint = repo_fingerprint or _repo_fingerprint(root)
     profile_hash = _extractor_profile_hash()
+    snapshot_cache_path = snapshot_cache_path or (
+        _worktree_cache_path(cache_root or root, _short_hash(json.dumps({item.path: item.hash for item in files}, sort_keys=True)))
+        if ref == "WORKTREE"
+        else _cache_path(cache_root or root, commit_sha)
+    )
     store = SemanticGraphStore(
         (cache_root or root) / cfg.architecture.cache_dir,
         schema_version=SCHEMA_VERSION,
@@ -399,6 +416,7 @@ def _build_snapshot_from_root(
         commit_sha=commit_sha,
         capabilities=capabilities,
         extractor_profile_hash=profile_hash,
+        snapshot_path=snapshot_cache_path,
         cold=cold,
         verify_incremental=verify_incremental,
     )
@@ -553,14 +571,36 @@ def _load_snapshot_path(path: Path) -> ArchitectureSnapshot | None:
         return None
 
 
-def _save_cached_snapshot(root: Path, snapshot: ArchitectureSnapshot) -> None:
-    path = _cache_path(root, snapshot.commit_sha)
-    _save_snapshot_path(path, snapshot)
+def _mark_cache_access(root: Path, snapshot: ArchitectureSnapshot, *, cache_path: Path | None = None) -> None:
+    """Update recency metadata without rewriting large cache payloads."""
+    try:
+        cfg = load_config(root)
+        snapshot_path = cache_path or _cache_path(root, snapshot.commit_sha)
+        now = time.time_ns()
+        if snapshot_path.exists():
+            os.utime(snapshot_path, ns=(now, now))
+        store = SemanticGraphStore(root / cfg.architecture.cache_dir, schema_version=SCHEMA_VERSION)
+        state_path = store._state_path(_repo_fingerprint(root), _extractor_profile_hash(), ref=snapshot.ref)
+        if state_path.exists():
+            os.utime(state_path, ns=(now, now))
+    except (OSError, ValueError, TypeError):
+        return
 
 
-def _save_snapshot_path(path: Path, snapshot: ArchitectureSnapshot) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(serialize_model(snapshot), encoding="utf-8")
+def _prune_after_cache_use(root: Path) -> None:
+    """Best-effort cache maintenance; never turn a valid graph into a failure."""
+    try:
+        cfg = load_config(root)
+        prune_architecture_cache(
+            root,
+            keep_refs=cfg.architecture.max_cached_refs,
+            dry_run=False,
+            schema_version=SCHEMA_VERSION,
+            extractor_profile_hash=_extractor_profile_hash(),
+            repo_fingerprint=_repo_fingerprint(root),
+        )
+    except Exception:
+        return
 
 
 def _cache_path(root: Path, commit_sha: str) -> Path:

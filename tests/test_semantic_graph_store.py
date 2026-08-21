@@ -62,6 +62,20 @@ def test_incremental_materialization_reuses_unaffected_records(tmp_path: Path, m
     assert second.model_dump(mode="json") == cold.model_dump(mode="json")
 
 
+def test_materialized_state_references_canonical_snapshot(tmp_path: Path) -> None:
+    _write(tmp_path, "src/service.py", "def run():\n    return 1\n")
+    snapshot = build_snapshot_for_ref(tmp_path)
+
+    cache = tmp_path / ".agentpack" / "architecture"
+    state_path = next((cache / "state").glob("*.json"))
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+
+    assert state["snapshot"] is None
+    assert state["snapshot_path"]
+    canonical = cache / state["snapshot_path"]
+    assert json.loads(canonical.read_text(encoding="utf-8"))["commit_sha"] == snapshot.commit_sha
+
+
 def test_manifest_route_validation_skips_record_deserialization_on_warm_cache(tmp_path: Path, monkeypatch) -> None:
     _write(tmp_path, "src/provider.py", "def lookup(value):\n    return value\n")
     first = build_snapshot_for_ref(tmp_path)

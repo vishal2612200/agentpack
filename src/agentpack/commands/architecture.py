@@ -9,14 +9,44 @@ from rich.table import Table
 
 from agentpack.architecture.index import SemanticGraphIndex
 from agentpack.architecture.budgets import snapshot_metrics
+from agentpack.architecture.retention import prune_architecture_cache
 from agentpack.architecture.service import build_diff, build_snapshot_for_ref, run_check
 from agentpack.commands._shared import _root, console
+from agentpack.core.config import load_config
 
 architecture_app = typer.Typer(help="Build deterministic architecture snapshots, diffs, and checks.")
 
 
 def register(app: typer.Typer) -> None:
     app.add_typer(architecture_app, name="architecture")
+
+
+@architecture_app.command("prune")
+def prune(
+    keep_refs: int | None = typer.Option(None, "--keep-refs", min=2, max=1000),
+    yes: bool = typer.Option(False, "--yes", help="Delete candidates; default is dry-run."),
+    json_output: bool = typer.Option(False, "--json", help="Print JSON."),
+) -> None:
+    """Bound the local architecture cache without touching source files."""
+    root = _root()
+    configured_keep_refs = load_config(root).architecture.max_cached_refs
+    report = prune_architecture_cache(
+        root,
+        keep_refs=keep_refs or configured_keep_refs,
+        dry_run=not yes,
+        force=True,
+    )
+    if json_output:
+        typer.echo(json.dumps(report.as_dict(), indent=2, sort_keys=True))
+        return
+    action = "Would delete" if report.dry_run else "Deleted"
+    console.print(
+        f"{action} {report.deleted_files} files ({report.deleted_bytes} bytes); "
+        f"retained {report.retained_files} files ({report.retained_bytes} bytes); "
+        f"budget {report.max_cache_bytes or 'unlimited'}."
+    )
+    if report.skipped_files:
+        console.print(f"Skipped {report.skipped_files} files due to unreadable cache metadata.")
 
 
 @architecture_app.command("snapshot")

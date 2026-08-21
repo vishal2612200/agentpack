@@ -97,6 +97,17 @@ max_output_summary_items = 40
 max_session_events = 2000
 max_episodic_cases = 1000
 
+[architecture]
+cache_dir = ".agentpack/architecture"
+max_cached_refs = 3       # Keep newest immutable ref graphs; worktree keeps one.
+max_cache_bytes = 2147483648  # Hard cache budget; 0 disables byte eviction.
+enabled = false
+policy_mode = "warn"      # off | warn | enforce
+baseline_path = ".agentpack/architecture-baseline.json"
+max_growth_pct = 25.0
+max_quality_regression_pct = 5.0
+max_build_time_multiplier = 2.0
+
 [agents.claude]
 output = ".agentpack/context.claude.md"
 patch_claude_md = true

@@ -237,6 +237,8 @@ class ArchitectureInvariantConfig(BaseModel):
 
 class ArchitectureConfig(BaseModel):
     cache_dir: str = ".agentpack/architecture"
+    max_cached_refs: int = Field(default=3, ge=2, le=1000)
+    max_cache_bytes: int = Field(default=2 * 1024**3, ge=0)
     enabled: bool = True
     policy_mode: Literal["off", "warn", "enforce"] = "warn"
     baseline_path: str = ".agentpack/architecture-baseline.json"
@@ -417,6 +419,8 @@ ignored_penalty       = -100
 
 [architecture]
 cache_dir = ".agentpack/architecture"
+max_cached_refs = 3
+max_cache_bytes = 2147483648
 enabled = false
 policy_mode = "warn"  # off | warn | enforce
 baseline_path = ".agentpack/architecture-baseline.json"
