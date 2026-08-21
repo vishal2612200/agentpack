@@ -8,6 +8,10 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ## [Unreleased]
 
+### Changed
+- Added explicit, reason-bearing release workflow bypass for exceptional
+  releases while keeping benchmark and evidence gates blocking by default.
+
 ## [0.4.4] — 2026-08-19
 
 ### Added
