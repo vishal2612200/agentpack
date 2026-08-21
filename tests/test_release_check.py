@@ -45,6 +45,77 @@ def test_release_check_json_orchestrates_stages(tmp_path, monkeypatch) -> None:
     assert pytest_call == ["python", "-m", "pytest", "tests/", "-q", "--cov", "--cov-report=term-missing", "-m", "not slow"] or pytest_call[1:] == ["-m", "pytest", "tests/", "-q", "--cov", "--cov-report=term-missing", "-m", "not slow"]
 
 
+def test_release_check_allows_explicit_tagged_evidence_bypass(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "agentpack-cli"\nversion = "1.2.3"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("# Changelog\n\n## [1.2.3]\n", encoding="utf-8")
+    init_file = tmp_path / "src" / "agentpack" / "__init__.py"
+    init_file.parent.mkdir(parents=True)
+    init_file.write_text('__version__ = "1.2.3"\n', encoding="utf-8")
+    npm_dir = tmp_path / "npm"
+    npm_dir.mkdir()
+    (npm_dir / "package.json").write_text('{"version": "1.2.3"}', encoding="utf-8")
+
+    calls: list[list[str]] = []
+
+    class Result:
+        returncode = 0
+        stdout = ""
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        calls.append([str(part) for part in command])
+        return Result()
+
+    monkeypatch.setattr("agentpack.commands.release_check.subprocess.run", fake_run)
+
+    result = CliRunner().invoke(
+        app,
+        [
+            "release-check",
+            "--tag",
+            "v1.2.3",
+            "--allow-release-evidence-bypass",
+            "--release-evidence-bypass-reason",
+            "emergency security fix",
+            "--skip-build",
+            "--json",
+        ],
+    )
+
+    assert result.exit_code == 0, result.output
+    payload = json.loads(result.output)
+    evidence = next(stage for stage in payload["stages"] if stage["name"] == "release-evidence")
+    assert "EXPLICIT BYPASS" in evidence["detail"]
+    assert not any("benchmark-release-gate" in call for call in calls)
+
+
+def test_release_check_requires_reason_for_evidence_bypass(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / "pyproject.toml").write_text('[project]\nname = "agentpack-cli"\nversion = "1.2.3"\n', encoding="utf-8")
+    (tmp_path / "CHANGELOG.md").write_text("## [1.2.3]\n", encoding="utf-8")
+    init_file = tmp_path / "src" / "agentpack" / "__init__.py"
+    init_file.parent.mkdir(parents=True)
+    init_file.write_text('__version__ = "1.2.3"\n', encoding="utf-8")
+    npm_dir = tmp_path / "npm"
+    npm_dir.mkdir()
+    (npm_dir / "package.json").write_text('{"version": "1.2.3"}', encoding="utf-8")
+    monkeypatch.setattr(
+        "agentpack.commands.release_check.subprocess.run",
+        lambda *args, **kwargs: type("Result", (), {"returncode": 0, "stdout": "", "stderr": ""})(),
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["release-check", "--tag", "v1.2.3", "--allow-release-evidence-bypass", "--skip-build", "--json"],
+    )
+
+    assert result.exit_code == 1
+    payload = json.loads(result.output)
+    evidence = next(stage for stage in payload["stages"] if stage["name"] == "release-evidence")
+    assert "requires --release-evidence-bypass-reason" in evidence["detail"]
+
+
 def test_release_check_docs_profile_skips_build_benchmark_and_uses_focused_tests(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / "pyproject.toml").write_text('[project]\nversion = "1.2.3"\n', encoding="utf-8")

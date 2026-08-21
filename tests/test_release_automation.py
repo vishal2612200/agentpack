@@ -137,6 +137,18 @@ def test_release_check_json_emits_stable_top_level_keys(tmp_path: Path, monkeypa
     assert all({"name", "status"} <= set(stage) for stage in data["stages"])
 
 
+def test_publish_workflow_keeps_evidence_blocking_with_explicit_dispatch_bypass() -> None:
+    workflow = Path(__file__).parents[1] / ".github" / "workflows" / "publish.yml"
+    text = workflow.read_text(encoding="utf-8")
+
+    assert "workflow_dispatch:" in text
+    assert "allow_release_evidence_bypass:" in text
+    assert "release_evidence_bypass_reason:" in text
+    assert "--require-release-evidence" in text
+    assert "--allow-release-evidence-bypass" in text
+    assert 'RELEASE_EVIDENCE_BYPASS}" == "true"' in text
+
+
 def test_ci_init_json_emits_stable_top_level_keys(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
 

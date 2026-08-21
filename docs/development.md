@@ -68,6 +68,8 @@ The underlying release command wraps the public release gate:
 agentpack release-check
 agentpack release-check --profile auto
 agentpack release-check --skip-benchmark --json
+agentpack release-check --tag v1.2.3 --allow-release-evidence-bypass \
+  --release-evidence-bypass-reason "emergency security fix"
 ```
 
 `release-check` verifies version/changelog sync, runs tests, builds into a
@@ -75,6 +77,14 @@ temporary directory, and runs `agentpack benchmark --release-gate` for full
 release gates. The default `--profile auto` keeps that full path for code
 changes, but uses the docs/plugin profile for docs, agent-rule, plugin, and
 native-integration-only diffs. It does not mutate tracked files.
+
+Release publication workflow keeps current evidence blocking by default. For
+an exceptional tagged release, use GitHub Actions `workflow_dispatch`, provide
+an existing `release_tag`, enable `allow_release_evidence_bypass`, and provide
+an audit reason. This skips only release evidence and benchmark validation;
+version, changelog, branch, registry, test, build, and wheel gates still run.
+The CLI equivalent requires both `--tag` and
+`--release-evidence-bypass-reason`; the bypass is never implicit.
 
 `make verify-wheel` is the packaged-CLI smoke: it builds the project, installs
 the latest wheel into a temporary venv, then runs

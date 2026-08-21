@@ -4,9 +4,27 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Existing release tag to publish, for example v0.4.5"
+        required: true
+        type: string
+      allow_release_evidence_bypass:
+        description: "Skip release benchmark/evidence validation for this exceptional release"
+        required: false
+        default: false
+        type: boolean
+      release_evidence_bypass_reason:
+        description: "Audit reason required when bypass is enabled"
+        required: false
+        type: string
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release_tag || github.ref_name }}
+  RELEASE_EVIDENCE_BYPASS: ${{ github.event_name == 'workflow_dispatch' && inputs.allow_release_evidence_bypass || false }}
+  RELEASE_EVIDENCE_BYPASS_REASON: ${{ github.event_name == 'workflow_dispatch' && inputs.release_evidence_bypass_reason || '' }}
 
 jobs:
   # Guard: tag must come from a release/* branch
@@ -15,10 +33,11 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
           fetch-depth: 0
       - name: Verify tag is on a release branch
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           # Find branches that contain this tag's commit
           BRANCHES=$(git branch -r --contains "refs/tags/${TAG}" 2>/dev/null || true)
           echo "Branches containing tag ${TAG}:"
@@ -34,9 +53,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - name: Verify CHANGELOG entry exists
         run: |
-          TAG="${GITHUB_REF_NAME}"
+          TAG="${RELEASE_TAG}"
           # Strip leading 'v' to get version string (e.g. v0.1.11 → 0.1.11)
           VERSION="${TAG#v}"
           if ! grep -qF "## [${VERSION}]" CHANGELOG.md 2>/dev/null && \
@@ -52,9 +73,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - name: Verify pyproject.toml and __init__.py versions match
         run: |
-          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          TAG_VERSION="${RELEASE_TAG#v}"
           PYPROJECT=$(python3 -c "import tomllib; d=tomllib.loads(open('pyproject.toml').read()); print(d['project']['version'])" 2>/dev/null || python3 -c "import re; m=re.search(r'version\s*=\s*\"([^\"]+)\"', open('pyproject.toml').read()); print(m.group(1))")
           INIT=$(python3 -c "import re; m=re.search(r'__version__\s*=\s*\"([^\"]+)\"', open('src/agentpack/__init__.py').read()); print(m.group(1))")
           NPM=$(python3 -c "import json; print(json.load(open('npm/package.json'))['version'])")
@@ -80,6 +103,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - name: Verify PyPI version is not already published
         run: |
           python3 - <<'PY'
@@ -105,8 +130,8 @@ jobs:
           sys.exit(1)
           PY
 
-  # Blocking release evidence gate. Reports are prepared manually before tagging;
-  # this job validates them and reruns deterministic repository benchmarks only.
+  # Blocking by default. Exceptional manual runs may use an explicit,
+  # reason-bearing bypass; all other release gates remain required.
   release-evidence:
     if: >-
       always() &&
@@ -119,6 +144,7 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
         with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
           fetch-depth: 0
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
@@ -126,7 +152,21 @@ jobs:
       - name: Install release dependencies
         run: python -m pip install -e ".[dev]"
       - name: Validate current release evidence and deterministic gate
-        run: python -m agentpack.cli release-check --profile full --skip-build --tag "${GITHUB_REF_NAME}" --require-release-evidence
+        run: |
+          if [[ "${RELEASE_EVIDENCE_BYPASS}" == "true" ]]; then
+            if [[ -z "${RELEASE_EVIDENCE_BYPASS_REASON}" ]]; then
+              echo "ERROR: release evidence bypass requires a reason."
+              exit 1
+            fi
+            python -m agentpack.cli release-check \
+              --profile full --skip-build --tag "${RELEASE_TAG}" \
+              --allow-release-evidence-bypass \
+              --release-evidence-bypass-reason "${RELEASE_EVIDENCE_BYPASS_REASON}"
+          else
+            python -m agentpack.cli release-check \
+              --profile full --skip-build --tag "${RELEASE_TAG}" \
+              --require-release-evidence
+          fi
 
   test:
     needs: [check-release-branch, check-changelog, check-version-sync, check-pypi-version-available]
@@ -136,6 +176,8 @@ jobs:
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: ${{ matrix.python-version }}
@@ -164,6 +206,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.10"
@@ -177,6 +221,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"
@@ -190,6 +236,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
       - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1
         with:
           python-version: "3.12"

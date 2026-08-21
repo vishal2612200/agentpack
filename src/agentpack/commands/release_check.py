@@ -57,11 +57,23 @@ def register(app: typer.Typer) -> None:
         check_pypi_registry: bool = typer.Option(False, "--check-pypi-registry", help="Fail if this version already exists on PyPI."),
         check_npm_registry: bool = typer.Option(False, "--check-npm-registry", help="Fail if this version already exists on npm."),
         require_release_evidence: bool = typer.Option(False, "--require-release-evidence", help="Require current deterministic and E2E benchmark evidence."),
+        allow_release_evidence_bypass: bool = typer.Option(
+            False,
+            "--allow-release-evidence-bypass",
+            help="Explicitly bypass release evidence and benchmark checks for this tagged release.",
+        ),
+        release_evidence_bypass_reason: str | None = typer.Option(
+            None,
+            "--release-evidence-bypass-reason",
+            help="Required audit reason when --allow-release-evidence-bypass is used.",
+        ),
         json_output: bool = typer.Option(False, "--json", help="Emit JSON."),
     ) -> None:
         """Run release readiness checks without mutating tracked files."""
         root = _root()
         stages: list[StageResult] = []
+        if allow_release_evidence_bypass:
+            skip_benchmark = True
         release_profile = _resolve_release_profile(root, profile, skip_build=skip_build, skip_benchmark=skip_benchmark)
         if release_profile == "docs":
             skip_build = True
@@ -74,7 +86,9 @@ def register(app: typer.Typer) -> None:
         stages.append(_run_stage(root, "version-sync", ["node", "npm/test/version-sync.test.js"]))
         if tag:
             stages.append(_check_tag_version(root, tag))
-        if require_release_evidence:
+        if allow_release_evidence_bypass:
+            stages.append(_check_release_evidence_bypass(tag=tag, reason=release_evidence_bypass_reason))
+        elif require_release_evidence:
             stages.append(_check_release_evidence(root, tag=tag))
         if check_release_branch:
             stages.append(_check_release_branch(root))
@@ -118,6 +132,25 @@ def register(app: typer.Typer) -> None:
                     console.print(f"  rerun: [bold]{stage.command}[/]")
         if failed:
             raise typer.Exit(1)
+
+
+def _check_release_evidence_bypass(*, tag: str | None, reason: str | None) -> StageResult:
+    started = time.perf_counter()
+    errors: list[str] = []
+    clean_reason = reason.strip() if reason else ""
+    if not tag:
+        errors.append("release evidence bypass requires an explicit --tag")
+    if not clean_reason:
+        errors.append("release evidence bypass requires --release-evidence-bypass-reason")
+    detail = "; ".join(errors) if errors else f"EXPLICIT BYPASS: release evidence and benchmark checks skipped; reason: {clean_reason}"
+    return StageResult(
+        name="release-evidence",
+        command="explicit release evidence bypass",
+        status="passed" if not errors else "failed",
+        duration_s=time.perf_counter() - started,
+        returncode=0 if not errors else 1,
+        detail=detail,
+    )
 
 
 def _check_release_evidence(root: Path, *, tag: str | None) -> StageResult:
