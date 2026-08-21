@@ -50,6 +50,7 @@ def test_publish_workflows_preflight_existing_versions() -> None:
 
     assert "check-pypi-version-available" in pypi_workflow
     assert "already exists on PyPI" in pypi_workflow
-    assert 'TAG_VERSION="${GITHUB_REF_NAME#v}"' in pypi_workflow
+    assert 'TAG="${RELEASE_TAG}"' in pypi_workflow
+    assert 'VERSION="${TAG#v}"' in pypi_workflow
     assert "Verify npm version is not already published" in npm_workflow
     assert "already exists on npm" in npm_workflow
