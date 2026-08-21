@@ -155,6 +155,23 @@ def test_structured_budget_returns_valid_json_at_one_token(tmp_path):
     assert estimate_tokens(result) <= 1
 
 
+@pytest.mark.parametrize("output_format,max_tokens", [("json", 28), ("json", 45), ("toon", 34), ("toon", 48)])
+def test_structured_budget_falls_back_when_retrieval_hint_does_not_fit(
+    tmp_path, output_format, max_tokens
+):
+    skill = tmp_path / ".agentpack" / "skills" / "large" / "SKILL.md"
+    skill.parent.mkdir(parents=True)
+    skill.write_text("# Large\n\n" + ("secret body\n" * 10_000), encoding="utf-8")
+
+    result = _get_skills_impl(tmp_path, output_format, max_items=1, max_tokens=max_tokens)
+
+    assert estimate_tokens(result) <= max_tokens
+    if output_format == "json":
+        assert json.loads(result)["truncated"] is True
+    else:
+        assert "truncated: true" in result
+
+
 def test_retrieve_context_caps_aggregate_targets(tmp_path):
     with patch(
         "agentpack.core.pack_registry.retrieve_from_registry",

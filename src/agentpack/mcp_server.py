@@ -1399,7 +1399,10 @@ def _bounded_structured(
         "message": "Response exceeded MCP token budget; narrow request or increase max_tokens.",
     }
     if "body_fetch" in payload:
-        minimal["body_fetch"] = payload["body_fetch"]
+        hinted = {**minimal, "body_fetch": payload["body_fetch"]}
+        rendered = to_llm(root, hinted, requested=output_format, root_name=root_name)
+        if estimate_tokens(rendered) <= max_tokens:
+            return rendered
     rendered = to_llm(root, minimal, requested=output_format, root_name=root_name)
     if estimate_tokens(rendered) <= max_tokens:
         return rendered
