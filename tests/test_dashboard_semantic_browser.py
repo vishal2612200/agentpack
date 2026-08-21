@@ -6,6 +6,7 @@ import shutil
 import subprocess
 import threading
 import time
+from datetime import datetime, timezone
 from io import BytesIO
 from pathlib import Path
 
@@ -258,7 +259,7 @@ def test_dashboard_learning_recommendations_scope_and_copy(tmp_path: Path, monke
         json.dumps(
             {
                 "type": "task_memory",
-                "timestamp": "2026-07-19T10:00:00+00:00",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "task_id": "task-cli",
                 "task": "Improve CLI output",
                 "status": "done",

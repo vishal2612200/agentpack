@@ -190,7 +190,7 @@ def test_recommendation_history_applies_cooldown(tmp_path) -> None:
     initial = recommend_learning_topics(root, now=NOW)
     recorded = record_recommendation_impressions(initial)
 
-    reranked = recommend_learning_topics(root, now=datetime.now(timezone.utc))
+    reranked = recommend_learning_topics(root, now=NOW.replace(hour=13))
 
     assert not [warning for warning in recorded.warnings if "could not record" in warning]
     assert reranked.topics[0].score_reasons["cooldown"] == -25
