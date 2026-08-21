@@ -24,6 +24,7 @@ from agentpack.architecture.semantic_graph import (
     _manifest_for_files,
     build_semantic_graph,
 )
+from agentpack.architecture.retention import _cache_lock
 from agentpack.core.models import FileInfo
 
 
@@ -97,6 +98,36 @@ class SemanticGraphStore:
         commit_sha: str,
         capabilities: dict[str, str],
         extractor_profile_hash: str,
+        snapshot_path: Path | None = None,
+        cold: bool = False,
+        verify_incremental: bool = False,
+    ) -> GraphBuildResult:
+        """Build while excluding cache pruning from active writes."""
+        with _cache_lock(self.cache_dir):
+            return self._build_unlocked(
+                files,
+                root=root,
+                repo_fingerprint=repo_fingerprint,
+                ref=ref,
+                commit_sha=commit_sha,
+                capabilities=capabilities,
+                extractor_profile_hash=extractor_profile_hash,
+                snapshot_path=snapshot_path,
+                cold=cold,
+                verify_incremental=verify_incremental,
+            )
+
+    def _build_unlocked(
+        self,
+        files: list[FileInfo],
+        *,
+        root: Path,
+        repo_fingerprint: str,
+        ref: str,
+        commit_sha: str,
+        capabilities: dict[str, str],
+        extractor_profile_hash: str,
+        snapshot_path: Path | None = None,
         cold: bool = False,
         verify_incremental: bool = False,
     ) -> GraphBuildResult:
@@ -208,7 +239,13 @@ class SemanticGraphStore:
 
         stats.removed_entities, stats.removed_edges = self._removed_counts(previous_state, snapshot, affected)
         snapshot.cache_stats.update(stats.as_dict())
-        self._persist(ordered_files, repo_fingerprint, extractor_profile_hash, snapshot)
+        self._persist(
+            ordered_files,
+            repo_fingerprint,
+            extractor_profile_hash,
+            snapshot,
+            snapshot_path=snapshot_path,
+        )
         return GraphBuildResult(snapshot=snapshot, stats=stats, affected_paths=tuple(sorted(affected)), mode=stats.build_mode)
 
     @property
@@ -235,7 +272,16 @@ class SemanticGraphStore:
         path = self._state_path(repo_fingerprint, profile, ref)
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
-            snapshot = ArchitectureSnapshot.model_validate(payload.get("snapshot") or {})
+            snapshot_payload = payload.get("snapshot")
+            if not isinstance(snapshot_payload, dict):
+                snapshot_name = payload.get("snapshot_path")
+                if not isinstance(snapshot_name, str) or Path(snapshot_name).name != snapshot_name:
+                    raise ValueError("missing snapshot reference")
+                snapshot_path = self.cache_dir / snapshot_name
+                if snapshot_path.parent != self.cache_dir:
+                    raise ValueError("invalid snapshot reference")
+                snapshot_payload = json.loads(snapshot_path.read_text(encoding="utf-8"))
+            snapshot = ArchitectureSnapshot.model_validate(snapshot_payload)
         except (OSError, ValueError, TypeError):
             self._last_invalid_reason = "cache_invalid"
             return None
@@ -248,6 +294,9 @@ class SemanticGraphStore:
         ):
             self._last_invalid_reason = "schema_changed" if payload.get("schema_version") != self.schema_version or snapshot.schema_version != self.schema_version else "snapshot_mismatch"
             return None
+        # Preserve existing caller contract in memory without re-embedding the
+        # snapshot in state files.
+        payload["snapshot"] = snapshot.model_dump(mode="json")
         graph_manifest = payload.get("graph_manifest")
         if isinstance(graph_manifest, dict) and (
             graph_manifest.get("ref") != ref
@@ -440,7 +489,15 @@ class SemanticGraphStore:
         new_edges = {edge.edge_key for edge in snapshot.edges if edge.evidence and edge.evidence[0].path in affected}
         return len(old_entities - new_entities), len(old_edges - new_edges)
 
-    def _persist(self, files: list[FileInfo], repo_fingerprint: str, profile: str, snapshot: ArchitectureSnapshot) -> None:
+    def _persist(
+        self,
+        files: list[FileInfo],
+        repo_fingerprint: str,
+        profile: str,
+        snapshot: ArchitectureSnapshot,
+        *,
+        snapshot_path: Path | None = None,
+    ) -> None:
         manifest = _load_cache_manifest(self._facts_dir, repo_fingerprint, profile) or _manifest_for_files(files)
         record_keys: dict[str, str] = {}
         entities_by_path: dict[str, list[dict[str, object]]] = {}
@@ -551,6 +608,9 @@ class SemanticGraphStore:
             for path, key in record_keys.items()
             for edge_key in self._record_edge_keys(path, key)
         }
+        if snapshot_path is not None:
+            snapshot_path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write_json(snapshot_path, snapshot.model_dump(mode="json"))
         payload = MaterializedGraphState(
             schema_version=self.schema_version,
             repository_identity=repo_fingerprint,
@@ -561,7 +621,8 @@ class SemanticGraphStore:
             record_keys=record_keys,
             entity_owners=entity_owners,
             edge_owners=edge_owners,
-            snapshot=snapshot.model_dump(mode="json"),
+            snapshot=None if snapshot_path is not None else snapshot.model_dump(mode="json"),
+            snapshot_path=snapshot_path.name if snapshot_path is not None else None,
         ).model_dump(mode="json")
         payload["manifest"] = manifest
         payload["repo_fingerprint"] = repo_fingerprint

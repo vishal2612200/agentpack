@@ -1056,6 +1056,8 @@ evaluate declared invariants without any model call.
 agentpack architecture snapshot --ref HEAD --json
 agentpack architecture snapshot --cold --json
 agentpack architecture snapshot --verify-incremental --json
+agentpack architecture prune --json                 # dry-run
+agentpack architecture prune --yes --json           # delete old cache data
 agentpack architecture diff --base origin/main --head HEAD --json
 agentpack architecture check --base origin/main --head HEAD --json
 agentpack architecture query "token validation" --type symbol --json
@@ -1073,7 +1075,17 @@ reuse file records under `.agentpack/architecture/records/`, persist materialize
 state under `.agentpack/architecture/state/`, and verify incremental output
 against a cold graph when requested. `--verify-incremental` performs that
 equivalence check; normal builds do not pay for a second rebuild. `--cold` bypasses the materialized graph and
-includes build diagnostics in JSON output.
+includes build diagnostics in JSON output. AgentPack keeps one worktree snapshot
+and the newest `architecture.max_cached_refs` immutable ref snapshots (default
+three). State stores a reference to its canonical snapshot instead of another
+full graph copy. `architecture.max_cache_bytes` defaults to 2 GiB; oldest
+optional refs are evicted down to the minimum two when budget is exceeded, then
+paired state and manifests are removed and records/facts are mark-and-sweep
+cleaned. Cache hits refresh entry recency. Active builds and pruning share a
+per-cache lock. Expired entries rebuild cold when needed. Architecture cache
+maintenance runs after cache use; pruning failures never fail graph generation.
+`architecture prune` previews candidates by default; pass `--yes` to remove
+them. Set the byte budget to `0` to disable byte eviction.
 Graph MCP operations return bounded compact evidence by default. Pass
 `detail="full"` to `query_graph`, `get_graph_node`, `get_graph_neighbors`,
 `shortest_path`, or `explain_graph_edge` when complete entity metadata and all
