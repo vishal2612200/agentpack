@@ -163,6 +163,8 @@ def test_byte_budget_does_not_double_evict_count_pruned_refs(tmp_path: Path, mon
         commit = f"{index + 1:040x}"
         _write_state(cache, f"ref-{index}", commit, index + 1, record=f"record-{index}", fact=f"fact-{index}")
         _write(cache / f"{commit}-{SCHEMA}-{PROFILE}.json", "snapshot")
+    _write(cache / "records" / "record-0.json", "record-0" * 2048)
+    _write(cache / "facts" / "fact-0.json", "fact-0" * 2048)
 
     state_paths = sorted((cache / "state").glob("*.json"), key=lambda path: path.stat().st_mtime)
     retained_paths = [
@@ -195,6 +197,29 @@ def test_byte_budget_does_not_double_evict_count_pruned_refs(tmp_path: Path, mon
 
     assert len(list(cache.glob(f"*-{SCHEMA}-{PROFILE}.json"))) == 3
     assert (cache / f"{2:040x}-{SCHEMA}-{PROFILE}.json").exists()
+
+
+def test_state_header_reads_metadata_after_large_sorted_prefix(tmp_path: Path) -> None:
+    state = tmp_path / "state.json"
+    payload = {
+        "edge_owners": {f"edge-{index}": "src/file.py" for index in range(500)},
+        "commit_sha": "1" * 40,
+        "extractor_profile_hash": PROFILE,
+        "ref": "ref-1",
+        "repository_identity": REPO,
+        "schema_version": SCHEMA,
+    }
+    state.write_text(json.dumps(payload, sort_keys=True), encoding="utf-8")
+
+    header = retention_module._read_state_header(state)
+
+    assert header == {
+        "schema_version": str(SCHEMA),
+        "repository_identity": REPO,
+        "ref": "ref-1",
+        "commit_sha": "1" * 40,
+        "extractor_profile_hash": PROFILE,
+    }
 
 
 def test_malformed_current_state_fails_closed_for_dependency_sweep(tmp_path: Path) -> None:

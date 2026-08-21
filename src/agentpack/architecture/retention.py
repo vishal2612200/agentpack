@@ -5,10 +5,11 @@ import re
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterator
+from typing import Any, Iterator
 
 from agentpack.core.config import load_config
 
+fcntl: Any
 try:
     import fcntl
 except ImportError:  # pragma: no cover - Windows uses msvcrt below.
@@ -19,7 +20,6 @@ _SNAPSHOT_NAME = re.compile(
     r"^(?:worktree-[^-]+|[0-9a-f]{7,64})-(?P<schema>\d+)-(?P<profile>[0-9a-f]+)\.json$"
 )
 _STATE_NAME = re.compile(r"^[0-9a-f]+-[0-9a-f]+-[0-9a-f]+\.json$")
-_HEADER_SIZE = 4096
 
 
 @dataclass
@@ -156,16 +156,22 @@ def _cache_identity(
     schema_version: int | None,
     extractor_profile_hash: str | None,
     repo_fingerprint: str | None,
-) -> tuple[int, str | None, str | None]:
-    if schema_version is None or extractor_profile_hash is None or repo_fingerprint is None:
+) -> tuple[int, str, str]:
+    resolved_schema = schema_version
+    resolved_profile = extractor_profile_hash
+    resolved_repo = repo_fingerprint
+    if resolved_schema is None or resolved_profile is None or resolved_repo is None:
         from agentpack.architecture.service import SCHEMA_VERSION, _extractor_profile_hash, _repo_fingerprint
 
-        schema_version = SCHEMA_VERSION if schema_version is None else schema_version
-        extractor_profile_hash = (
-            _extractor_profile_hash() if extractor_profile_hash is None else extractor_profile_hash
+        resolved_schema = SCHEMA_VERSION if resolved_schema is None else resolved_schema
+        resolved_profile = (
+            _extractor_profile_hash() if resolved_profile is None else resolved_profile
         )
-        repo_fingerprint = _repo_fingerprint(root) if repo_fingerprint is None else repo_fingerprint
-    return schema_version, extractor_profile_hash, repo_fingerprint
+        resolved_repo = _repo_fingerprint(root) if resolved_repo is None else resolved_repo
+    assert resolved_schema is not None
+    assert resolved_profile is not None
+    assert resolved_repo is not None
+    return resolved_schema, resolved_profile, resolved_repo
 
 
 def _collect_candidates(
@@ -287,7 +293,34 @@ def _collect_candidates(
     if retained_worktree and worktree_snapshots:
         expected_snapshots.add(worktree_snapshots[0].name)
 
-    if max_cache_bytes:
+    dependency_safe = True
+    live_records: set[str] = set()
+    live_facts: set[str] = set()
+    for state_path in retained_states:
+        dependencies = _state_dependencies(state_path)
+        if dependencies is None:
+            report.skip(state_path)
+            dependency_safe = False
+            continue
+        records, facts = dependencies
+        live_records.update(records)
+        live_facts.update(facts)
+    for state_path, _header in valid_states:
+        if state_path in retained_states:
+            continue
+        dependencies = _state_dependencies(state_path)
+        if dependencies is None:
+            report.skip(state_path)
+            dependency_safe = False
+            continue
+        records, facts = dependencies
+        if dependency_safe:
+            for record_key in records - live_records:
+                candidates.add(cache_dir / "records" / f"{record_key}.json")
+            for fact_name in facts - live_facts:
+                candidates.add(cache_dir / "facts" / fact_name)
+
+    if max_cache_bytes and dependency_safe:
         retained_ref_items = [item for item in ref_states[:keep_refs]]
         while _directory_bytes(cache_dir, candidates) > max_cache_bytes and len(retained_ref_items) > 2:
             state_path, header = retained_ref_items.pop()
@@ -301,6 +334,16 @@ def _collect_candidates(
             expected_snapshots.discard(
                 f"{commit_sha}-{schema_version}-{extractor_profile_hash}.json"
             )
+            dependencies = _state_dependencies(state_path)
+            if dependencies is None:
+                report.skip(state_path)
+                dependency_safe = False
+                break
+            records, facts = dependencies
+            for record_key in records - live_records:
+                candidates.add(cache_dir / "records" / f"{record_key}.json")
+            for fact_name in facts - live_facts:
+                candidates.add(cache_dir / "facts" / fact_name)
     for path in root_candidates:
         if path.name not in expected_snapshots:
             candidates.add(path)
@@ -323,46 +366,53 @@ def _live_cache_keys(
     records_safe = True
     facts_safe = True
     for path in state_paths:
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, ValueError, TypeError):
+        dependencies = _state_dependencies(path)
+        if dependencies is None:
             report.skip(path)
             records_safe = False
             facts_safe = False
             continue
-        record_keys = payload.get("record_keys")
-        if not isinstance(record_keys, dict):
-            report.skip(path)
-            records_safe = False
-        else:
-            live_records.update(str(key) for key in record_keys.values() if key)
-
-        manifest = payload.get("manifest")
-        files = manifest.get("files") if isinstance(manifest, dict) else None
-        if not isinstance(files, dict):
-            report.skip(path)
-            facts_safe = False
-            continue
-        for value in files.values():
-            cache_path = value.get("cache_path") if isinstance(value, dict) else None
-            if cache_path:
-                live_facts.add(Path(str(cache_path)).name)
-            else:
-                facts_safe = False
+        records, facts = dependencies
+        live_records.update(records)
+        live_facts.update(facts)
     return live_records, live_facts, records_safe, facts_safe
+
+
+def _state_dependencies(path: Path) -> tuple[set[str], set[str]] | None:
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
+        return None
+    record_keys = payload.get("record_keys")
+    manifest = payload.get("manifest")
+    files = manifest.get("files") if isinstance(manifest, dict) else None
+    if not isinstance(record_keys, dict) or not isinstance(files, dict):
+        return None
+    records = {str(key) for key in record_keys.values() if key}
+    facts: set[str] = set()
+    for value in files.values():
+        cache_path = value.get("cache_path") if isinstance(value, dict) else None
+        if not cache_path:
+            return None
+        facts.add(Path(str(cache_path)).name)
+    return records, facts
 
 
 def _read_state_header(path: Path) -> dict[str, str] | None:
     try:
-        prefix = path.read_text(encoding="utf-8")[:_HEADER_SIZE]
-    except (OSError, UnicodeDecodeError):
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, ValueError, TypeError):
+        return None
+    if not isinstance(payload, dict):
         return None
     values: dict[str, str] = {}
     for key in ("schema_version", "repository_identity", "ref", "commit_sha", "extractor_profile_hash"):
-        match = re.search(rf'"{key}"\s*:\s*(?:"([^"]*)"|(\d+))', prefix)
-        if match is None:
+        value = payload.get(key)
+        if not isinstance(value, (str, int)):
             return None
-        values[key] = match.group(1) or match.group(2)
+        values[key] = str(value)
     return values
 
 
