@@ -30,12 +30,20 @@ class ProjectOutcomeConfig(BaseModel):
     milestones: list[ProjectMilestoneConfig] = Field(default_factory=list)
 
 
+class ProjectRelationConfig(BaseModel):
+    target: str
+    type: Literal["depends_on", "provides", "consumes", "deploys_to", "shares_component"]
+    label: str = ""
+    evidence: str = ""
+
+
 class ProjectConfig(BaseModel):
     root: str = "."
     ignore_file: str = ".agentignore"
     include_globs: list[str] = Field(default_factory=list)
     exclude_globs: list[str] = Field(default_factory=list)
     display_name: str = ""
+    key: str = Field(default="", pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     purpose: str = ""
     audiences: list[str] = Field(default_factory=list)
     owners: list[str] = Field(default_factory=list)
@@ -43,6 +51,8 @@ class ProjectConfig(BaseModel):
     links: dict[str, str] = Field(default_factory=dict)
     environments: list[str] = Field(default_factory=list)
     status_stale_days: int = Field(default=14, ge=1, le=3650)
+    capabilities: list[str] = Field(default_factory=list)
+    relations: list[ProjectRelationConfig] = Field(default_factory=list)
     outcomes: list[ProjectOutcomeConfig] = Field(default_factory=list)
 
 

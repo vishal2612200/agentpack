@@ -47,7 +47,7 @@ import {
   useReactFlow
 } from "@xyflow/react";
 import agentPackSymbolUrl from "../../../docs/assets/agentpack-symbol.png";
-import { apiUrl, authHeaders, dashboardToken, loadArchitecturePRMap, loadDashboardImpact, loadDashboardPayload, loadLearningProfile, loadLearningRecommendations, loadProjectOverview, startLearningSession, updateLearningProfile, type ArchitecturePRMapPayload, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload } from "./data/loadDashboard";
+import { apiUrl, authHeaders, dashboardToken, loadArchitecturePRMap, loadDashboardImpact, loadDashboardPayload, loadLearningProfile, loadLearningRecommendations, loadPortfolio, loadProjectOverview, startLearningSession, updateLearningProfile, type ArchitecturePRMapPayload, type DashboardActionInspectionPayload, type DashboardImpactPayload, type DashboardPayload, type PortfolioPayload } from "./data/loadDashboard";
 import type { ActionHistoryRow, DashboardAnalytics, DashboardEdge, DashboardGraph, DashboardMap, DashboardNode, DashboardSnapshot, LearnerProfile, LearningRecommendationSet, LearningScope, LearningSession, MapBuilding, MapRoad, PresentationMode, ProjectOverview, SemanticGraphSummary } from "./data/schema";
 import { ProjectActivityView } from "./components/dashboard/project/ProjectActivityView";
 import { DashboardCommandPalette, type PaletteTarget } from "./components/dashboard/CommandPalette";
@@ -57,6 +57,7 @@ import { ProjectKnowledgeSummary } from "./components/dashboard/project/ProjectK
 import { ProjectOverviewView } from "./components/dashboard/project/ProjectOverviewView";
 import { ProjectRoadmapView } from "./components/dashboard/project/ProjectRoadmapView";
 import { ProjectWorkView } from "./components/dashboard/project/ProjectWorkView";
+import { PortfolioView } from "./components/dashboard/PortfolioView";
 import { ProjectViewState } from "./components/dashboard/project/project-shared";
 import { ConfirmCommandDialog, ErrorState, LoadingState, Metric, Panel, StateSurface, StatusPill, TechnicalDetail, type CommandInspection, type PendingCommand } from "./components/dashboard/shared";
 import { cachedStatusToOverview, cachedStatusToPayload, clearDashboardCache, readDashboardCache, writeDashboardCache } from "./data/dashboardCache";
@@ -75,6 +76,7 @@ interface TerminalSessionState {
 }
 
 const primaryViews: Array<{ id: View; label: string; icon: typeof Activity }> = [
+  { id: "portfolio", label: "Atlas", icon: Network },
   { id: "home", label: "Overview", icon: Building2 },
   { id: "roadmap", label: "Roadmap", icon: Flag },
   { id: "tasks", label: "Work", icon: ClipboardList },
@@ -105,6 +107,19 @@ const advancedViewGroups: Array<{ label: string; views: Array<{ id: View; label:
 const advancedViews = advancedViewGroups.flatMap((group) => group.views);
 const inspectorViews = new Set<View>(["graph", "context", "files", "cockpit"]);
 
+function readPortfolioCache(): PortfolioPayload | null {
+  try {
+    const raw = window.localStorage.getItem("agentpack.dashboard.portfolio.last-known.v1");
+    if (!raw) return null;
+    const value = JSON.parse(raw) as { cached_at?: string; payload?: PortfolioPayload };
+    const cachedAt = value.cached_at ? Date.parse(value.cached_at) : 0;
+    if (!value.payload || !cachedAt || Date.now() - cachedAt > 7 * 24 * 60 * 60 * 1000) return null;
+    return value.payload;
+  } catch {
+    return null;
+  }
+}
+
 export function DashboardWorkspace() {
   const expectedProjectId = window.__AGENTPACK_PROJECT_ID__ && !window.__AGENTPACK_PROJECT_ID__.startsWith("__AGENTPACK_") ? window.__AGENTPACK_PROJECT_ID__ : "";
   const initialCacheRef = useRef(readDashboardCache(expectedProjectId));
@@ -116,8 +131,10 @@ export function DashboardWorkspace() {
   const setSelectedId = (value: string | ((current: string) => string)) => dispatch({ type: "select", value: typeof value === "function" ? value(dashboardState.selectedEntityId) : value });
   const setPresentationMode = (value: PresentationMode) => dispatch({ type: "presentation", value });
   const [payload, setPayload] = useState<DashboardPayload | null>(() => initialCacheRef.current ? cachedStatusToPayload(initialCacheRef.current.status) : null);
+  const [portfolio, setPortfolio] = useState<PortfolioPayload | null>(() => readPortfolioCache());
   const [payloadDetail, setPayloadDetail] = useState<"home" | "full">("home");
   const [projectOverview, setProjectOverview] = useState<ProjectOverview | null>(() => initialCacheRef.current ? cachedStatusToOverview(initialCacheRef.current.status) : null);
+  const [selectedProjectId, setSelectedProjectId] = useState("");
   const [projectWorkspace, setProjectWorkspace] = useState("all");
   const [projectLoading, setProjectLoading] = useState(false);
   const [projectError, setProjectError] = useState("");
@@ -150,7 +167,7 @@ export function DashboardWorkspace() {
     setPayload(loaded);
     const overview = projectWorkspaceRef.current === "all"
       ? loaded.snapshot.project_overview || null
-      : await loadProjectOverview(projectWorkspaceRef.current);
+      : await loadProjectOverview(projectWorkspaceRef.current, selectedProjectId);
     setProjectOverview(overview);
     setConnection("live");
     const observed = new Date().toISOString();
@@ -163,13 +180,29 @@ export function DashboardWorkspace() {
     return loaded;
   };
 
-  const handleProjectWorkspaceChange = async (value: string) => {
+  const refreshPortfolio = async () => {
+    const loaded = await loadPortfolio();
+    setPortfolio(loaded);
+    try {
+      const safe = { ...loaded, projects: loaded.projects.map((project) => ({ ...project, workspaces: project.workspaces.map((workspace) => ({ ...workspace, path: "" })) })) };
+      window.localStorage.setItem("agentpack.dashboard.portfolio.last-known.v1", JSON.stringify({ cached_at: new Date().toISOString(), payload: safe }));
+    } catch { /* storage is optional */ }
+    return loaded;
+  };
+
+  const refreshGithubEvidence = async () => {
+    const response = await fetch(apiUrl("/api/dashboard/v2/portfolio/github/refresh"), { method: "POST", headers: { "Content-Type": "application/json", ...authHeaders() }, body: JSON.stringify(selectedProjectId ? { project_id: selectedProjectId } : {}) });
+    if (!response.ok) throw new Error(`GitHub evidence refresh failed: ${response.status}`);
+    await refreshPortfolio();
+  };
+
+  const handleProjectWorkspaceChange = async (value: string, projectId = selectedProjectId) => {
     projectWorkspaceRef.current = value;
     setProjectWorkspace(value);
     setProjectLoading(true);
     setProjectError("");
     try {
-      setProjectOverview(await loadProjectOverview(value));
+      setProjectOverview(await loadProjectOverview(value, projectId));
     } catch (caught) {
       setProjectError(caught instanceof Error ? caught.message : "Project scope could not be loaded.");
     } finally {
@@ -183,7 +216,7 @@ export function DashboardWorkspace() {
       return;
     }
     setProjectLoading(true);
-    loadProjectOverview(projectWorkspaceRef.current)
+    loadProjectOverview(projectWorkspaceRef.current, selectedProjectId)
       .then(setProjectOverview)
       .catch((caught: unknown) => setProjectError(caught instanceof Error ? caught.message : "Project scope could not be refreshed."))
       .finally(() => setProjectLoading(false));
@@ -204,7 +237,7 @@ export function DashboardWorkspace() {
   useEffect(() => {
     const readingTimer = window.setTimeout(() => setLoadingPhase("Reading project and workspace evidence."), 2_000);
     const waitingTimer = window.setTimeout(() => setLoadingPhase("Still waiting for the local dashboard server."), 6_000);
-    refreshDashboard("home")
+    Promise.all([refreshDashboard("home"), refreshPortfolio()])
       .catch((err: unknown) => {
         setConnection(initialCacheRef.current ? "stale" : "unavailable");
         setError(err instanceof Error ? err.message : "Failed to load dashboard data");
@@ -316,10 +349,11 @@ export function DashboardWorkspace() {
       setStatusOpen(true);
       return;
     }
+    const scopedBody = { action, ...body, ...(selectedProjectId ? { project_id: selectedProjectId } : {}) };
     const inspectionResponse = await fetch(apiUrl("/api/dashboard/v2/actions/inspect"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ action, ...body })
+      body: JSON.stringify(scopedBody)
     });
     const inspectionPayload = await inspectionResponse.json() as { inspection?: DashboardActionInspectionPayload; error?: string };
     if (!inspectionResponse.ok || !inspectionPayload.inspection) {
@@ -345,7 +379,7 @@ export function DashboardWorkspace() {
     const response = await fetch(apiUrl("/api/dashboard/v2/actions/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify({ action, ...body })
+      body: JSON.stringify(scopedBody)
     });
     const result = await response.json();
     if (response.status === 409 && result.inspection) {
@@ -602,6 +636,8 @@ export function DashboardWorkspace() {
           {cachedOnly ? <StateSurface state={{ status: "stale", message: error || `Showing stored project status from ${cachedAt || payload.snapshot.generated_at || "an earlier session"}.`, retryable: true }} onRetry={retryDashboard} /> : <StateSurface state={dashboardState.resources.workspace || { status: "ready" }} onRetry={() => void refreshAfterSuccessfulAction()} />}
           {projectLoading && ["home", "roadmap", "health", "activity"].includes(view) ? <ProjectViewState status="loading" message="Loading the selected project workspace..." /> : null}
           {projectError && ["home", "roadmap", "health", "activity"].includes(view) ? <ProjectViewState status="error" message={projectError} onRetry={() => void handleProjectWorkspaceChange(projectWorkspace)} /> : null}
+          {view === "portfolio" && portfolio ? <PortfolioView portfolio={portfolio} onRefreshGithub={refreshGithubEvidence} onOpenProject={(project) => { window.__AGENTPACK_SELECTED_PROJECT_ID__ = project.project_id; setSelectedProjectId(project.project_id); setView("home"); if (project.workspaces[0]) void handleProjectWorkspaceChange(project.workspaces[0].workspace_id, project.project_id); }} /> : null}
+          {view === "portfolio" && !portfolio ? <ProjectViewState status="empty" message="Portfolio metadata is not available yet." onRetry={() => void refreshPortfolio()} /> : null}
           {view === "home" && projectOverview ? <ProjectOverviewView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} offline={cachedOnly} mode={presentationMode} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} onNavigate={(nextView, entityId) => handlePaletteNavigate({ view: nextView, entityId })} /> : null}
           {view === "home" && !projectOverview ? <ProjectViewState status="empty" message="Project overview is not available yet." /> : null}
           {view === "roadmap" && projectOverview ? <ProjectRoadmapView overview={projectOverview} workspace={projectWorkspace} loading={projectLoading} onWorkspaceChange={(value) => void handleProjectWorkspaceChange(value)} onOverviewChange={handleProjectOverviewMutation} /> : null}

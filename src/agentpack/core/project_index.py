@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import os
 from datetime import datetime, timezone
@@ -8,6 +7,7 @@ from pathlib import Path
 from typing import Any
 
 from agentpack.core import git
+from agentpack.session.identity import project_id as canonical_project_id
 
 
 PROJECT_INDEX_SCHEMA_VERSION = 1
@@ -24,8 +24,8 @@ def project_index_path() -> Path:
 
 
 def project_id(root: Path) -> str:
-    resolved = str(root.expanduser().resolve())
-    return hashlib.sha256(resolved.encode("utf-8")).hexdigest()[:16]
+    """Return canonical repository identity; retain function for callers."""
+    return canonical_project_id(root)
 
 
 def load_project_index(path: Path | None = None) -> list[dict[str, Any]]:
@@ -51,13 +51,14 @@ def load_project_index(path: Path | None = None) -> list[dict[str, Any]]:
         path_value = str(item.get("path") or "").strip()
         if not path_value:
             continue
-        rows.append(
+        row = dict(
             dict(
                 item,
                 path=path_value,
                 project_id=str(item.get("project_id") or project_id(Path(path_value))),
             )
         )
+        rows.append(row)
     return rows
 
 
@@ -82,8 +83,13 @@ def register_project(root: Path, path: Path | None = None, *, now: datetime | No
 
 def _project_index_row(root: Path, timestamp: str, previous: dict[str, Any]) -> dict[str, Any]:
     is_git = git.is_git_repo(root)
+    try:
+        from agentpack.core.config import load_config
+        profile = load_config(root).project
+    except Exception:
+        profile = None
     return {
-        "project_id": str(previous.get("project_id") or project_id(root)),
+        "project_id": project_id(root),
         "path": str(root),
         "name": root.name or str(root),
         "first_seen_at": str(previous.get("first_seen_at") or timestamp),
@@ -91,6 +97,14 @@ def _project_index_row(root: Path, timestamp: str, previous: dict[str, Any]) -> 
         "branch": git.current_branch(root) or "" if is_git else "",
         "git_sha": (git.current_sha(root) or "")[:12] if is_git else "",
         "agentpack_config": str(root / ".agentpack" / "config.toml"),
+        "project_key": profile.key if profile else "",
+        "display_name": profile.display_name if profile else "",
+        "purpose": profile.purpose if profile else "",
+        "owners": profile.owners[:20] if profile else [],
+        "capabilities": profile.capabilities[:50] if profile else [],
+        "links": dict(list(profile.links.items())[:20]) if profile else {},
+        "stage": profile.stage if profile else "",
+        "relations": [item.model_dump(mode="json") for item in profile.relations[:50]] if profile else [],
     }
 
 

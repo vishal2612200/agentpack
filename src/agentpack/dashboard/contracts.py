@@ -166,6 +166,8 @@ class DashboardV2ActionRequest(BaseModel):
     guard: bool = False
     global_: bool = Field(default=False, alias="global")
     confirmed: bool = False
+    project_id: str = ""
+    workspace_id: str = ""
 
 
 class DashboardV2HandoffOperationRequest(BaseModel):
@@ -198,6 +200,7 @@ class ProjectProfilePatch(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     display_name: str | None = Field(default=None, max_length=160)
+    key: str | None = Field(default=None, max_length=64, pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
     purpose: str | None = Field(default=None, max_length=2000)
     audiences: list[str] | None = Field(default=None, max_length=20)
     owners: list[str] | None = Field(default=None, max_length=20)
@@ -205,6 +208,8 @@ class ProjectProfilePatch(BaseModel):
     links: dict[str, str] | None = Field(default=None, max_length=20)
     environments: list[str] | None = Field(default=None, max_length=20)
     status_stale_days: int | None = Field(default=None, ge=1, le=3650)
+    capabilities: list[str] | None = Field(default=None, max_length=50)
+    relations: list[dict[str, Any]] | None = Field(default=None, max_length=50)
     outcomes: list[ProjectOutcomeInput] | None = Field(default=None, max_length=50)
 
 
@@ -214,6 +219,8 @@ class ProjectProfileUpdateRequest(BaseModel):
     mutation_id: str = Field(min_length=1, max_length=64, pattern=r"^[A-Za-z0-9][A-Za-z0-9._-]*$")
     expected_revision: str = Field(min_length=64, max_length=64, pattern=r"^[a-f0-9]{64}$")
     profile: ProjectProfilePatch
+    project_id: str = ""
+    workspace_id: str = ""
 
 
 class ProjectEventEvidenceInput(BaseModel):
@@ -249,6 +256,8 @@ class ProjectEventRequest(BaseModel):
     decision: str = Field(default="", max_length=2000)
     outcome_id: str = Field(default="", max_length=64)
     evidence: list[ProjectEventEvidenceInput] = Field(default_factory=list, max_length=20)
+    project_id: str = ""
+    workspace_id: str = ""
 
 
 class LearningProfileUpdateRequest(BaseModel):
@@ -358,12 +367,15 @@ class DashboardV2Error(BaseModel):
 
 class CachedProjectProfile(BaseModel):
     display_name: str = ""
+    key: str = ""
     purpose: str = ""
     audiences: list[str] = Field(default_factory=list)
     owners: list[str] = Field(default_factory=list)
     stage: str = ""
     environments: list[str] = Field(default_factory=list)
+    links: dict[str, str] = Field(default_factory=dict)
     status_stale_days: int = 14
+    capabilities: list[str] = Field(default_factory=list)
 
 
 class CachedProjectStatus(BaseModel):
@@ -372,6 +384,8 @@ class CachedProjectStatus(BaseModel):
     generated_at: str
     branch: str = ""
     git_sha: str = ""
+    task_count: int = 0
+    agent_count: int = 0
     profile: CachedProjectProfile
     metrics: ProjectMetrics
     outcomes: list[ProjectOutcomeState] = Field(default_factory=list)

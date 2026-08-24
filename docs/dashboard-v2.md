@@ -16,6 +16,13 @@ The server validates its payloads through the Python models in
 `src/agentpack/dashboard/contracts.py`; clients should treat unknown optional
 fields as forward-compatible.
 
+Engineering Atlas portfolio is exposed at `GET /api/dashboard/v2/portfolio`.
+It reads global index rows and bounded local status caches, groups linked
+worktrees by canonical project identity, and returns bounded project,
+relation, attention, and activity collections. Use `POST
+/api/dashboard/v2/portfolio/github/refresh` for explicit read-only GitHub
+evidence refresh. Normal portfolio reads do not invoke GitHub.
+
 ## Workspace experience
 
 ![AgentPack project overview with roadmap, independent health, risks, decisions, and evidence coverage](assets/dashboard/workspace-desktop.png)
@@ -32,6 +39,8 @@ All endpoints are loopback-only by default and require the dashboard token in
 | Method | Path | Purpose |
 |---|---|---|
 | `GET` | `/api/dashboard/v2?detail=home\|full` | Workspace envelope, task, graph/map data, agent state, and impact summary |
+| `GET` | `/api/dashboard/v2/portfolio` | Local-first Engineering Atlas portfolio envelope |
+| `POST` | `/api/dashboard/v2/portfolio/github/refresh` | Explicit bounded GitHub evidence refresh |
 | `GET` | `/api/dashboard/v2/impact?query=&relationship=&language=&confidence=&limit=200` | Bounded Tree-sitter impact entities, relationships, evidence, and affected tests |
 | `GET` | `/api/dashboard/v2/evidence` | Context, selected files, task map, observer, and timeline evidence |
 | `GET` | `/api/dashboard/v2/actions` | Suggested actions and the typed action catalog |

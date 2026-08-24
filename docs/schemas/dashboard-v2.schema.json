@@ -1787,12 +1787,15 @@
       "title": "CachedProjectProfile",
       "properties": {
         "display_name": {"type": "string", "default": ""},
+        "key": {"type": "string", "default": ""},
         "purpose": {"type": "string", "default": ""},
         "audiences": {"type": "array", "items": {"type": "string"}},
         "owners": {"type": "array", "items": {"type": "string"}},
         "stage": {"type": "string", "default": ""},
         "environments": {"type": "array", "items": {"type": "string"}},
-        "status_stale_days": {"type": "integer", "default": 14}
+        "status_stale_days": {"type": "integer", "default": 14},
+        "capabilities": {"type": "array", "items": {"type": "string"}},
+        "links": {"type": "object", "additionalProperties": {"type": "string"}}
       }
     },
     "CachedProjectStatus": {
@@ -1805,6 +1808,8 @@
         "generated_at": {"type": "string"},
         "branch": {"type": "string", "default": ""},
         "git_sha": {"type": "string", "default": ""},
+        "task_count": {"type": "integer", "minimum": 0, "default": 0},
+        "agent_count": {"type": "integer", "minimum": 0, "default": 0},
         "profile": {"$ref": "#/$defs/CachedProjectProfile"},
         "metrics": {"$ref": "#/$defs/ProjectMetrics"},
         "outcomes": {"type": "array", "items": {"$ref": "#/$defs/ProjectOutcomeState"}},
@@ -3019,6 +3024,10 @@
     "ProjectProfilePatch": {
       "additionalProperties": false,
       "properties": {
+        "key": {
+          "anyOf": [{"maxLength": 64, "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$", "type": "string"}, {"type": "null"}],
+          "default": null
+        },
         "display_name": {
           "anyOf": [
             {
@@ -3136,6 +3145,14 @@
           "default": null,
           "title": "Status Stale Days"
         },
+        "capabilities": {
+          "anyOf": [{"items": {"type": "string"}, "maxItems": 50, "type": "array"}, {"type": "null"}],
+          "default": null
+        },
+        "relations": {
+          "anyOf": [{"items": {"type": "object"}, "maxItems": 50, "type": "array"}, {"type": "null"}],
+          "default": null
+        },
         "outcomes": {
           "anyOf": [
             {
@@ -3175,6 +3192,14 @@
         },
         "profile": {
           "$ref": "#/$defs/ProjectProfilePatch"
+        },
+        "project_id": {
+          "default": "",
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": "",
+          "type": "string"
         }
       },
       "required": [
@@ -3309,6 +3334,14 @@
           "maxItems": 20,
           "title": "Evidence",
           "type": "array"
+        },
+        "project_id": {
+          "default": "",
+          "type": "string"
+        },
+        "workspace_id": {
+          "default": "",
+          "type": "string"
         }
       },
       "required": [

@@ -19,7 +19,7 @@ from typing import Any
 from pydantic import BaseModel, ValidationError
 
 from agentpack.core import git
-from agentpack.core.project_index import register_project
+from agentpack.core.project_index import load_project_index, register_project
 from agentpack.core.handoff import HandoffError, accept_handoff, release_handoff
 from agentpack.core.task_freshness import write_task_md
 from agentpack.dashboard.action_history import read_action_history, record_dashboard_action
@@ -29,6 +29,8 @@ from agentpack.dashboard.collectors import build_project_dashboard_snapshot, sem
 from agentpack.dashboard.graph import build_dashboard_graph
 from agentpack.dashboard.map import build_dashboard_map
 from agentpack.dashboard.models import DashboardFeedback
+from agentpack.dashboard.portfolio import build_portfolio_payload, write_status_cache
+from agentpack.dashboard.github import refresh_github_evidence
 from agentpack.dashboard.project_state import analytics_for_range, build_project_home_snapshot, create_dashboard_task, get_project_task, record_feedback, task_detail_payload, task_event_is_in_scope, task_timeline, update_task
 from agentpack.dashboard.project_overview import (
     ProjectConfigConflict,
@@ -55,7 +57,7 @@ from agentpack.learning.service import (
 )
 from agentpack.learning.sessions import LearningProofConflictError
 from agentpack.session.events import record_event
-from agentpack.session.identity import repository_path
+from agentpack.session.identity import project_id as canonical_project_id, repository_path, workspace_id as canonical_workspace_id
 from agentpack.dashboard.terminal import TerminalEvent, TerminalSession, TerminalSessionManager
 from agentpack.dashboard.v2 import (
     build_dashboard_v2_actions,
@@ -84,6 +86,14 @@ from agentpack.dashboard.contracts import (
 
 DEFAULT_DASHBOARD_HOST = "127.0.0.1"
 DEFAULT_DASHBOARD_PORT = 8765
+
+
+def _path_is_within(candidate: Path, root: Path) -> bool:
+    try:
+        candidate.relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
 
 
 def _bounded_query_int(query: dict[str, list[str]], key: str, default: int, maximum: int) -> int:
@@ -139,12 +149,59 @@ class DashboardServerState:
     root: Path
     token: str = field(default_factory=lambda: secrets.token_urlsafe(24))
     terminal: TerminalSessionManager = field(init=False)
+    terminal_managers: dict[str, TerminalSessionManager] = field(init=False, repr=False)
+    _initialized: bool = field(init=False, default=False, repr=False)
+
+    def __setattr__(self, name: str, value: object) -> None:
+        if name == "root" and getattr(self, "_initialized", False):
+            raise AttributeError("DashboardServerState.launch_root is immutable")
+        object.__setattr__(self, name, value)
     lock: threading.RLock = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         self.root = self.root.resolve()
         self.lock = threading.RLock()
-        self.terminal = TerminalSessionManager(self.root, on_event=self._record_terminal_event)
+        self.terminal_managers = {}
+        self.terminal = self._manager_for(self.root)
+        self._initialized = True
+
+    @property
+    def launch_root(self) -> Path:
+        return self.root
+
+    def _manager_for(self, root: Path) -> TerminalSessionManager:
+        identity = canonical_project_id(root)
+        manager = self.terminal_managers.get(identity)
+        if manager is None:
+            manager = TerminalSessionManager(root, on_event=self._record_terminal_event)
+            self.terminal_managers[identity] = manager
+        return manager
+
+    def resolve_project(self, requested: str = "", workspace: str = "", cwd: str = "") -> Path:
+        selected: Path | None = self.root
+        if requested:
+            selected = None
+            for row in load_project_index():
+                candidate = Path(str(row.get("path") or "")).expanduser()
+                identity = canonical_project_id(candidate) if candidate.exists() else str(row.get("project_id") or "")
+                if identity == requested:
+                    selected = candidate.resolve()
+                    break
+            if selected is None or not selected.exists():
+                raise ValueError("unknown or unavailable project_id")
+        if selected is None:
+            raise ValueError("unknown or unavailable project_id")
+        if workspace:
+            for row in load_project_index():
+                candidate = Path(str(row.get("path") or "")).expanduser()
+                if candidate.exists() and canonical_project_id(candidate) == canonical_project_id(selected) and canonical_workspace_id(candidate, current_project_id=canonical_project_id(selected)) == workspace:
+                    selected = candidate.resolve()
+                    break
+            else:
+                raise ValueError("workspace_id is not registered for selected project")
+        if cwd and not _path_is_within(Path(cwd).expanduser().resolve(), selected):
+            raise ValueError("cwd is outside selected project workspace")
+        return selected
 
     def payload(self) -> dict[str, Any]:
         with self.lock:
@@ -153,12 +210,20 @@ class DashboardServerState:
         graph = build_dashboard_graph(snapshot, root)
         dashboard_map = build_dashboard_map(snapshot, graph)
         action_history = read_action_history(root)
-        return {
+        payload = {
             "snapshot": snapshot.model_dump(mode="json"),
             "graph": graph.model_dump(mode="json"),
             "map": dashboard_map.model_dump(mode="json"),
             "action_history": [row.model_dump(mode="json") for row in action_history],
         }
+        cached = payload.get("cached_project_status")
+        if cached:
+            try:
+                from agentpack.dashboard.contracts import CachedProjectStatus
+                write_status_cache(CachedProjectStatus.model_validate(cached))
+            except (OSError, ValueError):
+                pass
+        return payload
 
     def home_payload(self) -> dict[str, Any]:
         with self.lock:
@@ -180,14 +245,13 @@ class DashboardServerState:
             raise ValueError("project path must be an existing directory")
         if not _valid_project_root(resolved):
             raise ValueError("project path must contain .git or .agentpack/config.toml")
-        with self.lock:
-            self.root = resolved
-            self.terminal = TerminalSessionManager(resolved, on_event=self._record_terminal_event)
         try:
             register_project(resolved)
         except Exception:
             pass
-        return self.payload()
+        payload = build_dashboard_v2_payload(resolved, detail="home")
+        payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(resolved)]
+        return payload
 
     def _record_terminal_event(self, session: TerminalSession, event: TerminalEvent) -> None:
         status = event.status or session.status
@@ -286,7 +350,21 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             detail = urllib.parse.parse_qs(parsed.query).get("detail", ["home"])[0]
             payload = build_dashboard_v2_payload(self.server.state.root, detail=detail)
             payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]
+            cached = payload.get("cached_project_status")
+            if cached:
+                try:
+                    from agentpack.dashboard.contracts import CachedProjectStatus
+                    write_status_cache(CachedProjectStatus.model_validate(cached))
+                except (OSError, ValueError):
+                    pass
             self._send_json(payload)
+            return
+        if parsed.path == "/api/dashboard/v2/portfolio":
+            if not self._authorized(parsed):
+                self._send_v2_auth_error()
+                return
+            query = urllib.parse.parse_qs(parsed.query)
+            self._send_json(build_portfolio_payload(self.server.state.root, include_inferred=query.get("infer", ["1"])[0] != "0"))
             return
         if parsed.path == "/api/learning/recommendations":
             if not self._authorized(parsed):
@@ -313,9 +391,13 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             query = urllib.parse.parse_qs(parsed.query)
             workspace = query.get("workspace", ["all"])[0]
             try:
-                overview = build_project_overview(self.server.state.root, workspace=workspace)
+                root = self.server.state.resolve_project(query.get("project_id", [""])[0], query.get("workspace_id", [""])[0])
+                overview = build_project_overview(root, workspace=workspace)
             except ProjectValidationError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
                 return
             self._send_json(overview.model_dump(mode="json"))
             return
@@ -544,10 +626,10 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if request is None:
                 return
             assert isinstance(request, ProjectProfileUpdateRequest)
-            root = self.server.state.root
+            root = self.server.state.resolve_project(request.project_id, request.workspace_id)
             try:
                 with self.server.state.lock:
-                    root = self.server.state.root
+                    root = self.server.state.resolve_project(request.project_id, request.workspace_id)
                     profile, duplicate = apply_project_profile_update(
                         root,
                         mutation_id=request.mutation_id,
@@ -571,6 +653,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             except ProjectValidationError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
                 return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
+                return
             self._send_json(
                 {
                     "profile": profile.model_dump(mode="json"),
@@ -586,7 +671,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             assert isinstance(request, ProjectEventRequest)
             try:
                 with self.server.state.lock:
-                    root = _selected_project_root(self.server.state.root, request.workspace)
+                    root = self.server.state.resolve_project(request.project_id, request.workspace_id)
+                    if request.workspace and request.workspace != "all":
+                        root = _selected_project_root(root, request.workspace)
                     event, duplicate = record_project_status_event(
                         root,
                         request.model_dump(mode="json"),
@@ -597,6 +684,9 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
                 return
             except ProjectValidationError as exc:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
+                return
+            except ValueError as exc:
+                self._send_json({"error": str(exc)}, status=HTTPStatus.CONFLICT)
                 return
             self._send_json(
                 {
@@ -618,6 +708,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if request is not None:
                 self._run_typed_action(request.model_dump(mode="json", by_alias=True), v2=True)
             return
+        if parsed.path == "/api/dashboard/v2/portfolio/github/refresh":
+            payload = self._read_json()
+            selected = str(payload.get("project_id") or "")
+            portfolio = build_portfolio_payload(self.server.state.root, include_inferred=False)
+            if selected and selected not in {str(item.get("project_id") or "") for item in portfolio.get("projects", [])}:
+                self._send_json(_dashboard_v2_error("unknown project_id", kind="repository_mismatch"), status=HTTPStatus.CONFLICT)
+                return
+            self._send_json(refresh_github_evidence(portfolio.get("projects", []), selected_project_id=selected))
+            return
         if parsed.path == "/api/dashboard/v2/actions/inspect":
             request = self._read_v2_model(DashboardV2ActionRequest)
             if request is None:
@@ -625,7 +724,8 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             payload = request.model_dump(mode="json", by_alias=True)
             action_id = request.action.strip()
             try:
-                inspection = build_dashboard_v2_action_inspection(self.server.state.root, action_id, payload)
+                root = self.server.state.resolve_project(request.project_id, request.workspace_id, request.cwd)
+                inspection = build_dashboard_v2_action_inspection(root, action_id, payload)
             except (DashboardActionError, ValueError) as exc:
                 self._send_json(_dashboard_v2_error(str(exc), kind="invalid_action"), status=HTTPStatus.BAD_REQUEST)
                 return
@@ -898,13 +998,20 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             else:
                 self._send_json({"error": str(exc)}, status=HTTPStatus.BAD_REQUEST)
             return
-        self._start_terminal_command(command, cwd=str(payload.get("cwd") or "") or None, confirmed=bool(payload.get("confirmed")), v2=v2)
-
-    def _start_terminal_command(self, command: str, *, cwd: str | None = None, confirmed: bool = False, v2: bool = False) -> None:
         try:
-            session = self.server.state.terminal.start(command, cwd=cwd, confirmed=confirmed)
+            root = self.server.state.resolve_project(str(payload.get("project_id") or ""), str(payload.get("workspace_id") or ""), str(payload.get("cwd") or ""))
+        except ValueError as exc:
+            payload_error = _dashboard_v2_error(str(exc), kind="repository_mismatch") if v2 else {"error": str(exc)}
+            self._send_json(payload_error, status=HTTPStatus.CONFLICT)
+            return
+        self._start_terminal_command(command, root=root, cwd=str(payload.get("cwd") or "") or None, confirmed=bool(payload.get("confirmed")), v2=v2)
+
+    def _start_terminal_command(self, command: str, *, root: Path | None = None, cwd: str | None = None, confirmed: bool = False, v2: bool = False) -> None:
+        try:
+            manager = self.server.state._manager_for(root or self.server.state.root)
+            session = manager.start(command, cwd=cwd, confirmed=confirmed)
         except PermissionError:
-            inspection = self.server.state.terminal.inspect(command, cwd)
+            inspection = manager.inspect(command, cwd)
             payload = _dashboard_v2_error("confirmation required", kind="action_conflict") if v2 else {"error": "confirmation required", "command": command, "inspection": inspection.model_dump()}
             self._send_json(payload, status=HTTPStatus.CONFLICT)
             return
@@ -977,7 +1084,11 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
 
     def _session_from_path(self, path: str, *, suffix: str):
         session_id = path.removeprefix("/api/terminal/").removesuffix(suffix).strip("/")
-        return self.server.state.terminal.get(session_id)
+        for manager in self.server.state.terminal_managers.values():
+            session = manager.get(session_id)
+            if session is not None:
+                return session
+        return None
 
 
 def create_dashboard_server(root: Path, *, host: str = DEFAULT_DASHBOARD_HOST, port: int = DEFAULT_DASHBOARD_PORT) -> DashboardHTTPServer:
