@@ -251,6 +251,8 @@ class DashboardWorkspaceRecord(BaseModel):
     path: str
     branch: str = ""
     git_sha: str = ""
+    is_current: bool = False
+    updated_at: str = ""
 
 
 class PortfolioProject(BaseModel):
@@ -320,8 +322,6 @@ class PortfolioPayload(BaseModel):
     relations: list[PortfolioRelation] = Field(default_factory=list)
     attention: list[dict[str, Any]] = Field(default_factory=list)
     recent_activity: list[PortfolioActivity] = Field(default_factory=list)
-    is_current: bool = False
-    updated_at: str = ""
 
 
 class DashboardTaskRecord(BaseModel):

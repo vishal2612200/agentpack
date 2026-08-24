@@ -12,6 +12,7 @@ from types import SimpleNamespace
 import pytest
 from jsonschema import Draft202012Validator
 
+from agentpack.core.project_index import project_id, register_project
 from agentpack.dashboard.server import _dashboard_check_kind, create_dashboard_server
 from agentpack.dashboard.models import ThreadRow
 from agentpack.dashboard.v2 import (
@@ -106,6 +107,31 @@ def test_dashboard_v2_envelope_is_versioned_and_hides_handoff_uuid(tmp_path: Pat
             assert unauthorized["kind"] == "unauthorized"
         else:
             raise AssertionError("v2 dashboard endpoint must require its dashboard token")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+def test_dashboard_v2_loads_registered_project_scope(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
+    launch = tmp_path / "launch"
+    target = tmp_path / "target"
+    for root, name in ((launch, "Launch project"), (target, "Target project")):
+        (root / ".agentpack").mkdir(parents=True)
+        (root / ".agentpack" / "config.toml").write_text(f'[project]\ndisplay_name = "{name}"\n', encoding="utf-8")
+    register_project(target)
+
+    server = create_dashboard_server(launch, port=0)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        payload = _request(
+            f"http://127.0.0.1:{server.server_address[1]}/api/dashboard/v2?detail=home&project_id={project_id(target)}",
+            server.state.token,
+        )
+        assert payload["snapshot"]["project"]["path"] == str(target.resolve())
+        assert payload["snapshot"]["project_overview"]["profile"]["display_name"] == "Target project"
     finally:
         server.shutdown()
         server.server_close()

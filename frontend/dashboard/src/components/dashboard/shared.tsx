@@ -20,6 +20,7 @@ export interface CommandInspection {
 export interface PendingCommand {
   command: string;
   inspection: CommandInspection;
+  actionRequest?: Record<string, unknown>;
 }
 
 export function Panel({ title, icon: Icon, children }: { title: string; icon: LucideIcon; children: ReactNode }) {

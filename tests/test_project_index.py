@@ -36,3 +36,14 @@ def test_load_project_index_ignores_missing_and_malformed_files(tmp_path) -> Non
 
     index.write_text(json.dumps({"projects": [{"path": ""}, {"path": "/repo"}]}), encoding="utf-8")
     assert load_project_index(index) == [{"path": "/repo", "project_id": project_id(Path("/repo"))}]
+
+
+def test_load_project_index_recomputes_legacy_id_for_reachable_path(tmp_path) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    index = tmp_path / "projects.json"
+    index.write_text(json.dumps({"projects": [{"path": str(repo), "project_id": "legacy-path-hash"}]}), encoding="utf-8")
+
+    rows = load_project_index(index)
+
+    assert rows[0]["project_id"] == project_id(repo)

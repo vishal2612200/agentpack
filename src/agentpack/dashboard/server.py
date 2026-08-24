@@ -347,9 +347,15 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
             if not self._authorized(parsed):
                 self._send_v2_auth_error()
                 return
-            detail = urllib.parse.parse_qs(parsed.query).get("detail", ["home"])[0]
-            payload = build_dashboard_v2_payload(self.server.state.root, detail=detail)
-            payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(self.server.state.root)]
+            query = urllib.parse.parse_qs(parsed.query)
+            detail = query.get("detail", ["home"])[0]
+            try:
+                root = self.server.state.resolve_project(query.get("project_id", [""])[0], query.get("workspace_id", [""])[0])
+            except ValueError as exc:
+                self._send_json(_dashboard_v2_error(str(exc), kind="repository_mismatch"), status=HTTPStatus.CONFLICT)
+                return
+            payload = build_dashboard_v2_payload(root, detail=detail)
+            payload["action_history"] = [row.model_dump(mode="json") for row in read_action_history(root)]
             cached = payload.get("cached_project_status")
             if cached:
                 try:
@@ -1059,8 +1065,7 @@ class DashboardRequestHandler(BaseHTTPRequestHandler):
         self.wfile.write(body)
 
     def _stream_terminal_events(self, parsed: urllib.parse.ParseResult) -> None:
-        session_id = parsed.path.removeprefix("/api/terminal/").removesuffix("/events").strip("/")
-        session = self.server.state.terminal.get(session_id)
+        session = self._session_from_path(parsed.path, suffix="/events")
         if session is None:
             self._send_error(HTTPStatus.NOT_FOUND, "terminal session not found")
             return

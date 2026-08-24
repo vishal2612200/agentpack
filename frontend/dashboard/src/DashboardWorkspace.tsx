@@ -162,7 +162,7 @@ export function DashboardWorkspace() {
   useEffect(() => { selectedEntityRef.current = selectedId; }, [selectedId]);
 
   const refreshDashboard = async (detail: "home" | "full" = payloadDetail) => {
-    const loaded = await loadDashboardPayload(detail);
+    const loaded = await loadDashboardPayload(detail, selectedProjectId, projectWorkspaceRef.current);
     setPayloadDetail(detail);
     setPayload(loaded);
     const overview = projectWorkspaceRef.current === "all"
@@ -202,7 +202,15 @@ export function DashboardWorkspace() {
     setProjectLoading(true);
     setProjectError("");
     try {
-      setProjectOverview(await loadProjectOverview(value, projectId));
+      if (projectId) {
+        const loaded = await loadDashboardPayload("full", projectId, value);
+        setPayload(loaded);
+        setPayloadDetail("full");
+        setProjectOverview(loaded.snapshot.project_overview || null);
+        setConnection("live");
+      } else {
+        setProjectOverview(await loadProjectOverview(value, projectId));
+      }
     } catch (caught) {
       setProjectError(caught instanceof Error ? caught.message : "Project scope could not be loaded.");
     } finally {
@@ -349,7 +357,12 @@ export function DashboardWorkspace() {
       setStatusOpen(true);
       return;
     }
-    const scopedBody = { action, ...body, ...(selectedProjectId ? { project_id: selectedProjectId } : {}) };
+    const scopedBody = {
+      action,
+      ...body,
+      ...(selectedProjectId ? { project_id: selectedProjectId } : {}),
+      ...(projectWorkspaceRef.current !== "all" ? { workspace_id: projectWorkspaceRef.current } : {})
+    };
     const inspectionResponse = await fetch(apiUrl("/api/dashboard/v2/actions/inspect"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
@@ -368,6 +381,7 @@ export function DashboardWorkspace() {
     if (inspected.confirm_required) {
       setPendingCommand({
         command: inspected.command,
+        actionRequest: scopedBody,
         inspection: {
           ...inspected,
           risky: inspected.risk !== "low",
@@ -376,14 +390,19 @@ export function DashboardWorkspace() {
       });
       return;
     }
+    await runScopedAction(scopedBody);
+  };
+
+  const runScopedAction = async (request: Record<string, unknown>) => {
+    const action = String(request.action || "action");
     const response = await fetch(apiUrl("/api/dashboard/v2/actions/run"), {
       method: "POST",
       headers: { "Content-Type": "application/json", ...authHeaders() },
-      body: JSON.stringify(scopedBody)
+      body: JSON.stringify(request)
     });
     const result = await response.json();
     if (response.status === 409 && result.inspection) {
-      setPendingCommand({ command: String(result.command || result.inspection.command || action), inspection: result.inspection as CommandInspection });
+      setPendingCommand({ command: String(result.command || result.inspection.command || action), actionRequest: request, inspection: result.inspection as CommandInspection });
       return;
     }
     if (!response.ok) {
@@ -451,7 +470,12 @@ export function DashboardWorkspace() {
   const handleConfirmRun = async () => {
     if (!pendingCommand) return;
     const command = pendingCommand.command;
+    const actionRequest = pendingCommand.actionRequest;
     setPendingCommand(null);
+    if (actionRequest) {
+      await runScopedAction({ ...actionRequest, confirmed: true });
+      return;
+    }
     await startCommand(command, true);
   };
 
@@ -542,7 +566,7 @@ export function DashboardWorkspace() {
     dispatch({ type: "resource", key: "workspace", value: { status: "loading" } });
     try {
       const [loaded, impact] = await Promise.all([
-        loadDashboardPayload(payloadDetail),
+        loadDashboardPayload(payloadDetail, selectedProjectId, projectWorkspaceRef.current),
         loadDashboardImpact(new URLSearchParams({ limit: "300" }))
       ]);
       if (generation !== refreshGenerationRef.current) return;

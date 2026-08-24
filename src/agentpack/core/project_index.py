@@ -51,13 +51,14 @@ def load_project_index(path: Path | None = None) -> list[dict[str, Any]]:
         path_value = str(item.get("path") or "").strip()
         if not path_value:
             continue
-        row = dict(
-            dict(
-                item,
-                path=path_value,
-                project_id=str(item.get("project_id") or project_id(Path(path_value))),
-            )
-        )
+        candidate = Path(path_value).expanduser()
+        stored_project_id = str(item.get("project_id") or "")
+        if candidate.exists():
+            try:
+                stored_project_id = project_id(candidate.resolve())
+            except (OSError, ValueError):
+                pass
+        row = dict(item, path=path_value, project_id=stored_project_id or project_id(candidate))
         rows.append(row)
     return rows
 

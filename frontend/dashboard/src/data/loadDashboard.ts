@@ -166,7 +166,7 @@ export class DashboardTimeoutError extends Error {
   }
 }
 
-export async function loadDashboardPayload(detail: "home" | "full" = "home"): Promise<DashboardPayload> {
+export async function loadDashboardPayload(detail: "home" | "full" = "home", projectId = "", workspaceId = ""): Promise<DashboardPayload> {
   if (window.location.protocol === "file:") {
     throw new Error("Static dashboard files are no longer supported. Run `agentpack dashboard` and open the served URL.");
   }
@@ -174,7 +174,10 @@ export async function loadDashboardPayload(detail: "home" | "full" = "home"): Pr
   if (apiBase === null) {
     throw new Error("Dashboard server API is unavailable. Run `agentpack dashboard` and open the served URL.");
   }
-  const response = await fetchWithDeadline(`${apiBase}/api/dashboard/v2?detail=${detail}`, {
+  const params = new URLSearchParams({ detail });
+  if (projectId) params.set("project_id", projectId);
+  if (workspaceId && workspaceId !== "all") params.set("workspace_id", workspaceId);
+  const response = await fetchWithDeadline(`${apiBase}/api/dashboard/v2?${params.toString()}`, {
     headers: authHeaders()
   }, detail === "home" ? 8_000 : 15_000);
   if (!response.ok) {
