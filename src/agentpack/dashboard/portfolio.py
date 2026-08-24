@@ -5,10 +5,14 @@ from __future__ import annotations
 import hashlib
 import json
 import re
-import tomllib
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+
+try:
+    import tomllib
+except ModuleNotFoundError:  # Python 3.10 compatibility.
+    import tomli as tomllib
 
 from agentpack.core.project_index import agentpack_home, load_project_index
 from agentpack.core import git
