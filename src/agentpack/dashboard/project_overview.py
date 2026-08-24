@@ -123,6 +123,7 @@ def load_project_profile(root: Path, *, now: datetime | None = None) -> ProjectP
         project_id=project_id(root),
         config_revision=project_config_revision(root),
         display_name=cfg.display_name or root.name or str(root),
+        key=cfg.key,
         purpose=cfg.purpose,
         audiences=cfg.audiences[:MAX_LIST_VALUES],
         owners=cfg.owners[:MAX_LIST_VALUES],
@@ -130,6 +131,8 @@ def load_project_profile(root: Path, *, now: datetime | None = None) -> ProjectP
         links=dict(list(cfg.links.items())[:MAX_LINKS]),
         environments=cfg.environments[:MAX_LIST_VALUES],
         status_stale_days=cfg.status_stale_days,
+        capabilities=cfg.capabilities[:MAX_LIST_VALUES],
+        relations=[item.model_dump(mode="json") for item in cfg.relations[:50]],
         source="declared",
         confidence=1.0,
         updated_at=updated_at or (now or datetime.now(timezone.utc)).isoformat(),
@@ -1934,6 +1937,7 @@ def _write_raw_config(root: Path, payload: dict[str, Any]) -> None:
 def _validate_profile_updates(project: str, updates: dict[str, Any]) -> dict[str, Any]:
     allowed = {
         "display_name",
+        "key",
         "purpose",
         "audiences",
         "owners",
@@ -1941,6 +1945,8 @@ def _validate_profile_updates(project: str, updates: dict[str, Any]) -> dict[str
         "links",
         "environments",
         "status_stale_days",
+        "capabilities",
+        "relations",
         "outcomes",
     }
     unknown = sorted(set(updates) - allowed)
@@ -1951,6 +1957,11 @@ def _validate_profile_updates(project: str, updates: dict[str, Any]) -> dict[str
         clean["display_name"] = _bounded_text(updates["display_name"], "display_name", 160)
     if "purpose" in updates:
         clean["purpose"] = _bounded_text(updates["purpose"], "purpose", 2000)
+    if "key" in updates:
+        key = _bounded_text(updates["key"], "key", 64)
+        if key and not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", key):
+            raise ProjectValidationError("key must be a lowercase slug")
+        clean["key"] = key
     for key in ("audiences", "owners", "environments"):
         if key in updates:
             clean[key] = _bounded_string_list(updates[key], key)
@@ -1974,7 +1985,37 @@ def _validate_profile_updates(project: str, updates: dict[str, Any]) -> dict[str
         clean["status_stale_days"] = days
     if "outcomes" in updates:
         clean["outcomes"] = _validate_outcomes(project, updates["outcomes"])
+    if "capabilities" in updates:
+        clean["capabilities"] = _bounded_string_list(updates["capabilities"], "capabilities")
+    if "relations" in updates:
+        clean["relations"] = _validate_relations(updates["relations"])
     return clean
+
+
+def _validate_relations(value: Any) -> list[dict[str, str]]:
+    if not isinstance(value, list) or len(value) > 50:
+        raise ProjectValidationError("relations must be a list with at most 50 items")
+    allowed = {"depends_on", "provides", "consumes", "deploys_to", "shares_component"}
+    result: list[dict[str, str]] = []
+    for item in value:
+        if not isinstance(item, dict):
+            raise ProjectValidationError("relation entries must be objects")
+        unknown = set(item) - {"target", "type", "label", "evidence"}
+        if unknown:
+            raise ProjectValidationError(f"unknown relation fields: {', '.join(sorted(unknown))}")
+        target = _bounded_text(item.get("target"), "relation target", 64, required=True)
+        if not re.fullmatch(r"[a-z0-9]+(?:-[a-z0-9]+)*", target):
+            raise ProjectValidationError("relation target must be a lowercase project key")
+        relation_type = _bounded_text(item.get("type"), "relation type", 32, required=True)
+        if relation_type not in allowed:
+            raise ProjectValidationError(f"relation type must be one of: {', '.join(sorted(allowed))}")
+        result.append({
+            "target": target,
+            "type": relation_type,
+            "label": _bounded_text(item.get("label"), "relation label", 160),
+            "evidence": _bounded_text(item.get("evidence"), "relation evidence", 500),
+        })
+    return result
 
 
 def _validate_outcomes(project: str, value: Any) -> list[dict[str, Any]]:

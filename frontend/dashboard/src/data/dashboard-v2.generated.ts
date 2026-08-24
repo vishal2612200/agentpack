@@ -1351,6 +1351,8 @@ export interface CachedProjectStatus {
   generated_at: string;
   branch?: string;
   git_sha?: string;
+  task_count?: number;
+  agent_count?: number;
   profile: CachedProjectProfile;
   metrics: ProjectMetrics;
   outcomes?: ProjectOutcomeState[];
@@ -1371,12 +1373,17 @@ export interface CachedProjectStatus {
  */
 export interface CachedProjectProfile {
   display_name?: string;
+  key?: string;
   purpose?: string;
   audiences?: string[];
   owners?: string[];
   stage?: string;
   environments?: string[];
   status_stale_days?: number;
+  capabilities?: string[];
+  links?: {
+    [k: string]: string;
+  };
   [k: string]: unknown;
 }
 /**
@@ -1863,6 +1870,7 @@ export interface ProjectOutcomeInput {
  * via the `definition` "ProjectProfilePatch".
  */
 export interface ProjectProfilePatch {
+  key?: string | null;
   display_name?: DisplayName1;
   purpose?: Purpose1;
   audiences?: Audiences1;
@@ -1871,6 +1879,12 @@ export interface ProjectProfilePatch {
   links?: Links1;
   environments?: Environments1;
   status_stale_days?: StatusStaleDays1;
+  capabilities?: string[] | null;
+  relations?:
+    | {
+        [k: string]: unknown;
+      }[]
+    | null;
   outcomes?: Outcomes1;
 }
 /**
@@ -1881,6 +1895,8 @@ export interface ProjectProfileUpdateRequest {
   mutation_id: MutationId;
   expected_revision: ExpectedRevision;
   profile: ProjectProfilePatch;
+  project_id?: string;
+  workspace_id?: string;
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema
@@ -1910,6 +1926,8 @@ export interface ProjectEventRequest {
   decision?: Decision1;
   outcome_id?: OutcomeId4;
   evidence?: Evidence15;
+  project_id?: string;
+  workspace_id?: string;
 }
 /**
  * This interface was referenced by `AgentPackDashboardV2`'s JSON-Schema

@@ -98,11 +98,14 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             page.unroute("**/api/dashboard/v2?detail=home", serve_partial_home)
             workspace = page.get_by_test_id("dashboard-workspace")
             overview = page.get_by_test_id("project-overview-view")
+            page.locator(".portfolio-view").wait_for()
+            page.get_by_role("button", name="Overview", exact=True).click()
             overview.wait_for()
             assert "AgentPack Browser Fixture" in overview.inner_text()
             assert "Ship project dashboard" in overview.inner_text()
             assert "Project contracts" in overview.inner_text()
             assert page.locator(".sidebar > .nav-list > .nav-item").all_inner_texts() == [
+                "Atlas",
                 "Overview",
                 "Roadmap",
                 "Work",
@@ -128,6 +131,7 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             page.set_viewport_size({"width": 1440, "height": 900})
             page.reload(wait_until="networkidle")
             assert workspace.get_attribute("data-presentation-mode") == "build"
+            page.get_by_role("button", name="Overview", exact=True).click()
             page.get_by_role("button", name="Summary", exact=True).click()
             page.get_by_title("Copy Summary brief").click()
             page.get_by_text("Status brief copied.", exact=True).wait_for()
@@ -181,6 +185,7 @@ def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path,
             page.route("**/api/dashboard/v2?detail=home", lambda route: route.abort())
             page.reload(wait_until="domcontentloaded")
             page.get_by_text("Last known", exact=False).first.wait_for()
+            page.get_by_role("button", name="Overview", exact=True).click()
             assert page.get_by_role("button", name="Edit profile", exact=False).is_disabled()
             page.unroute("**/api/dashboard/v2?detail=home")
             page.get_by_role("button", name="Retry", exact=True).first.click()

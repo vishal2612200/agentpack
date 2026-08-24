@@ -71,6 +71,7 @@ class ProjectProfile(ProjectDerivedRecord):
     project_id: str
     config_revision: str
     display_name: str = ""
+    key: str = ""
     purpose: str = ""
     audiences: list[str] = Field(default_factory=list)
     owners: list[str] = Field(default_factory=list)
@@ -78,6 +79,8 @@ class ProjectProfile(ProjectDerivedRecord):
     links: dict[str, str] = Field(default_factory=dict)
     environments: list[str] = Field(default_factory=list)
     status_stale_days: int = 14
+    capabilities: list[str] = Field(default_factory=list)
+    relations: list[dict[str, Any]] = Field(default_factory=list)
 
 
 class ProjectMilestoneState(ProjectDerivedRecord):
@@ -250,6 +253,75 @@ class DashboardWorkspaceRecord(BaseModel):
     git_sha: str = ""
     is_current: bool = False
     updated_at: str = ""
+
+
+class PortfolioProject(BaseModel):
+    project_id: str
+    key: str = ""
+    name: str
+    purpose: str = ""
+    stage: str = ""
+    owners: list[str] = Field(default_factory=list)
+    capabilities: list[str] = Field(default_factory=list)
+    links: dict[str, str] = Field(default_factory=dict)
+    github: dict[str, Any] | None = None
+    relations_config: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
+    workspaces: list[DashboardWorkspaceRecord] = Field(default_factory=list)
+    branch: str = ""
+    git_sha: str = ""
+    context_status: str = "unknown"
+    mcp_status: str = "unknown"
+    health: ProjectHealthSnapshot = Field(default_factory=ProjectHealthSnapshot)
+    focus: ProjectFocusSnapshot | None = None
+    task_count: int = 0
+    agent_count: int = 0
+    risks: list[ProjectRisk] = Field(default_factory=list)
+    decisions: list[ProjectDecision] = Field(default_factory=list)
+    last_activity: str = ""
+    cache_age_seconds: int | None = None
+    stale: bool = True
+    unavailable: bool = False
+    source: str = "cache"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    generated_at: str = ""
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PortfolioRelation(BaseModel):
+    relation_id: str
+    source_project_id: str
+    target_project_id: str = ""
+    target_key: str = ""
+    type: str
+    label: str = ""
+    declared: bool = False
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    stale: bool = False
+    unresolved: bool = False
+    evidence: list[ProjectEvidence] = Field(default_factory=list)
+    warnings: list[str] = Field(default_factory=list)
+
+
+class PortfolioActivity(BaseModel):
+    project_id: str
+    workspace_id: str = ""
+    kind: str
+    title: str
+    summary: str = ""
+    occurred_at: str = ""
+    source: str = "cache"
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+
+
+class PortfolioPayload(BaseModel):
+    schema_version: int = 1
+    generated_at: str
+    partial: bool = False
+    warnings: list[str] = Field(default_factory=list)
+    projects: list[PortfolioProject] = Field(default_factory=list)
+    relations: list[PortfolioRelation] = Field(default_factory=list)
+    attention: list[dict[str, Any]] = Field(default_factory=list)
+    recent_activity: list[PortfolioActivity] = Field(default_factory=list)
 
 
 class DashboardTaskRecord(BaseModel):

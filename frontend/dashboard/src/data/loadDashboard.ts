@@ -5,6 +5,7 @@ declare global {
     __AGENTPACK_DASHBOARD_API__?: string;
     __AGENTPACK_DASHBOARD_TOKEN__?: string;
     __AGENTPACK_PROJECT_ID__?: string;
+    __AGENTPACK_SELECTED_PROJECT_ID__?: string;
   }
 }
 
@@ -37,6 +38,46 @@ export interface DashboardPayload {
     capabilities: Record<string, string>;
   };
   cached_project_status?: CachedProjectStatus | null;
+}
+
+export interface PortfolioPayload {
+  schema_version: number;
+  generated_at: string;
+  partial: boolean;
+  warnings: string[];
+  projects: Array<{
+    project_id: string;
+    key?: string;
+    name: string;
+    purpose: string;
+    stage: string;
+    owners: string[];
+    capabilities: string[];
+    links?: Record<string, string>;
+    github?: Record<string, unknown> | null;
+    workspaces: Array<{ workspace_id: string; project_id: string; path: string; branch: string; git_sha: string }>;
+    branch: string;
+    git_sha: string;
+    context_status: string;
+    mcp_status: string;
+    health: { dimensions: Array<{ dimension: string; status: string; summary: string }> };
+    focus?: { attention: Array<{ title: string; summary: string }> } | null;
+    task_count: number;
+    agent_count: number;
+    risks: Array<{ title: string; severity: string; description: string; status: string }>;
+    decisions: Array<{ title: string; status: string }>;
+    last_activity: string;
+    cache_age_seconds?: number | null;
+    stale: boolean;
+    unavailable: boolean;
+    source: string;
+    confidence: number;
+    generated_at: string;
+    warnings: string[];
+  }>;
+  relations: Array<{ relation_id: string; source_project_id: string; target_project_id: string; target_key: string; type: string; label: string; declared: boolean; confidence: number; stale: boolean; unresolved: boolean; evidence: Array<{ kind: string; path: string; ref: string; summary: string }> }>;
+  attention: Array<Record<string, unknown>>;
+  recent_activity: Array<{ project_id: string; kind: string; title: string; summary: string; occurred_at: string; source: string; confidence: number }>;
 }
 
 export type DashboardImpactPayload = DashboardV2ImpactResponse;
@@ -79,12 +120,14 @@ export interface ArchitecturePRMapPayload {
 }
 
 export interface ProjectProfileMutation {
+  project_id?: string;
   mutation_id: string;
   expected_revision: string;
   profile: Record<string, unknown>;
 }
 
 export interface ProjectEventMutation {
+  project_id?: string;
   event_type: "project_outcome_status" | "project_milestone_status" | "project_risk_upsert" | "project_decision_recorded" | "project_initiative_confirmed" | "project_initiative_dismissed";
   mutation_id: string;
   workspace?: string;
@@ -123,7 +166,7 @@ export class DashboardTimeoutError extends Error {
   }
 }
 
-export async function loadDashboardPayload(detail: "home" | "full" = "home"): Promise<DashboardPayload> {
+export async function loadDashboardPayload(detail: "home" | "full" = "home", projectId = "", workspaceId = ""): Promise<DashboardPayload> {
   if (window.location.protocol === "file:") {
     throw new Error("Static dashboard files are no longer supported. Run `agentpack dashboard` and open the served URL.");
   }
@@ -131,13 +174,22 @@ export async function loadDashboardPayload(detail: "home" | "full" = "home"): Pr
   if (apiBase === null) {
     throw new Error("Dashboard server API is unavailable. Run `agentpack dashboard` and open the served URL.");
   }
-  const response = await fetchWithDeadline(`${apiBase}/api/dashboard/v2?detail=${detail}`, {
+  const params = new URLSearchParams({ detail });
+  if (projectId) params.set("project_id", projectId);
+  if (workspaceId && workspaceId !== "all") params.set("workspace_id", workspaceId);
+  const response = await fetchWithDeadline(`${apiBase}/api/dashboard/v2?${params.toString()}`, {
     headers: authHeaders()
   }, detail === "home" ? 8_000 : 15_000);
   if (!response.ok) {
     throw new Error(`Dashboard API failed: ${response.status}`);
   }
   return (await response.json()) as DashboardPayload;
+}
+
+export async function loadPortfolio(): Promise<PortfolioPayload> {
+  const response = await fetchWithDeadline(apiUrl("/api/dashboard/v2/portfolio"), { headers: authHeaders() }, 8_000);
+  if (!response.ok) throw new Error(`Portfolio API failed: ${response.status}`);
+  return await response.json() as PortfolioPayload;
 }
 
 export async function loadDashboardImpact(params: URLSearchParams = new URLSearchParams()): Promise<DashboardImpactPayload> {
@@ -199,8 +251,10 @@ export async function startLearningSession(request: {
   };
 }
 
-export async function loadProjectOverview(workspace = "all"): Promise<ProjectOverview> {
-  const response = await fetchWithDeadline(apiUrl(`/api/project/overview?workspace=${encodeURIComponent(workspace)}`), { headers: authHeaders() }, 8_000);
+export async function loadProjectOverview(workspace = "all", projectId = ""): Promise<ProjectOverview> {
+  const params = new URLSearchParams({ workspace });
+  if (projectId) params.set("project_id", projectId);
+  const response = await fetchWithDeadline(apiUrl(`/api/project/overview?${params.toString()}`), { headers: authHeaders() }, 8_000);
   if (!response.ok) throw new Error(`Project overview API failed: ${response.status}`);
   return await response.json() as ProjectOverview;
 }
@@ -224,7 +278,7 @@ export async function updateProjectProfile(request: ProjectProfileMutation): Pro
   const response = await fetch(apiUrl("/api/project/profile"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(request)
+    body: JSON.stringify({ ...request, project_id: request.project_id || window.__AGENTPACK_SELECTED_PROJECT_ID__ || "" })
   });
   const payload = await response.json() as { project_overview?: ProjectOverview; error?: string } & Record<string, unknown>;
   if (!response.ok || !payload.project_overview) {
@@ -237,7 +291,7 @@ export async function recordProjectEvent(request: ProjectEventMutation): Promise
   const response = await fetch(apiUrl("/api/project/events"), {
     method: "POST",
     headers: { "Content-Type": "application/json", ...authHeaders() },
-    body: JSON.stringify(request)
+    body: JSON.stringify({ ...request, project_id: request.project_id || window.__AGENTPACK_SELECTED_PROJECT_ID__ || "" })
   });
   const payload = await response.json() as { project_overview?: ProjectOverview; error?: string };
   if (!response.ok || !payload.project_overview) throw new Error(payload.error || `Project event failed: ${response.status}`);
