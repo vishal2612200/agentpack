@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -828,7 +829,7 @@ def test_learning_mcp_tools_share_recommendation_start_and_proof_services(tmp_pa
         json.dumps(
             {
                 "type": "task_memory",
-                "timestamp": "2026-07-22T10:00:00+00:00",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "task_id": "task-api",
                 "task": "Implement API compatibility",
                 "concepts": ["implementation"],

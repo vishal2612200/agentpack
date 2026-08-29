@@ -43,7 +43,7 @@ class ProjectConfig(BaseModel):
     include_globs: list[str] = Field(default_factory=list)
     exclude_globs: list[str] = Field(default_factory=list)
     display_name: str = ""
-    key: str = Field(default="", pattern=r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
+    key: str = Field(default="", pattern=r"^(?:[a-z0-9]+(?:-[a-z0-9]+)*)?$")
     purpose: str = ""
     audiences: list[str] = Field(default_factory=list)
     owners: list[str] = Field(default_factory=list)

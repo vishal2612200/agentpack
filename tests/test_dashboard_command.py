@@ -134,20 +134,17 @@ def test_dashboard_shell_preserves_token_window_property() -> None:
     assert '"secret-token"' in html
 
 
-def test_dashboard_server_state_switches_project_and_resets_terminal(tmp_path, monkeypatch) -> None:
+def test_dashboard_server_state_selects_project_without_mutating_launch_root(tmp_path, monkeypatch) -> None:
     monkeypatch.setenv("AGENTPACK_HOME", str(tmp_path / "home" / ".agentpack"))
     (tmp_path / ".git").mkdir()
     target = tmp_path / "target"
     (target / ".agentpack").mkdir(parents=True)
     (target / ".agentpack" / "config.toml").write_text("[context]\ndefault_budget = 1000\n", encoding="utf-8")
     state = DashboardServerState(root=tmp_path)
-    original_terminal = state.terminal
-
     payload = state.switch_root(str(target))
 
-    assert state.root == target.resolve()
-    assert state.terminal is not original_terminal
-    assert state.terminal.root == target.resolve()
+    assert state.root == tmp_path.resolve()
+    assert state.terminal.root == tmp_path.resolve()
     assert payload["snapshot"]["project"]["path"] == str(target.resolve())
     index = json.loads((tmp_path / "home" / ".agentpack" / "projects.json").read_text(encoding="utf-8"))
     assert index["projects"][0]["path"] == str(target.resolve())

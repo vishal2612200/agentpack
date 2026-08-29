@@ -254,7 +254,7 @@ def test_learning_profile_start_complete_and_read_only_guards(tmp_path: Path, mo
         json.dumps(
             {
                 "type": "task_memory",
-                "timestamp": "2026-07-22T10:00:00+00:00",
+                "timestamp": datetime.now(timezone.utc).isoformat(),
                 "task_id": "task-learn",
                 "task": "Implement learning API",
                 "status": "done",
