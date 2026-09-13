@@ -83,21 +83,16 @@ and when another session needs to continue it. These are not separate products
 or isolated command families. They share the same local repository, task,
 session, context, evidence, and memory state.
 
-Normal development uses one four-command loop:
+Normal development uses one three-command delivery loop:
 
 ```bash
 agentpack work "<task>"
-agentpack learn --json
 agentpack finish
 agentpack doctor
 ```
 
-`learn` turns the same local work, project, and assessment memory into up to
-three evidence-backed topics: what matters now, an assessed weak spot when one
-exists, and an underrepresented engineering competency. `--global` explicitly
-ranks topics across registered AgentPack projects while competency progress is
-derived globally; the coding-agent host teaches and evaluates the chosen
-topic and records the developer's result locally.
+`learn` is optional follow-up for evidence-backed technical topics and skill
+progress. Keep it after delivery checks, not on critical path for first use.
 
 ### Prepare with project evidence
 
@@ -354,14 +349,13 @@ Activate AgentPack inside a repository:
 
 ```bash
 agentpack work "fix auth token expiry"
-agentpack learn --json
 agentpack finish
 agentpack doctor
 ```
 
-`work` initializes the local project layer and prepares the task context,
-`learn` presents the next evidence-backed topics, `finish` records validation
-and task memory, and `doctor` checks the installation and integration surface.
+`work` initializes the local project layer and prepares task context, `finish`
+records validation and task memory, and `doctor` checks installation and
+integration surface. Run `agentpack learn --json` when learning output is useful.
 MCP-capable agents can use the same local state directly after integration
 setup.
 

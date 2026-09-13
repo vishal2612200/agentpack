@@ -11,17 +11,17 @@ Use these docs when you want local/offline repo analysis, MCP-first routing, CI-
 - [How AgentPack works](how-agentpack-works.md): route, pack, retrieve, learn, and benchmark flow.
 - [Demo assets](demo.md): generated README GIF/MP4 and regeneration command.
 
-Core onboarding uses the four-command project loop:
+Core onboarding uses one three-command project loop:
 
 ```bash
 agentpack work "describe the change"
-agentpack learn --json
 agentpack finish
 agentpack doctor
 ```
 
-`route`, `pack`, `benchmark`, and the other specialized commands remain
-available for deeper context, release, learning, and diagnostic workflows.
+Run `agentpack learn --json` after delivery when you want evidence-backed
+learning topics. `route`, `pack`, `benchmark`, and other specialized commands
+remain available for deeper context, release, learning, and diagnostics.
 
 ## Agents and IDEs
 

@@ -229,7 +229,15 @@ jobs:
       - name: Install dependencies
         run: pip install -e ".[dev]"
       - name: Verify warm route performance
+        env:
+          AGENTPACK_ROUTE_PERF_OUTPUT: ${{ runner.temp }}/agentpack-route-perf
         run: pytest tests/test_route_performance.py -q -m slow
+      - name: Upload route performance evidence
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: route-performance-evidence
+          path: ${{ runner.temp }}/agentpack-route-perf
 
   build:
     needs: [test, tree-sitter-floor, release-evidence, route-performance]

@@ -1,16 +1,25 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
+from typing import TypedDict
 
 import typer
 from rich.table import Table
 
 from agentpack.commands._shared import console, _root
 from agentpack.control_plane import build_control_plane_snapshot
-from agentpack.core.command_surface import refresh_commands
+from agentpack.core.command_surface import refresh_command_args
 from agentpack.core.modes import MODE_HELP, invalid_mode_message, is_requested_mode, normalize_mode
 from agentpack.core.thread_context import resolve_session_thread_option, thread_paths
 from agentpack.session.state import TASK_FILE
+
+
+class QuickstartState(TypedDict):
+    summary: str
+    steps: list[tuple[str, str, str]]
+    optional: list[tuple[str, str]]
+    notes: list[str]
 
 
 _PLACEHOLDER_TASK = "Write or update the current coding task here."
@@ -95,29 +104,28 @@ def _quickstart_state(
     *,
     written: bool = False,
     thread_id: str | None = None,
-) -> dict[str, object]:
+) -> QuickstartState:
     snapshot = build_control_plane_snapshot(root, thread_id=thread_id, check_files=False)
     initialized = snapshot.setup.initialized
     has_task, current_task = _task_status(root, thread_id)
     has_context = snapshot.context.status == "fresh"
-    thread_suffix = f" --thread {thread_id}" if thread_id else ""
+    thread_suffix = f" --thread {shlex.quote(thread_id)}" if thread_id else ""
 
     steps: list[tuple[str, str, str]] = []
     optional: list[tuple[str, str]] = []
     notes: list[str] = []
 
-    if not initialized:
-        steps.append(("first", f"agentpack init --yes --mode {mode}", "create config, cache dir, session, and task file"))
-    else:
+    if initialized:
         notes.append(".agentpack/config.toml already exists.")
 
     if written:
         notes.append(f"Saved task: {task}")
-        steps.append(("next", refresh_commands("auto").primary + thread_suffix, "refresh context for the saved task"))
-    elif task:
-        steps.append(("next", f"agentpack start {_shell_single_quote(task)}{thread_suffix}", "write task and refresh context in one command"))
-    elif not has_task:
-        steps.append(("next", f"agentpack start 'fix auth token expiry'{thread_suffix}", "replace example with one concrete task"))
+    if written and initialized:
+        command = shlex.join(["agentpack", *refresh_command_args("auto", mode, thread=thread_id or "global")])
+        steps.append(("next", command, "refresh context for the saved task"))
+    elif task or not has_task:
+        example = task or "fix auth token expiry"
+        steps.append(("next", f"agentpack work {_shell_single_quote(example)} --mode {mode}{thread_suffix}", "initialize if needed and prepare one task"))
     else:
         notes.append(f"Current task: {current_task}")
         steps.append(("next", f"agentpack next --fix{thread_suffix}", "check repo state and safely refresh stale context"))
@@ -135,7 +143,7 @@ def _quickstart_state(
     if not task and not has_task:
         notes.append("Specific tasks beat vague ones: include subsystem, symptom, and file/module names when known.")
 
-    summary = "One clear path: initialize, start one concrete task, then verify health."
+    summary = "Start with work, code and test in your agent, then finish. Use doctor to verify setup."
     if initialized and (has_task or written):
         summary = "Repo has setup; refresh/verify before trusting packed context."
 
