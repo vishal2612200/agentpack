@@ -8,9 +8,29 @@ Format: `## [version] — YYYY-MM-DD` followed by categorised entries.
 
 ## [Unreleased]
 
+No unreleased changes.
+
+## [0.4.5] — 2026-09-14
+
+### Added
+- Added cross-agent continuation guidance covering task state, decisions,
+  validation, and Git patch handoff.
+- Added cold, warm-cache, mutation, and CLI route performance scenarios with
+  phase timings and failure artifacts.
+
 ### Changed
-- Added explicit, reason-bearing release workflow bypass for exceptional
+- Focused the default workflow on `work`, `finish`, and `doctor`, with
+  `learn` as optional follow-up.
+- Made quickstart emit executable commands while preserving mode, thread, and
+  existing task state.
+- Improved route candidate discovery with bounded normalized term matching
+  while preserving original substring matches.
+- Added an explicit, reason-bearing release workflow bypass for exceptional
   releases while keeping benchmark and evidence gates blocking by default.
+
+### Fixed
+- Prevented derived route stems from exhausting the candidate cap and hiding
+  the true owner file.
 
 ## [0.4.4] — 2026-08-19
 
