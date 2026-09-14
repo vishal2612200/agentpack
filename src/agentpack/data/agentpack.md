@@ -1,5 +1,5 @@
 ---
-description: Route normal development through AgentPack work, learn, finish, and doctor while preserving advanced commands.
+description: Route normal development through AgentPack work, finish, and doctor while preserving optional learning and advanced commands.
 ---
 
 # AgentPack
@@ -8,14 +8,16 @@ Pack repo context and immediately start working on the task.
 
 ## Product Loop
 
-Use four commands for normal development:
+Use three commands for normal development:
 
 ```bash
 agentpack work "<task>"
-agentpack learn --json
 agentpack finish
 agentpack doctor
 ```
+
+Use `agentpack learn --json` after delivery when evidence-backed learning
+topics or skill progress are useful.
 
 Use review, resolve, route, pack, handoff, and the remaining subcommands only for their specialized workflows. AgentPack is not a coding agent; its context is a starting map, not proof.
 

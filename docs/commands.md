@@ -6,11 +6,10 @@ benchmark workflows.
 
 ## Commands
 
-Most users should start with four commands:
+Most users should start with three commands:
 
 ```bash
 agentpack work "describe the change"
-agentpack learn --json
 agentpack finish
 agentpack doctor
 ```
@@ -20,9 +19,14 @@ Core command map:
 | Command | Use when |
 |---|---|
 | `agentpack work` | Initialize if needed, write one task, and prepare context |
-| `agentpack learn` | Recommend up to three evidence-backed technical topics and coach one |
 | `agentpack finish` | Run checks and record completed task memory |
 | `agentpack doctor` | Audit MCP, hooks, agent files, CLI path, and repo health |
+
+Optional follow-up:
+
+| Command | Use when |
+|---|---|
+| `agentpack learn` | Recommend evidence-backed technical topics and record skill progress |
 
 Advanced command map:
 
@@ -1033,8 +1037,9 @@ as `next`, checks whether `.agentpack/config.toml`, the current session task
 file, and context metadata exist, then prints one next command path. In an
 agent session, `--write` writes the supplied task under
 `.agentpack/threads/<id>/task.md`; `--thread global` opts into the legacy global
-task file. Optional later commands like `stats`, `watch`, and `benchmark` stay
-out of the first-run path.
+task file. For a new repo with `--task`, its first command is executable
+`agentpack work "<task>" --mode <mode>`; optional later commands like `stats`,
+`watch`, `learn`, and `benchmark` stay out of the first-run path.
 
 ### Token contract
 

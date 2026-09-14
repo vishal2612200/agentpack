@@ -49,7 +49,8 @@ def test_root_help_leads_with_unified_product_loop() -> None:
     commands = list(click_cmd.commands)
 
     assert result.exit_code == 0, result.output
-    assert commands[:4] == ["work", "learn", "finish", "doctor"]
+    assert commands[:3] == ["work", "finish", "doctor"]
+    assert commands.index("learn") > commands.index("doctor")
     assert commands.index("quickstart") < commands.index("benchmark")
 
 

@@ -259,21 +259,27 @@ def _route_rank_candidates(
         return packable
 
     by_path = {item.path: item for item in packable}
-    terms = {
+    original_terms = {
         term
         for term in re.findall(r"[a-z0-9_]{3,}", task.lower())
         if term not in _ROUTE_STOP_WORDS
     }
+    normalized_terms = _route_term_forms(task) - _ROUTE_STOP_WORDS
 
     def lexical_score(item: FileInfo) -> tuple[int, int, str]:
         path_text = item.path.lower().replace("/", " ").replace("_", " ").replace("-", " ")
+        path_terms = _route_term_forms(item.path)
         summary = str((summaries.get(item.path) or {}).get("summary") or "").lower()[:600]
-        hits = sum(term in path_text for term in terms) * 4 + sum(term in summary for term in terms)
+        path_hits = sum(term in path_terms or term in path_text for term in original_terms)
+        path_hits += sum(term in path_terms for term in normalized_terms - original_terms)
+        hits = path_hits * 4 + sum(term in summary for term in normalized_terms)
         return hits, int(item.path.count("/")), item.path
 
     def path_overlap(item: FileInfo) -> int:
         path_text = item.path.lower().replace("/", " ").replace("_", " ").replace("-", " ")
-        return sum(term in path_text for term in terms)
+        path_terms = _route_term_forms(item.path)
+        path_hits = sum(term in path_terms or term in path_text for term in original_terms)
+        return path_hits + sum(term in path_terms for term in normalized_terms - original_terms)
 
     mandatory = {path for path in changes.all_changed if path in by_path}
     seeds = set(mandatory)
@@ -304,6 +310,23 @@ def _route_rank_candidates(
     selected = [by_path[path] for path in sorted(seeds)]
     selected.extend(remaining[: candidate_cap - len(selected)])
     return selected
+
+
+def _route_term_forms(value: str) -> set[str]:
+    """Keep candidate prefilter from missing ordinary word-form variants."""
+    terms = {
+        term
+        for term in re.findall(r"[a-z0-9]+", value.lower())
+        if len(term) >= 3
+    }
+    forms = set(terms)
+    for term in terms:
+        if len(term) < 5:
+            continue
+        for suffix in ("ing", "ed", "s"):
+            if term.endswith(suffix) and len(term) - len(suffix) >= 3:
+                forms.add(term[: -len(suffix)])
+    return forms
 
 
 def _select_route_files(

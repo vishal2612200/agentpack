@@ -38,6 +38,44 @@ The agent still verifies the source before editing. The difference is that it
 starts from a measured set of likely files, then uses `explain_file`,
 `get_related_files`, and `benchmark --misses` when the map looks incomplete.
 
+## Continue Across Agents
+
+The handoff carries task state, decisions, remaining work, validation status,
+and the Git patch. The destination claims it atomically, applies the patch,
+then receives fresh context for the same task.
+
+Source agent writes `handoff_report.json` with required fields such as:
+
+```json
+{
+  "task": "fix auth token expiry",
+  "acceptance_criteria": ["Expired tokens are rejected"],
+  "summary": "Expiry check is implemented; focused test remains.",
+  "next_action": "Run pytest tests/test_auth.py -q",
+  "completed": ["Updated expiry comparison"],
+  "remaining": ["Verify boundary case"],
+  "decisions": [],
+  "blockers": [],
+  "validation": [{
+    "command": "pytest tests/test_auth.py -q",
+    "outcome": "not_run",
+    "tested_sha": "uncommitted",
+    "timestamp": "2026-09-13T00:00:00Z",
+    "reason": "Destination agent must run focused test"
+  }],
+  "changed_files": ["src/auth/token.py"],
+  "dirty_files": ["src/auth/token.py"]
+}
+```
+
+```bash
+agentpack handoff create --input handoff_report.json --name auth-expiry
+agentpack handoff resume auth-expiry --format json
+```
+
+The destination still inspects current source and runs validation. Handoff
+state is continuity evidence, not proof that the change is correct.
+
 ## Benchmark Proof
 
 Use real historical tasks:

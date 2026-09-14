@@ -65,7 +65,7 @@ def _version_callback(value: bool) -> None:
 
 app = typer.Typer(help="AgentPack — token-aware context packing for AI coding agents.")
 
-_CORE_HELP_CALLBACKS = {"work", "learn", "finish", "doctor"}
+_CORE_HELP_CALLBACKS = {"work", "finish", "doctor"}
 _SETUP_HELP_CALLBACKS = {
     "quickstart",
     "start",
@@ -159,7 +159,7 @@ def _configure_help_panels() -> None:
             command.rich_help_panel = "Review and safety"
         else:
             command.rich_help_panel = "Advanced, diagnostics, and release"
-    core_order = {"work": 0, "learn": 1, "finish": 2, "doctor": 3}
+    core_order = {"work": 0, "finish": 1, "doctor": 2}
     app.registered_commands.sort(
         key=lambda command: (
             _HELP_PANEL_ORDER[str(command.rich_help_panel)],

@@ -5,8 +5,15 @@ import re
 
 from typer.testing import CliRunner
 
-from agentpack.application.pack_service import PackPlanner, PackRequest, _github_pr_paths as _pack_github_pr_paths
+from agentpack.application.pack_service import (
+    ChangeSet,
+    PackPlanner,
+    PackRequest,
+    _github_pr_paths as _pack_github_pr_paths,
+    _route_rank_candidates,
+)
 from agentpack.cli import app
+from agentpack.core.models import FileInfo
 from agentpack.router.service import _github_pr_paths, classify_task_mode
 
 
@@ -452,6 +459,105 @@ def test_route_small_direct_edit_recommends_targeted_search(tmp_path, monkeypatc
     assert any("targeted `rg`" in note for note in data["routing_notes"])
     assert any("orientation only" in note for note in data["routing_notes"])
     assert data["evidence_checklist"]
+
+
+def test_route_keeps_owner_when_task_uses_related_word_forms(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+    for index in range(80):
+        path = tmp_path / "src" / f"module_{index}" / f"file_{index}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def handler():\n    return None\n", encoding="utf-8")
+    owner = tmp_path / "src" / "agentpack" / "core" / "token_estimator.py"
+    owner.parent.mkdir(parents=True, exist_ok=True)
+    owner.write_text(
+        "def estimate_tokens(text):\n    return len(text)\n\n"
+        "def load_estimator():\n    return None\n",
+        encoding="utf-8",
+    )
+    hooks = tmp_path / "src" / "agentpack" / "integrations" / "git_hooks.py"
+    hooks.parent.mkdir(parents=True, exist_ok=True)
+    hooks.write_text("def install_git_hooks():\n    return None\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["route", "--task", "avoid blocking network download when estimating tokens in git hooks", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    paths = [item["path"] for item in data["selected_files"]]
+    assert "src/agentpack/core/token_estimator.py" in paths
+    assert paths.index("src/agentpack/core/token_estimator.py") < 20
+
+
+def test_route_preserves_legacy_path_substring_matches(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+    for index in range(80):
+        path = tmp_path / "src" / f"module_{index}" / f"file_{index}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def handler():\n    return None\n", encoding="utf-8")
+    owner = tmp_path / "src" / "authentication" / "settings.toml"
+    owner.parent.mkdir(parents=True, exist_ok=True)
+    owner.write_text("[settings]\nexpiry_seconds = 60\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["route", "--task", "fix auth settings", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    paths = [item["path"] for item in data["selected_files"]]
+    assert "src/authentication/settings.toml" in paths
+
+
+def test_route_does_not_let_derived_forms_exhaust_candidate_cap(tmp_path) -> None:
+    def file_info(path: str) -> FileInfo:
+        return FileInfo(path=path, abs_path=tmp_path / path, size_bytes=1, estimated_tokens=1)
+
+    files = [file_info(f"src/custom_{index}/file.py") for index in range(80)]
+    owner = file_info("src/payments/retry.py")
+    files.append(owner)
+    candidates = _route_rank_candidates(
+        files,
+        ChangeSet(all_changed=set(), git_staged=set(), recently_modified=[], source="test"),
+        "fix customer endpoint",
+        {owner.path: {"summary": "customer endpoint implementation"}},
+        None,
+    )
+
+    assert owner in candidates
+
+
+def test_route_keeps_cli_owner_for_command_task(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+    for index in range(80):
+        path = tmp_path / "src" / f"module_{index}" / f"file_{index}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def handler():\n    return None\n", encoding="utf-8")
+    owner = tmp_path / "src" / "agentpack" / "commands" / "workflow_cmd.py"
+    owner.parent.mkdir(parents=True, exist_ok=True)
+    owner.write_text(
+        "@app.command('work')\ndef work(task_text):\n"
+        "    initialize_task(task_text)\n    return refresh_context()\n",
+        encoding="utf-8",
+    )
+
+    result = CliRunner().invoke(
+        app,
+        ["route", "--task", "fix work command task initialization", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    paths = [item["path"] for item in data["selected_files"]]
+    assert "src/agentpack/commands/workflow_cmd.py" in paths
 
 
 def test_route_runtime_debugging_returns_evidence_checklist(tmp_path, monkeypatch) -> None:

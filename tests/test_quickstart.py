@@ -1,6 +1,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shlex
+
+import pytest
 
 from typer.testing import CliRunner
 
@@ -16,8 +19,9 @@ def test_quickstart_state_for_new_repo(tmp_path: Path) -> None:
     state = _quickstart_state(tmp_path, "fix auth token expiry", "balanced")
 
     steps = state["steps"]
-    assert ("first", "agentpack init --yes --mode balanced", "create config, cache dir, session, and task file") in steps
-    assert any("agentpack start 'fix auth token expiry'" in cmd for _, cmd, _ in steps)
+    assert len([step for step in steps if step[0] != "verify"]) == 1
+    assert any("agentpack work 'fix auth token expiry' --mode balanced" in cmd for _, cmd, _ in steps)
+    assert not (tmp_path / ".agentpack").exists()
     assert any(cmd == "agentpack doctor --agent auto" for _, cmd, _ in steps)
     assert any("agentpack benchmark --init" in cmd for cmd, _ in state["optional"])
 
@@ -57,3 +61,28 @@ def test_quickstart_write_task_uses_session_thread(tmp_path: Path, monkeypatch) 
     assert (tmp_path / ".agentpack" / "threads" / "codex-local" / "task.md").read_text(encoding="utf-8") == "fix cache bug\n"
     assert not (tmp_path / ".agentpack" / "task.md").exists()
     assert "Using AgentPack session: codex-local" in result.output
+
+
+@pytest.mark.parametrize("initialized", [False, True])
+def test_quickstart_preserves_task_mode_and_thread(tmp_path: Path, initialized: bool) -> None:
+    if initialized:
+        (tmp_path / ".agentpack").mkdir()
+        (tmp_path / ".agentpack/config.toml").write_text("[context]\n", encoding="utf-8")
+    task = "fix user's payment retry"
+    state = _quickstart_state(tmp_path, task, "deep", written=True, thread_id="codex-local")
+    argv = shlex.split(next(cmd for label, cmd, _ in state["steps"] if label == "next"))
+    assert argv.count("--thread") == 1
+    assert argv[argv.index("--thread") + 1] == "codex-local"
+    assert argv[argv.index("--mode") + 1] == "deep"
+    if not initialized:
+        assert argv[:3] == ["agentpack", "work", task]
+
+
+def test_quickstart_existing_task_without_config_recommends_work(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack/task.md").write_text("fix auth token expiry\n", encoding="utf-8")
+
+    state = _quickstart_state(tmp_path, "", "balanced")
+    command = next(cmd for label, cmd, _ in state["steps"] if label == "next")
+
+    assert shlex.split(command)[:3] == ["agentpack", "work", "fix auth token expiry"]
