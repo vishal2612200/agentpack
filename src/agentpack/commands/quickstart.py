@@ -123,8 +123,8 @@ def _quickstart_state(
     if written and initialized:
         command = shlex.join(["agentpack", *refresh_command_args("auto", mode, thread=thread_id or "global")])
         steps.append(("next", command, "refresh context for the saved task"))
-    elif task or not has_task:
-        example = task or "fix auth token expiry"
+    elif task or not has_task or not initialized:
+        example = task or current_task or "fix auth token expiry"
         steps.append(("next", f"agentpack work {_shell_single_quote(example)} --mode {mode}{thread_suffix}", "initialize if needed and prepare one task"))
     else:
         notes.append(f"Current task: {current_task}")

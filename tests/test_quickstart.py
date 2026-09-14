@@ -76,3 +76,13 @@ def test_quickstart_preserves_task_mode_and_thread(tmp_path: Path, initialized: 
     assert argv[argv.index("--mode") + 1] == "deep"
     if not initialized:
         assert argv[:3] == ["agentpack", "work", task]
+
+
+def test_quickstart_existing_task_without_config_recommends_work(tmp_path: Path) -> None:
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack/task.md").write_text("fix auth token expiry\n", encoding="utf-8")
+
+    state = _quickstart_state(tmp_path, "", "balanced")
+    command = next(cmd for label, cmd, _ in state["steps"] if label == "next")
+
+    assert shlex.split(command)[:3] == ["agentpack", "work", "fix auth token expiry"]

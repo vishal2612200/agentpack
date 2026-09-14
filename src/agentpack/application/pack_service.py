@@ -262,13 +262,17 @@ def _route_rank_candidates(
     terms = _route_term_forms(task) - _ROUTE_STOP_WORDS
 
     def lexical_score(item: FileInfo) -> tuple[int, int, str]:
+        path_text = item.path.lower().replace("/", " ").replace("_", " ").replace("-", " ")
         path_terms = _route_term_forms(item.path)
         summary = str((summaries.get(item.path) or {}).get("summary") or "").lower()[:600]
-        hits = sum(term in path_terms for term in terms) * 4 + sum(term in summary for term in terms)
+        path_hits = sum(term in path_terms or term in path_text for term in terms)
+        hits = path_hits * 4 + sum(term in summary for term in terms)
         return hits, int(item.path.count("/")), item.path
 
     def path_overlap(item: FileInfo) -> int:
-        return len(_route_term_forms(item.path) & terms)
+        path_text = item.path.lower().replace("/", " ").replace("_", " ").replace("-", " ")
+        path_terms = _route_term_forms(item.path)
+        return sum(term in path_terms or term in path_text for term in terms)
 
     mandatory = {path for path in changes.all_changed if path in by_path}
     seeds = set(mandatory)

@@ -485,6 +485,29 @@ def test_route_keeps_owner_when_task_uses_related_word_forms(tmp_path, monkeypat
     assert paths.index("src/agentpack/core/token_estimator.py") < 20
 
 
+def test_route_preserves_legacy_path_substring_matches(tmp_path, monkeypatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".agentpack").mkdir()
+    (tmp_path / ".agentpack" / "config.toml").write_text("", encoding="utf-8")
+    for index in range(80):
+        path = tmp_path / "src" / f"module_{index}" / f"file_{index}.py"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("def handler():\n    return None\n", encoding="utf-8")
+    owner = tmp_path / "src" / "authentication" / "settings.toml"
+    owner.parent.mkdir(parents=True, exist_ok=True)
+    owner.write_text("[settings]\nexpiry_seconds = 60\n", encoding="utf-8")
+
+    result = CliRunner().invoke(
+        app,
+        ["route", "--task", "fix auth settings", "--format", "json"],
+    )
+
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    paths = [item["path"] for item in data["selected_files"]]
+    assert "src/authentication/settings.toml" in paths
+
+
 def test_route_keeps_cli_owner_for_command_task(tmp_path, monkeypatch) -> None:
     monkeypatch.chdir(tmp_path)
     (tmp_path / ".agentpack").mkdir()
