@@ -5,8 +5,15 @@ import re
 
 from typer.testing import CliRunner
 
-from agentpack.application.pack_service import PackPlanner, PackRequest, _github_pr_paths as _pack_github_pr_paths
+from agentpack.application.pack_service import (
+    ChangeSet,
+    PackPlanner,
+    PackRequest,
+    _github_pr_paths as _pack_github_pr_paths,
+    _route_rank_candidates,
+)
 from agentpack.cli import app
+from agentpack.core.models import FileInfo
 from agentpack.router.service import _github_pr_paths, classify_task_mode
 
 
@@ -506,6 +513,24 @@ def test_route_preserves_legacy_path_substring_matches(tmp_path, monkeypatch) ->
     data = json.loads(result.output)
     paths = [item["path"] for item in data["selected_files"]]
     assert "src/authentication/settings.toml" in paths
+
+
+def test_route_does_not_let_derived_forms_exhaust_candidate_cap(tmp_path) -> None:
+    def file_info(path: str) -> FileInfo:
+        return FileInfo(path=path, abs_path=tmp_path / path, size_bytes=1, estimated_tokens=1)
+
+    files = [file_info(f"src/custom_{index}/file.py") for index in range(80)]
+    owner = file_info("src/payments/retry.py")
+    files.append(owner)
+    candidates = _route_rank_candidates(
+        files,
+        ChangeSet(all_changed=set(), git_staged=set(), recently_modified=[], source="test"),
+        "fix customer endpoint",
+        {owner.path: {"summary": "customer endpoint implementation"}},
+        None,
+    )
+
+    assert owner in candidates
 
 
 def test_route_keeps_cli_owner_for_command_task(tmp_path, monkeypatch) -> None:
