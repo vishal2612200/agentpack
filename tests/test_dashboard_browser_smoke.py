@@ -22,22 +22,40 @@ def test_dashboard_html_renders_in_headless_browser(tmp_path: Path, monkeypatch)
     (app_root / "index.html").write_text(render_dashboard_shell(), encoding="utf-8")
 
     screenshot = tmp_path / "dashboard.png"
-    subprocess.run(
-        [
-            chrome,
-            "--headless=new",
-            "--disable-gpu",
-            "--allow-file-access-from-files",
-            "--window-size=1280,900",
-            f"--screenshot={screenshot}",
-            (tmp_path / ".agentpack" / "index.html").as_uri(),
-        ],
-        check=True,
-        stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True,
-        timeout=20,
-    )
+    chrome_args = [
+        chrome,
+        "--headless=new",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--no-first-run",
+        "--no-default-browser-check",
+        "--allow-file-access-from-files",
+        "--window-size=1280,900",
+        f"--screenshot={screenshot}",
+        (tmp_path / ".agentpack" / "index.html").as_uri(),
+    ]
+    try:
+        subprocess.run(
+            chrome_args,
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=20,
+        )
+    except subprocess.TimeoutExpired:
+        # Some Linux Chrome builds can finish the screenshot but keep a
+        # background process alive on a shared runner. Only retry when the
+        # requested artifact was not produced successfully.
+        if not screenshot.exists() or screenshot.stat().st_size <= 10_000:
+            subprocess.run(
+                [chrome, "--headless", *chrome_args[2:]],
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=20,
+            )
     assert screenshot.exists()
     assert screenshot.stat().st_size > 10_000
 
