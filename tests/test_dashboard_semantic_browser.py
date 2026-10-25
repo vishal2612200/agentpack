@@ -4,6 +4,7 @@ import json
 import os
 import shutil
 import subprocess
+import sys
 import threading
 import time
 from datetime import datetime, timezone
@@ -11,7 +12,6 @@ from io import BytesIO
 from pathlib import Path
 
 import pytest
-from PIL import Image
 
 from agentpack.core.project_index import register_project
 from agentpack.dashboard import app_shell as dashboard_app_shell
@@ -34,6 +34,7 @@ def built_dashboard_app(tmp_path_factory) -> Path:
     return output
 
 
+@pytest.mark.skipif(sys.version_info < (3, 11), reason="Pillow 13 requires Python 3.11+")
 def test_dashboard_modes_impact_navigation_and_responsive_layout(tmp_path: Path, monkeypatch, built_dashboard_app: Path) -> None:
     sync_playwright = pytest.importorskip("playwright.sync_api").sync_playwright
 
@@ -415,6 +416,8 @@ def _create_dashboard_server(root: Path, app_dir: Path, monkeypatch):
 
 
 def _canvas_color_count(page, canvas) -> int:
+    from PIL import Image
+
     box = canvas.bounding_box()
     assert box is not None
     viewport = Image.open(BytesIO(page.screenshot())).convert("RGB")

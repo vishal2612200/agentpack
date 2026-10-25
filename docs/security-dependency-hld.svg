@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="760" viewBox="0 0 1200 760" role="img" aria-labelledby="title desc">
+  <title id="title">AgentPack dependency flows before and after security updates</title>
+  <desc id="desc">Python project and dashboard manifests still resolve to lockfiles consumed by MCP, packaged plugin data, browser tests, and dashboard builds. Only versions and Python 3.10 test dependency eligibility change.</desc>
+  <rect width="1200" height="760" fill="#ffffff"/>
+  <text x="50" y="44" font-family="Arial, sans-serif" font-size="27" font-weight="bold" fill="#172334">Security dependency resolution</text>
+  <text x="50" y="72" font-family="Arial, sans-serif" font-size="18" fill="#526176">Architecture and data flow unchanged; package versions and test dependency eligibility updated.</text>
+
+  <rect x="35" y="94" width="1130" height="310" rx="16" fill="#fff9f1" stroke="#da9444" stroke-width="2"/>
+  <text x="58" y="130" font-family="Arial, sans-serif" font-size="25" font-weight="bold" fill="#835019">Before · vulnerable resolution</text>
+  <g font-family="Arial, sans-serif" font-size="17" fill="#172334">
+    <rect x="56" y="147" width="303" height="71" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="72" y="175">pyproject.toml</text>
+    <text x="72" y="199" fill="#526176">MCP extra; Pillow dev dependency</text>
+    <rect x="434" y="147" width="361" height="71" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="450" y="175">uv.lock</text>
+    <text x="450" y="192" fill="#a15017" font-size="15">mcp 1.28.1 · certifi 2026.6.17</text>
+    <text x="450" y="210" fill="#a15017" font-size="15">Pillow 12.3.0</text>
+    <rect x="870" y="147" width="273" height="71" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="886" y="175">MCP server</text>
+    <text x="886" y="199">Browser test dependency</text>
+
+    <rect x="56" y="233" width="303" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="72" y="261">Codex plugin bundle</text>
+    <text x="72" y="285" fill="#526176">Versioned distribution data</text>
+    <rect x="434" y="233" width="361" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="450" y="261">codex_plugin/uv.lock</text>
+    <text x="450" y="285" fill="#a15017">mcp 1.28.1 · certifi 2026.6.17</text>
+    <rect x="870" y="233" width="273" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="886" y="261">Packaged plugin lock</text>
+
+    <rect x="56" y="319" width="303" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="72" y="347">Dashboard package.json</text>
+    <text x="72" y="371" fill="#526176">vite ^6.0.5</text>
+    <rect x="434" y="319" width="361" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="450" y="347">Dashboard package-lock.json</text>
+    <text x="450" y="371" fill="#a15017">vite 6.4.3</text>
+    <rect x="870" y="319" width="273" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="886" y="347">Dashboard build/dev</text>
+  </g>
+
+  <rect x="35" y="426" width="1130" height="310" rx="16" fill="#f2fbf5" stroke="#5eae77" stroke-width="2"/>
+  <text x="58" y="462" font-family="Arial, sans-serif" font-size="25" font-weight="bold" fill="#25613b">After · patched resolution</text>
+  <g font-family="Arial, sans-serif" font-size="17" fill="#172334">
+    <rect x="56" y="479" width="303" height="71" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="72" y="507">pyproject.toml</text>
+    <text x="72" y="531" fill="#526176" font-size="15">MCP floors; Pillow ≥13 on 3.11+</text>
+    <rect x="434" y="479" width="361" height="71" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="450" y="507">uv.lock</text>
+    <text x="450" y="524" fill="#287348" font-size="15">mcp 1.30.0 · certifi 2026.10.23</text>
+    <text x="450" y="542" fill="#287348" font-size="15">Pillow 13.0.0</text>
+    <rect x="870" y="479" width="273" height="71" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="886" y="507">MCP server</text>
+    <text x="886" y="531">Browser test (3.11+)</text>
+
+    <rect x="56" y="565" width="303" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="72" y="593">Codex plugin bundle</text>
+    <text x="72" y="617" fill="#526176">Versioned distribution data</text>
+    <rect x="434" y="565" width="361" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="450" y="593">codex_plugin/uv.lock</text>
+    <text x="450" y="617" fill="#287348">mcp 1.30.0 · certifi 2026.10.23</text>
+    <rect x="870" y="565" width="273" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="886" y="593">Packaged plugin lock</text>
+
+    <rect x="56" y="651" width="303" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="72" y="679">Dashboard package.json</text>
+    <text x="72" y="703" fill="#526176">vite ^6.4.5</text>
+    <rect x="434" y="651" width="361" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="450" y="679">Dashboard package-lock.json</text>
+    <text x="450" y="703" fill="#287348">vite 6.4.5</text>
+    <rect x="870" y="651" width="273" height="70" rx="8" fill="#ffffff" stroke="#d2d8df"/>
+    <text x="886" y="679">Dashboard build/dev</text>
+  </g>
+
+  <g stroke="#526176" stroke-width="2.5">
+    <path d="M360 183 H426"/><path d="M796 183 H862"/>
+    <path d="M360 268 H426"/><path d="M796 268 H862"/>
+    <path d="M360 354 H426"/><path d="M796 354 H862"/>
+    <path d="M360 515 H426"/><path d="M796 515 H862"/>
+    <path d="M360 600 H426"/><path d="M796 600 H862"/>
+    <path d="M360 686 H426"/><path d="M796 686 H862"/>
+  </g>
+  <path d="M416 177 L427 183 L416 189 Z M852 177 L863 183 L852 189 Z M416 262 L427 268 L416 274 Z M852 262 L863 268 L852 274 Z M416 348 L427 354 L416 360 Z M852 348 L863 354 L852 360 Z M416 509 L427 515 L416 521 Z M852 509 L863 515 L852 521 Z M416 594 L427 600 L416 606 Z M852 594 L863 600 L852 606 Z M416 680 L427 686 L416 692 Z M852 680 L863 686 L852 692 Z" fill="#526176"/>
+</svg>
