@@ -23,5 +23,7 @@ def test_mcp_optional_extras_stay_on_mcp_v1_api() -> None:
     pyproject = tomllib.loads(pyproject_path.read_text(encoding="utf-8"))
     optional_dependencies = pyproject["project"]["optional-dependencies"]
 
-    assert "mcp>=1.28.1,<2" in optional_dependencies["mcp"]
-    assert "mcp>=1.28.1,<2" in optional_dependencies["all"]
+    assert "mcp>=1.30.0,<2" in optional_dependencies["mcp"]
+    assert "mcp>=1.30.0,<2" in optional_dependencies["all"]
+    assert "certifi>=2026.10.19" in optional_dependencies["mcp"]
+    assert "certifi>=2026.10.19" in optional_dependencies["all"]
