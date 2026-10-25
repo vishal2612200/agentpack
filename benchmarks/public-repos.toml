@@ -81,6 +81,17 @@ expected_files = [
   "src/click/types.py",
 ]
 
+[[repos.cases]]
+commit = "3b8bc283d1edb5895a5b8a3e6854b8a06a1e1b21"
+task = "Fix missing default parameter in decorator"
+task_type = "python-cli"
+mode = "balanced"
+budget = 1500
+expected_files = [
+  "src/click/decorators.py",
+  "tests/test_decorators.py",
+]
+
 [[repos]]
 name = "pallets-itsdangerous"
 url = "https://github.com/pallets/itsdangerous.git"
