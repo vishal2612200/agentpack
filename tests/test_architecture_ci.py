@@ -47,7 +47,7 @@ def test_ci_init_architecture_writes_hardened_pull_request_workflow(tmp_path, mo
     assert payload["written"] is True
     assert "pull_request:" in content
     assert "pull_request_target" not in content
-    assert "actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5" in content
+    assert "actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1" in content
     assert "actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1" in content
     assert 'python -m pip install ".[tree-sitter]"' in content
     assert "architecture-diff.json" in content

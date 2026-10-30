@@ -424,4 +424,5 @@ def test_eval_ci_template_scaffolds_github_action(tmp_path: Path, monkeypatch) -
     assert result.exit_code == 0, result.output
     workflow = tmp_path / ".github" / "workflows" / "agentpack-eval.yml"
     assert workflow.exists()
+    assert "actions/checkout@v7" in workflow.read_text(encoding="utf-8")
     assert "agentpack eval --cases benchmarks/evals.toml --replay --prove-targets" in workflow.read_text(encoding="utf-8")
