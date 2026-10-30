@@ -685,7 +685,7 @@ def write_eval_ci_template(root: Path) -> Path:
         "  eval:\n"
         "    runs-on: ubuntu-latest\n"
         "    steps:\n"
-        "      - uses: actions/checkout@v4\n"
+        "      - uses: actions/checkout@v7\n"
         "      - uses: actions/setup-python@v5\n"
         "        with:\n"
         "          python-version: '3.11'\n"

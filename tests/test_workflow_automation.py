@@ -338,6 +338,7 @@ def test_ci_init_writes_workflow_and_refuses_overwrite(tmp_path: Path, monkeypat
     workflow = tmp_path / ".github" / "workflows" / "agentpack.yml"
     assert workflow.exists()
     workflow_text = workflow.read_text(encoding="utf-8")
+    assert workflow_text.count("actions/checkout@v7") == 3
     assert "python -m agentpack.cli loop-smoke --json" in workflow_text
     assert "fetch-depth: 0" in workflow_text
     assert 'python -m pip install -e ".[dev]"' in workflow_text
