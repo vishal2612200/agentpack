@@ -47,7 +47,7 @@ watch = [
 ]
 
 mcp = [
-  "mcp>=1.30.0,<2",
+  "mcp>=1.30.0,<3",
   "certifi>=2026.10.19"
 ]
 
@@ -55,7 +55,7 @@ tree-sitter = []
 
 all = [
   "watchdog>=4.0.0",
-  "mcp>=1.30.0,<2",
+  "mcp>=1.30.0,<3",
   "certifi>=2026.10.19",
   "tree-sitter>=0.23.2",
   "tree-sitter-language-pack>=0.7.4"
