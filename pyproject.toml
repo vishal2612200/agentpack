@@ -67,7 +67,7 @@ dev = [
   "pytest-cov",
   "jsonschema>=4.20.0",
   "Pillow>=13.0.0; python_version >= '3.11'",
-  "ruff>=0.15.0,<0.16.0",
+  "ruff>=0.15.0,<0.18.0",
   "mypy",
   "tomli>=2.0.0; python_version < '3.11'"
 ]
