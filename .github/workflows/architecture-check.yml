@@ -34,7 +34,7 @@ jobs:
           status=$?
           python -m agentpack.cli architecture artifacts --diff .agentpack/raw/architecture-diff.json --check .agentpack/raw/architecture-check.json --output-dir .agentpack/artifacts
           echo "status=$status" >> "$GITHUB_OUTPUT"
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: architecture-${{ github.event.pull_request.number }}-${{ github.event.pull_request.head.sha }}
           path: .agentpack/artifacts/
