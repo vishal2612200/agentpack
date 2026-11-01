@@ -234,7 +234,7 @@ jobs:
         run: pytest tests/test_route_performance.py -q -m slow
       - name: Upload route performance evidence
         if: failure()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: route-performance-evidence
           path: ${{ runner.temp }}/agentpack-route-perf
@@ -251,7 +251,7 @@ jobs:
           python-version: "3.12"
       - run: pip install build
       - run: python -m build
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: dist
           path: dist/
